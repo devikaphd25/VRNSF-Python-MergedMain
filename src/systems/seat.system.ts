@@ -23,6 +23,13 @@ export class SeatSystem extends createSystem({
     init() {
         socket.on("seatAccepted", (acceptedSeatName: string) => {
             console.log("Seat accepted:", acceptedSeatName);
+             // ✅ Save seat to localStorage
+            localStorage.setItem('seat', acceptedSeatName);
+            
+            // Also update URL parameters if needed
+            const urlParams = new URLSearchParams(window.location.search);
+            urlParams.set('seat', acceptedSeatName);
+            window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
         });
 
         socket.on("seatRejected", (data: { seat: string; message: string }) => {

@@ -1,0 +1,875 @@
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import { io as ClientIO } from "socket.io-client";
+
+const app = express();
+const httpServer = http.createServer(app);
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+  },
+});
+// ========================================================
+// ✅ CROSS-SERVER CONFIGURATION
+// ========================================================
+
+// Configuration for different game servers
+const gameServers = {
+  game1: {
+    url: "http://localhost:3002", // Game 1 server
+    connected: false,
+    socket: null,
+    students: {}
+  },
+  game2: {
+    url: "http://localhost:3003", // Game 2 server
+    connected: false,
+    socket: null,
+    students: {}
+  },
+  game3: {
+    url: "http://localhost:3004", // Game 3 server
+    connected: false,
+    socket: null,
+    students: {}
+  }
+};
+
+// Connect to a game server
+function connectToGameServer(gameId) {
+  const config = gameServers[gameId];
+  if (!config || config.connected) return;
+
+  console.log(`[Server] Connecting to ${gameId} server at ${config.url}...`);
+
+  const socket = ClientIO(config.url, {
+    transports: ["websocket"],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+  });
+
+  socket.on("connect", () => {
+    config.connected = true;
+    config.socket = socket;
+    console.log(`[Server] ✅ Connected to ${gameId} server`);
+  });
+
+  socket.on("connect_error", (error) => {
+    console.error(`[Server] ❌ Error connecting to ${gameId} server:`, error.message);
+  });
+
+  socket.on("disconnect", () => {
+    config.connected = false;
+    console.log(`[Server] ❌ Disconnected from ${gameId} server`);
+  });
+
+  // Forward game events back to main server
+  socket.on("gameEvent", (data) => {
+    console.log(`[Server] 📡 Game event from ${gameId}:`, data);
+    io.emit("gameEvent", {
+      gameId: gameId,
+      ...data
+    });
+  });
+
+  // Forward player events
+  socket.on("playerJoined", (data) => {
+    console.log(`[Server] 👤 Player joined ${gameId}:`, data);
+    config.students[data.playerId] = data;
+    io.emit("playerJoinedGame", {
+      gameId: gameId,
+      ...data
+    });
+  });
+
+  socket.on("playerLeft", (data) => {
+    console.log(`[Server] 👤 Player left ${gameId}:`, data);
+    delete config.students[data.playerId];
+    io.emit("playerLeftGame", {
+      gameId: gameId,
+      ...data
+    });
+  });
+
+  return socket;
+}
+
+// Send player to game server
+function sendPlayerToGame(playerId, playerName, gameId) {
+  const config = gameServers[gameId];
+  if (!config) {
+    console.error(`[Server] ❌ Game ${gameId} not found`);
+    return false;
+  }
+
+  if (!config.connected) {
+    console.log(`[Server] ${gameId} server not connected, connecting...`);
+    connectToGameServer(gameId);
+    // Wait a moment and try again
+    setTimeout(() => {
+      sendPlayerToGame(playerId, playerName, gameId);
+    }, 1000);
+    return false;
+  }
+
+  config.socket.emit("playerJoin", {
+    playerId: playerId,
+    playerName: playerName,
+    gameId: gameId,
+    fromServer: "main"
+  });
+
+  console.log(`[Server] ✅ Sent player ${playerName} (${playerId}) to ${gameId}`);
+  
+  // Notify all students that this player moved
+  io.emit("playerMovedToGame", {
+    playerId: playerId,
+    playerName: playerName,
+    gameId: gameId,
+    timestamp: new Date().toISOString()
+  });
+  
+  return true;
+}
+
+// Remove player from game server
+function removePlayerFromGame(playerId, playerName, gameId) {
+  const config = gameServers[gameId];
+  if (!config || !config.connected) return;
+
+  config.socket.emit("playerLeave", {
+    playerId: playerId,
+    playerName: playerName,
+    gameId: gameId
+  });
+
+  console.log(`[Server] ✅ Removed player ${playerName} from ${gameId}`);
+}
+
+// Connect to all game servers on startup
+setTimeout(() => {
+  Object.keys(gameServers).forEach(gameId => {
+    connectToGameServer(gameId);
+  });
+}, 1000);
+// ========================================================
+// DEMO STUDENTS & MAIN SERVER CODE
+// ========================================================
+
+const demoStudents = [
+  {
+    id: "demo-1",
+    name: "Demo 1",
+    seat: "Seat_R1_01",
+    mode: "Classroom Mode",
+    isDemo: true,
+    handRaised: false,
+    isMuted: false,
+  },
+  {
+    id: "demo-2",
+    name: "Demo 2",
+    seat: "Seat_R1_02",
+    mode: "Presentation Mode",
+    isDemo: true,
+    handRaised: false,
+    isMuted: false,
+  },
+  {
+    id: "demo-3",
+    name: "Demo 3",
+    seat: "Seat_R1_03",
+    mode: "Classroom Mode",
+    isDemo: true,
+    handRaised: false,
+    isMuted: false,
+  },
+];
+
+const students = {};
+const playerGameMap = {}; // Track which game each student is in
+
+function getStudentList() {
+  return [
+    ...demoStudents,
+    ...Object.values(students),
+  ];
+}
+
+function broadcastStudentList() {
+  io.emit("studentList", getStudentList());
+}
+
+function findStudent(studentId) {
+  const demoStudent = demoStudents.find(
+    (student) => student.id === studentId
+  );
+
+  if (demoStudent) {
+    return {
+      student: demoStudent,
+      isDemo: true,
+    };
+  }
+
+  const realStudent = students[studentId];
+
+  if (realStudent) {
+    return {
+      student: realStudent,
+      isDemo: false,
+    };
+  }
+
+  return null;
+}
+
+function sendHandState(studentId, student, raised, fromInstructor = true) {
+  const normalizedRaised = Boolean(raised);
+
+  student.handRaised = normalizedRaised;
+
+  const isRealStudent = Boolean(students[studentId]);
+  const socketIsConnected = io.sockets.sockets.has(studentId);
+
+  console.log("[Server] Sending hand state:", {
+    studentId,
+    studentName: student.name,
+    raised: normalizedRaised,
+    isRealStudent,
+    socketIsConnected,
+    fromInstructor,
+    allSockets: Array.from(io.sockets.sockets.keys()),
+  });
+
+  if (isRealStudent && socketIsConnected) {
+    io.to(studentId).emit("handToggled", {
+      studentId,
+      playerId: studentId,
+      raised: normalizedRaised,
+      fromInstructor,
+    });
+
+    console.log("[Server] handToggled sent directly to:", studentId);
+  } else if (isRealStudent) {
+    console.warn("[Server] Student exists, but socket is not connected:", studentId);
+  }
+
+  io.emit("raiseHandUpdated", {
+    studentId,
+    playerId: studentId,
+    raised: normalizedRaised,
+    name: student.name,
+    seat: student.seat,
+    isMuted: Boolean(student.isMuted),
+    fromInstructor,
+  });
+
+  broadcastStudentList();
+
+  console.log(`[Server] ${student.name} hand state changed to:`, normalizedRaised ? "raised" : "lowered");
+}
+
+function sendMuteState(studentId, student, isMuted) {
+  student.isMuted = isMuted;
+
+  if (students[studentId]) {
+    io.to(studentId).emit("muteToggled", {
+      studentId,
+      playerId: studentId,
+      isMuted,
+    });
+  }
+
+  io.emit("muteUpdated", {
+    studentId,
+    playerId: studentId,
+    isMuted,
+    name: student.name,
+    seat: student.seat,
+  });
+
+  broadcastStudentList();
+
+  console.log(`[Server] ${student.name} mute state:`, isMuted ? "muted" : "unmuted");
+}
+
+io.on("connection", (socket) => {
+  console.log("Connected:", socket.id);
+
+  const studentName = socket.id.substring(0, 6);
+
+  const existingStudentId = Object.keys(students).find((key) => {
+    return students[key].name === studentName && key !== socket.id;
+  });
+  // ✅ Log ALL incoming events from this socket
+  socket.onAny((eventName, ...args) => {
+    console.log(`[Server] 📡 Event from ${socket.id}: ${eventName}`, args);
+  });
+  
+  // ✅ Log when socket disconnects
+  socket.on("disconnect", () => {
+    console.log(`[Server] ❌ Disconnected: ${socket.id}`);
+  });
+
+  if (existingStudentId) {
+    console.log(`[Server] Found existing student with same name: ${existingStudentId}, removing...`);
+    delete students[existingStudentId];
+  }
+
+  const notSelectedStudents = Object.keys(students).filter((key) => {
+    const student = students[key];
+    return student.seat === "Not selected" && !student.isDemo;
+  });
+
+  notSelectedStudents.forEach((key) => {
+    console.log(`Removing unseated student: ${key}`);
+    delete students[key];
+  });
+
+  students[socket.id] = {
+    id: socket.id,
+    name: socket.id.substring(0, 6),
+    seat: "Not selected",
+    mode: "Classroom Mode",
+    isDemo: false,
+    position: { x: 0, y: 1, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    handRaised: false,
+    isMuted: false,
+  };
+
+  socket.emit("currentPlayers", students);
+  broadcastStudentList();
+
+  socket.on("requestStudentList", () => {
+    socket.emit("studentList", getStudentList());
+  });
+
+  socket.on("requestJoinSeat", (seat) => {
+    const student = students[socket.id];
+    if (!student) return;
+
+    const takenSeats = getStudentList()
+      .map((currentStudent) => currentStudent.seat)
+      .filter((currentSeat) => currentSeat && currentSeat !== "Not selected");
+
+    if (takenSeats.includes(seat)) {
+      socket.emit("seatRejected", {
+        seat,
+        message: "This seat is already taken.",
+      });
+      return;
+    }
+
+    const existingStudent = getStudentList().find((s) => s.seat === seat && s.id !== socket.id);
+    if (existingStudent && !existingStudent.isDemo) {
+      const oldSocketId = existingStudent.id;
+      if (students[oldSocketId]) {
+        delete students[oldSocketId];
+        console.log(`Removed duplicate student ${oldSocketId} from seat ${seat}`);
+      }
+    }
+
+    student.seat = seat;
+    socket.emit("seatAccepted", seat);
+    console.log(`${student.name} selected ${seat}`);
+    broadcastStudentList();
+  });
+
+  // ========================================================
+  // INSTRUCTOR SENDS STUDENT TO MODE (Individual)
+  // ========================================================
+
+  socket.on("instructorSendStudent", ({ studentId, destination }) => {
+    console.log(`[Server] 🎯 instructorSendStudent called`);
+    console.log(`[Server] 🎯 Student ID: ${studentId}, Destination: ${destination}`);
+    console.log(`[Server] 🎯 Sender socket: ${socket.id}`);
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.log(`[Server] Student ${studentId} not found`);
+      socket.emit("serverError", { message: "Student not found" });
+      return;
+    }
+
+    const student = result.student;
+    const isDemo = result.isDemo;
+
+    let mode = "Classroom Mode";
+    if (destination === "Presentation") {
+      mode = "Presentation Mode";
+    } else if (destination === "Game 1") {
+      mode = "Game Mode";
+    }
+
+    student.mode = mode;
+
+    console.log(`[Server] ${student.name} sent to ${destination} (${mode})`);
+
+    broadcastStudentList();
+
+    if (!isDemo && students[studentId]) {
+    console.log(`[Server] 📤 Sending modeChanged to ${studentId}`);
+    io.to(studentId).emit("modeChanged", {
+      mode: mode,
+      destination: destination,
+      fromInstructor: true,
+    });
+  } else {
+    console.log(`[Server] ⚠️ Not sending modeChanged (isDemo: ${isDemo}, exists: ${!!students[studentId]})`);
+  }
+
+
+    io.emit("studentModeChanged", {
+      studentId: studentId,
+      mode: mode,
+      destination: destination,
+      name: student.name,
+      seat: student.seat,
+    });
+  });
+
+  // ========================================================
+  // ✅ INSTRUCTOR SENDS ALL STUDENTS TO DESTINATION (BROADCAST)
+  // ========================================================
+// In classroom server - update this section
+socket.on("instructorSendAllToDestination", ({ destination }) => {
+  console.log(`[Server] 🚀 instructorSendAllToDestination called`);
+  console.log(`[Server] 🚀 Destination: ${destination}`);
+  
+  let mode = "Classroom Mode";
+  let isGame = false;
+  let gameId = null;
+  
+  if (destination === "Presentation") {
+    mode = "Presentation Mode";
+  } else if (destination === "Game 1") {
+    mode = "Game Mode";
+    isGame = true;
+    gameId = "game1";
+  }
+  
+  console.log(`[Server] Mode: ${mode}`);
+  
+  // Update all real students
+  const realStudents = Object.values(students);
+  console.log(`[Server] Updating ${realStudents.length} real students`);
+  
+  realStudents.forEach(student => {
+    student.mode = mode;
+    console.log(`[Server] Updated ${student.name} to ${mode}`);
+    
+    // ✅ If sending to game, actually send them to the game server
+    if (isGame && gameId) {
+      // Send to game server
+      sendPlayerToGame(student.id, student.name, gameId);
+      playerGameMap[student.id] = gameId;
+      
+      // Notify student directly
+      io.to(student.id).emit("gameChanged", {
+        gameId: gameId,
+        mode: mode,
+        message: `You were sent to ${gameId}`,
+      });
+    }
+  });
+  
+  // Update demo students
+  demoStudents.forEach(student => {
+    student.mode = mode;
+  });
+  
+  // Broadcast updated student list
+  broadcastStudentList();
+  
+  // Send mode change to ALL students
+  console.log(`[Server] Broadcasting modeChanged to ALL students`);
+  io.emit("modeChanged", {
+    mode: mode,
+    destination: destination,
+    fromInstructor: true,
+  });
+  
+  // Also send a specific broadcast event
+  io.emit("allStudentsModeChanged", {
+    mode: mode,
+    destination: destination,
+    message: `All students sent to ${destination}`,
+  });
+  
+  console.log(`[Server] ✅ All students sent to ${destination}`);
+});
+ // ========================================================
+  // ✅ INSTRUCTOR SENDS STUDENT TO GAME
+  // ========================================================
+
+  socket.on("instructorSendToGame", ({ studentId, gameId }) => {
+    console.log(`[Server] 🎮 Instructor sending student ${studentId} to ${gameId}`);
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.log(`[Server] ❌ Student ${studentId} not found`);
+      socket.emit("serverError", { message: "Student not found" });
+      return;
+    }
+
+    const student = result.student;
+    const isDemo = result.isDemo;
+
+    // Check if game server exists
+    if (!gameServers[gameId]) {
+      console.log(`[Server] ❌ Game ${gameId} not found`);
+      socket.emit("serverError", { message: `Game ${gameId} not found` });
+      return;
+    }
+
+    // Remove from previous game if any
+    if (playerGameMap[studentId]) {
+      const prevGame = playerGameMap[studentId];
+      if (prevGame !== gameId) {
+        removePlayerFromGame(studentId, student.name, prevGame);
+      }
+    }
+
+    // Update student mode
+    student.mode = `Game Mode: ${gameId}`;
+
+    // Send to new game
+    if (!isDemo) {
+      sendPlayerToGame(studentId, student.name, gameId);
+      playerGameMap[studentId] = gameId;
+
+      // Notify the student
+      io.to(studentId).emit("gameChanged", {
+        gameId: gameId,
+        mode: student.mode,
+        message: `You were sent to ${gameId}`,
+      });
+    }
+
+    broadcastStudentList();
+
+    io.emit("studentGameChanged", {
+      studentId: studentId,
+      gameId: gameId,
+      name: student.name,
+      seat: student.seat,
+    });
+
+    console.log(`[Server] ✅ ${student.name} sent to ${gameId}`);
+  });
+
+  // ========================================================
+  // ✅ INSTRUCTOR RETURNS STUDENT FROM GAME
+  // ========================================================
+
+  socket.on("instructorReturnFromGame", ({ studentId }) => {
+    console.log(`[Server] 🔄 Instructor returning student ${studentId} to Class`);
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.log(`[Server] ❌ Student ${studentId} not found`);
+      socket.emit("serverError", { message: "Student not found" });
+      return;
+    }
+
+    const student = result.student;
+    const isDemo = result.isDemo;
+
+    // Remove from game
+    if (playerGameMap[studentId]) {
+      const gameId = playerGameMap[studentId];
+      removePlayerFromGame(studentId, student.name, gameId);
+      delete playerGameMap[studentId];
+    }
+
+    // Reset to classroom mode
+    student.mode = "Classroom Mode";
+
+    if (!isDemo) {
+      io.to(studentId).emit("gameChanged", {
+        gameId: null,
+        mode: "Classroom Mode",
+        message: "You returned to Class",
+      });
+    }
+
+    broadcastStudentList();
+
+    io.emit("studentGameChanged", {
+      studentId: studentId,
+      gameId: null,
+      name: student.name,
+      seat: student.seat,
+    });
+
+    console.log(`[Server] ✅ ${student.name} returned to Class`);
+  });
+
+  // ========================================================
+  // ✅ RETURN ALL STUDENTS FROM ALL GAMES
+  // ========================================================
+
+  socket.on("instructorReturnAllFromGames", () => {
+    console.log("[Server] 🔄 Returning ALL students to Class");
+
+    Object.keys(students).forEach((studentId) => {
+      const student = students[studentId];
+      
+      if (playerGameMap[studentId]) {
+        const gameId = playerGameMap[studentId];
+        removePlayerFromGame(studentId, student.name, gameId);
+        delete playerGameMap[studentId];
+      }
+
+      student.mode = "Classroom Mode";
+      io.to(studentId).emit("gameChanged", {
+        gameId: null,
+        mode: "Classroom Mode",
+        message: "You returned to Class",
+      });
+    });
+
+    demoStudents.forEach((student) => {
+      student.mode = "Classroom Mode";
+    });
+
+    broadcastStudentList();
+
+    io.emit("allStudentsReturnedToClass", {
+      message: "All students returned to Class mode",
+    });
+
+    console.log("[Server] ✅ All students returned to Class");
+  });
+  // ========================================================
+  // INSTRUCTOR RETURNS ALL STUDENTS TO CLASS
+  // ========================================================
+
+  socket.on("instructorReturnAllToClass", () => {
+    console.log("[Server] Instructor returning ALL students to Class");
+
+    Object.values(students).forEach((student) => {
+      student.mode = "Classroom Mode";
+      io.to(student.id).emit("modeChanged", {
+        mode: "Classroom Mode",
+        destination: "Class",
+        fromInstructor: true,
+      });
+    });
+
+    demoStudents.forEach((student) => {
+      student.mode = "Classroom Mode";
+    });
+
+    broadcastStudentList();
+
+    io.emit("allStudentsReturnedToClass", {
+      message: "All students returned to Class mode",
+    });
+
+    console.log("[Server] All students returned to Class mode");
+  });
+
+  // ========================================================
+  // STUDENT MODE CHANGE (from student side)
+  // ========================================================
+
+  socket.on("modeChanged", (mode) => {
+    const student = students[socket.id];
+    if (!student) return;
+    student.mode = mode;
+    console.log(`${student.name} changed mode to ${mode}`);
+    broadcastStudentList();
+  });
+
+  // ========================================================
+  // STUDENT RAISES HAND
+  // ========================================================
+
+  socket.on("raiseHand", (data) => {
+    const student = students[socket.id];
+
+    if (!student) {
+      return;
+    }
+
+    const raised = Boolean(data?.raised);
+
+    student.handRaised = raised;
+
+    console.log(`${student.name} ${raised ? "raised" : "lowered"} their hand`);
+
+    io.emit("raiseHandUpdated", {
+      studentId: socket.id,
+      playerId: socket.id,
+      raised,
+      name: student.name,
+      seat: student.seat,
+      isMuted: Boolean(student.isMuted),
+      fromInstructor: false,
+    });
+
+    broadcastStudentList();
+  });
+
+  // ========================================================
+  // INSTRUCTOR TOGGLE HAND
+  // ========================================================
+
+  socket.on("instructorToggleHand", ({ studentId, raised }) => {
+    console.log("[Server] instructorToggleHand received:", {
+      studentId,
+      raised,
+    });
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.warn("[Server] Student not found:", studentId);
+      return;
+    }
+
+    const student = result.student;
+
+    const nextState = typeof raised === "boolean" ? raised : !student.handRaised;
+
+    sendHandState(studentId, student, nextState, true);
+  });
+
+  // ========================================================
+  // INSTRUCTOR TOGGLE MUTE
+  // ========================================================
+
+  socket.on("instructorToggleMute", ({ studentId }) => {
+    console.log(`[Server] Instructor toggling mute for: ${studentId}`);
+
+    let student = demoStudents.find((s) => s.id === studentId);
+    let isDemo = true;
+
+    if (!student) {
+      student = students[studentId];
+      isDemo = false;
+    }
+
+    if (!student) {
+      console.log(`[Server] Student ${studentId} not found`);
+      socket.emit("error", { message: "Student not found" });
+      return;
+    }
+
+    student.isMuted = !student.isMuted;
+
+    console.log(`[Server] ${student.name} ${student.isMuted ? "muted" : "unmuted"} by instructor`);
+
+    broadcastStudentList();
+
+    io.emit("muteUpdated", {
+      playerId: studentId,
+      isMuted: student.isMuted,
+      name: student.name,
+      seat: student.seat,
+    });
+
+    if (!isDemo && students[studentId]) {
+      io.to(studentId).emit("muteToggled", {
+        isMuted: student.isMuted,
+      });
+    }
+  });
+
+  // ========================================================
+  // INSTRUCTOR UNMUTE AND LOWER HAND
+  // ========================================================
+
+  socket.on("instructorUnmuteAndLowerHand", ({ studentId }) => {
+    console.log("[Server] instructorUnmuteAndLowerHand received:", studentId);
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.warn("[Server] Cannot unmute/lower. Student not found:", studentId);
+      return;
+    }
+
+    const student = result.student;
+
+    sendMuteState(studentId, student, false);
+    sendHandState(studentId, student, false, true);
+
+    console.log(`[Server] Instructor unmuted and lowered hand for ${student.name}`);
+  });
+
+  // ========================================================
+  // INSTRUCTOR LOWER HAND
+  // ========================================================
+
+  socket.on("instructorLowerHand", ({ studentId }) => {
+    console.log("[Server] instructorLowerHand received:", studentId);
+
+    const result = findStudent(studentId);
+
+    if (!result) {
+      console.warn("[Server] Cannot lower hand. Student not found:", studentId);
+      return;
+    }
+
+    sendHandState(studentId, result.student, false, true);
+
+    console.log(`[Server] Instructor lowered hand for ${result.student.name}`);
+  });
+
+  // ========================================================
+  // PLAYER UPDATE
+  // ========================================================
+
+  socket.on("playerUpdate", (data) => {
+    const student = students[socket.id];
+    if (!student) return;
+    if (!data?.position || !data?.rotation) return;
+
+    student.position = data.position;
+    student.rotation = data.rotation;
+
+    socket.broadcast.emit("playerMoved", {
+      id: socket.id,
+      position: student.position,
+      rotation: student.rotation,
+      name: student.name,
+      seat: student.seat,
+      mode: student.mode,
+      handRaised: student.handRaised,
+    });
+  });
+
+  // ========================================================
+  // DISCONNECT
+  // ========================================================
+
+  socket.on("disconnect", () => {
+    const student = students[socket.id];
+    console.log("Disconnected:", student?.name ?? socket.id);
+
+     // Remove from game if connected
+    if (playerGameMap[socket.id]) {
+      const gameId = playerGameMap[socket.id];
+      removePlayerFromGame(socket.id, student?.name || "Unknown", gameId);
+      delete playerGameMap[socket.id];
+    }
+
+    delete students[socket.id];
+    io.emit("playerDisconnected", { id: socket.id });
+    broadcastStudentList();
+  });
+});
+
+httpServer.listen(3001, () => {
+  console.log("Socket.IO server running on http://localhost:3001");
+});

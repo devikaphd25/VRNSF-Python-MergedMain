@@ -1,0 +1,103 @@
+<style>
+  .notification-root {
+    width: 650;
+    flex-direction: column;
+    padding: 20px;
+    border-radius: 18px;
+    background-color: rgba(15, 23, 42, 0.95);
+    border-width: 2;
+    border-color: rgba(251, 191, 36, 0.6);
+    gap: 12px;
+  }
+
+  .notification-header {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .notification-icon {
+    font-size: 34px;
+  }
+
+  .notification-title {
+    font-size: 24px;
+    font-weight: bold;
+    color: white;
+  }
+
+  .notification-student-name {
+    font-size: 22px;
+    color: #fbbf24;
+    font-weight: 600;
+  }
+
+  .notification-message {
+    font-size: 20px;
+    color: rgba(255,255,255,0.92);
+  }
+
+  .notification-seat {
+    font-size: 18px;
+    color: rgba(148,163,184,1);
+  }
+
+  .button-row {
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 18px;
+    margin-top: 14px;
+  }
+
+  .btn {
+    width: 170;
+    height: 56;
+    justify-content: center;
+    align-items: center;
+    border-radius: 12px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+
+  .btn-unmute {
+    background-color: rgba(34,197,94,0.95);
+    color: white;
+  }
+
+  .btn-cancel {
+    background-color: rgba(239,68,68,0.95);
+    color: white;
+  }
+</style>
+
+<Panel id="raise-hand-notification-root" class="notification-root">
+
+    <Panel class="notification-header">
+        <Text id="notification-icon" class="notification-icon"></Text>
+        <Text id="notification-title" class="notification-title">Raise Hand</Text>
+    </Panel>
+
+    <!-- ✅ IMPORTANT: These IDs must match exactly -->
+    <Text id="notification-student-name" class="notification-student-name">
+        Student Name
+    </Text>
+
+    <Text id="notification-message" class="notification-message">
+        raised their hand
+    </Text>
+
+    <Text id="notification-seat" class="notification-seat">
+        Seat: --
+    </Text>
+
+    <Panel id="notification-buttons" class="button-row">
+        <Button id="notification-unmute" class="btn btn-unmute">
+            🔊 Unmute
+        </Button>
+        <Button id="notification-cancel" class="btn btn-cancel">
+            ✕ Cancel
+        </Button>
+    </Panel>
+
+</Panel>

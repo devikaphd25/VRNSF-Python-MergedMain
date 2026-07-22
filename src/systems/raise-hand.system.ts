@@ -1,0 +1,513 @@
+// src/systems/raise-hand.system.ts
+
+import {
+  AssetManager,
+  createSystem,
+  PanelDocument
+} from "@iwsdk/core";
+
+import * as THREE from "three";
+import { socket } from "../network/socket";
+
+type UIKitElement = any;
+
+export class RaiseHandSystem extends createSystem({}) {
+  private circleElement: UIKitElement = null;
+  private labelElement: UIKitElement = null;
+  private statusElement: UIKitElement = null;
+
+  private handModel: THREE.Object3D | null = null;
+  private modelContainer: THREE.Object3D | null = null;
+
+  private isRaised = false;
+  private isEnabled = false;
+  private destroyed = false;
+  private isRTTriggerPressed = false;
+  private isMuted = false; // ✅ Track mute state
+
+  init(): void {
+    console.log("[RaiseHandSystem] Initializing");
+
+    // ✅ Store reference to this instance
+    (window as any).RaiseHandSystem = this;
+
+    this.isEnabled = Boolean((window as any).isRaiseHandReady);
+
+    window.addEventListener("hintFinished", this.onHintFinished);
+
+    // ✅ Listen for hand updates from server
+    socket.on("raiseHandUpdated", this.onRaiseHandUpdated);
+    
+    // ✅ Listen for instructor toggling hand
+    socket.on("handToggled", this.onHandToggled);
+    
+    // ✅ Listen for mute updates
+    socket.on("muteUpdated", this.onMuteUpdated);
+    socket.on("muteToggled", this.onMuteToggled);
+
+    this.waitForRaiseHandEntity();
+  }
+
+  private waitForRaiseHandEntity(): void {
+    let attempts = 0;
+    const maximumAttempts = 300;
+
+    const check = (): void => {
+      if (this.destroyed) {
+        return;
+      }
+
+      attempts++;
+
+      const entity = (window as any).raiseHandEntity;
+
+      if (!entity || !entity.object3D) {
+        if (attempts < maximumAttempts) {
+          requestAnimationFrame(check);
+        } else {
+          console.error("[RaiseHandSystem] Raise Hand entity was not found");
+        }
+        return;
+      }
+
+      const panelDocument = entity.getComponent?.(PanelDocument);
+
+      if (panelDocument) {
+        this.connectPanel(panelDocument);
+      }
+
+      this.createHandModel(entity.object3D);
+      this.updateVisibility();
+
+      console.log("[RaiseHandSystem] Ready with 3D model");
+    };
+
+    requestAnimationFrame(check);
+  }
+
+  private connectPanel(panelDocument: any): void {
+    const root = panelDocument.getRoot?.();
+
+    if (!root) {
+      console.error("[RaiseHandSystem] Panel root was not found");
+      return;
+    }
+
+    this.circleElement = root.querySelector?.("#raise-hand-circle");
+    this.labelElement = root.querySelector?.("#raise-hand-label");
+    this.statusElement = root.querySelector?.("#raise-hand-status");
+
+    if (!this.circleElement) {
+      console.error('[RaiseHandSystem] Element "#raise-hand-circle" was not found');
+      return;
+    }
+
+    // ✅ Keep click events for mouse/desktop testing
+    this.circleElement.addEventListener?.("click", this.onButtonClick);
+    this.circleElement.addEventListener?.("pointerdown", this.onButtonClick);
+
+    console.log("[RaiseHandSystem] UI click connected");
+  }
+
+  private createHandModel(panelObject: THREE.Object3D): void {
+    const asset = AssetManager.getGLTF("raiseHandIcon");
+
+    if (!asset) {
+      console.error('[RaiseHandSystem] Asset "raiseHandIcon" was not loaded');
+      return;
+    }
+
+    this.handModel = asset.scene.clone(true);
+    this.handModel.name = "RaiseHandEmojiModel";
+
+    // Find the container
+    panelObject.traverse((child) => {
+      if (child.isObject3D && child.name === 'raise-hand-model-container') {
+        this.modelContainer = child;
+        console.log("[RaiseHandSystem] ✅ Found model container:", child.name);
+      }
+    });
+
+    // Add the hand to the container or panel
+    if (this.modelContainer) {
+      this.modelContainer.add(this.handModel);
+      console.log("[RaiseHandSystem] Added hand to container");
+    } else {
+      panelObject.add(this.handModel);
+      console.log("[RaiseHandSystem] Added hand to panel (fallback)");
+    }
+
+    // Set position (your working values)
+    this.handModel.position.set(-0.025, 0.01, 0.02);
+    this.handModel.rotation.set(0, Math.PI, 0);
+    this.handModel.scale.set(0.15, 0.15, 0.15);
+
+    // Make materials look good
+    this.handModel.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.renderOrder = 1000;
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+      for (const material of materials) {
+        material.depthTest = false;
+        material.depthWrite = false;
+        material.transparent = false;
+        material.needsUpdate = true;
+
+        if (material instanceof THREE.MeshStandardMaterial) {
+          material.emissive.setHex(0x4488ff);
+          material.emissiveIntensity = 0.2;
+          material.roughness = 0.4;
+          material.metalness = 0.1;
+        }
+      }
+    });
+
+    console.log("[RaiseHandSystem] ✅ GLB hand placed inside circle");
+  }
+
+  private onButtonClick = (event?: any): void => {
+    console.log("[RaiseHandSystem] Click detected!");
+    
+    if (!this.isEnabled) {
+      console.log("[RaiseHandSystem] Button is not enabled yet");
+      return;
+    }
+
+    // ✅ If muted, don't allow hand raise
+    if (this.isMuted) {
+      console.log("[RaiseHandSystem] Student is muted - cannot raise hand");
+      if (this.statusElement) {
+        this.statusElement.textContent = "🔇 Muted - Cannot raise";
+        this.statusElement.style.color = "rgba(239, 68, 68, 0.9)";
+        setTimeout(() => {
+          if (this.statusElement && !this.isRaised) {
+            this.statusElement.textContent = "Select to raise";
+            this.statusElement.style.color = "rgba(255, 255, 255, 0.4)";
+          }
+        }, 2000);
+      }
+      return;
+    }
+
+    this.isRaised = !this.isRaised;
+    this.updateAppearance();
+
+    socket.emit("raiseHand", {
+      raised: this.isRaised
+    });
+
+    // Visual feedback
+    this.showPulseFeedback();
+
+    console.log(
+      this.isRaised ? "[RaiseHandSystem] ✅ Hand RAISED" : "[RaiseHandSystem] ✅ Hand LOWERED"
+    );
+  };
+private applyRaisedState(
+  raised: boolean,
+  source: string
+): void {
+  this.isRaised = raised;
+
+  this.updateAppearance();
+  this.showPulseFeedback();
+
+  console.log(
+    `[RaiseHandSystem] State from ${source}:`,
+    raised
+      ? "HAND RAISED"
+      : "HAND LOWERED — default style restored"
+  );
+}
+// ✅ Handle instructor toggling hand
+private onHandToggled = (
+  data: {
+    studentId?: string;
+    playerId?: string;
+    raised: boolean;
+    fromInstructor?: boolean;
+  }
+): void => {
+  console.log(
+    "[RaiseHandSystem] 🔔 handToggled event RECEIVED!",
+    data
+  );
+  const targetId =
+    data.studentId ??
+    data.playerId ??
+    "";
+
+  // ✅ Get the current socket ID from multiple sources
+  const currentSocketId = (window as any).socket?.id || socket.id;
+
+ console.log(
+    "[RaiseHandSystem] targetId:",
+    targetId,
+    "socket.id:",
+    socket.id
+  );
+
+  if (!targetId) {
+    console.warn(
+      "[RaiseHandSystem] Hand update has no studentId or playerId."
+    );
+    return;
+  }
+   if (targetId !== socket.id) {
+    console.log(
+      "[RaiseHandSystem] Hand update belongs to another student. Ignoring."
+    );
+    return;
+  }
+  
+  // ✅ Force update the hand state
+  this.isRaised = Boolean(data.raised);
+  this.updateAppearance();
+  this.showPulseFeedback();
+
+  console.log(
+    `[RaiseHandSystem] ✅ Hand ${this.isRaised ? 'RAISED' : 'LOWERED'} by instructor`
+  );
+};
+
+  // ✅ Handle mute update from instructor
+  private onMuteUpdated = (data: { playerId: string; isMuted: boolean; name: string; seat: string }): void => {
+    console.log(`[RaiseHandSystem] Mute updated: ${data.name} -> ${data.isMuted}`);
+    
+    const currentSocketId = (window as any).socket?.id || socket.id;
+    
+    if (data.playerId === currentSocketId) {
+      this.isMuted = data.isMuted;
+      this.updateMuteStatus();
+    }
+  };
+
+  // ✅ Handle mute toggled from instructor
+  private onMuteToggled = (data: { isMuted: boolean }): void => {
+    console.log(`[RaiseHandSystem] Mute toggled by instructor: ${data.isMuted}`);
+    this.isMuted = data.isMuted;
+    this.updateMuteStatus();
+  };
+
+  // ✅ Update mute status in UI
+  private updateMuteStatus(): void {
+    if (this.statusElement) {
+      if (this.isMuted) {
+        this.statusElement.textContent = "🔇 Muted by instructor";
+        this.statusElement.style.color = "rgba(239, 68, 68, 0.9)";
+        // If hand was raised, lower it when muted
+        if (this.isRaised) {
+          this.isRaised = false;
+          this.updateAppearance();
+          socket.emit("raiseHand", { raised: false });
+        }
+      } else {
+        this.statusElement.textContent = "Select to raise";
+        this.statusElement.style.color = "rgba(255, 255, 255, 0.4)";
+      }
+    }
+  }
+
+  private showPulseFeedback(): void {
+    if (!this.circleElement) return;
+
+    if (this.isRaised) {
+      this.circleElement.setAttribute('class', 'raise-hand-circle raised pulse');
+      
+      if (this.statusElement && !this.isMuted) {
+        this.statusElement.textContent = "✋ Hand Raised!";
+        this.statusElement.style.color = "rgba(255, 200, 0, 0.9)";
+      }
+    } else {
+      this.circleElement.setAttribute('class', 'raise-hand-circle');
+      
+      if (this.statusElement && !this.isMuted) {
+        this.statusElement.textContent = "Select to raise";
+        this.statusElement.style.color = "rgba(255, 255, 255, 0.4)";
+      }
+    }
+
+    setTimeout(() => {
+      if (this.circleElement && this.isRaised) {
+        this.circleElement.setAttribute('class', 'raise-hand-circle raised');
+      }
+    }, 1500);
+  }
+
+  private onHintFinished = (): void => {
+    this.isEnabled = true;
+    (window as any).isRaiseHandReady = true;
+    this.updateVisibility();
+
+    console.log("[RaiseHandSystem] Hint finished — button enabled");
+  };
+
+  private updateAppearance(): void {
+    if (this.labelElement) {
+      this.labelElement.textContent = this.isRaised ? "Lower Hand" : "Raise Hand";
+    }
+
+    if (this.circleElement) {
+      if (this.isRaised) {
+        this.circleElement.setAttribute('class', 'raise-hand-circle raised');
+      } else {
+        this.circleElement.setAttribute('class', 'raise-hand-circle');
+      }
+    }
+
+    if (!this.handModel) {
+      return;
+    }
+
+    const baseScale = 0.08;
+    const scale = this.isRaised ? baseScale * 1.3 : baseScale;
+    this.handModel.scale.set(scale, scale, scale);
+
+    this.handModel.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+      for (const material of materials) {
+        if (material instanceof THREE.MeshStandardMaterial) {
+          if (this.isRaised) {
+            material.emissive.setHex(0xff4400);
+            material.emissiveIntensity = 0.8;
+            material.color.setHex(0xff8800);
+          } else {
+            material.emissive.setHex(0x4488ff);
+            material.emissiveIntensity = 0.2;
+            material.color.setHex(0xffffff);
+          }
+        }
+      }
+    });
+  }
+
+  private updateVisibility(): void {
+    const entity = (window as any).raiseHandEntity;
+    const object = entity?.object3D;
+
+    if (!object) {
+      return;
+    }
+
+    const menuOpen = Boolean((window as any).isMenuOpen);
+    const presentationOpen = Boolean((window as any).isPresentationOpen);
+
+    object.visible = this.isEnabled && !menuOpen && !presentationOpen;
+  }
+
+ private onRaiseHandUpdated = (
+  data: {
+    playerId?: string;
+    studentId?: string;
+    raised: boolean;
+    name?: string;
+    seat?: string;
+    fromInstructor?: boolean;
+  }
+): void => {
+  const targetId =
+    data.playerId ??
+    data.studentId ??
+    "";
+
+  const currentSocketId = (window as any).socket?.id || socket.id;
+
+  console.log(
+    "[RaiseHandSystem] 📡 raiseHandUpdated received:",
+    {
+      data,
+      targetId,
+      currentSocketId,
+      socketId: socket.id,
+      fromInstructor: data.fromInstructor
+    }
+  );
+
+  // ✅ Compare with both socket.id and window.socket.id
+  const isForThisStudent = 
+    targetId === socket.id || 
+    targetId === (window as any).socket?.id;
+
+  if (!targetId || !isForThisStudent) {
+    console.log("[RaiseHandSystem] Not for this student, ignoring.");
+    return;
+  }
+
+  // ✅ Force update the hand state
+  this.isRaised = Boolean(data.raised);
+  this.updateAppearance();
+  this.showPulseFeedback();
+
+  console.log(
+    `[RaiseHandSystem] ✅ Hand state from server: ${this.isRaised ? 'RAISED' : 'LOWERED'}`
+  );
+};
+  update(): void {
+    if ((window as any).isRaiseHandReady) {
+      this.isEnabled = true;
+    }
+
+    this.checkRTTrigger();
+    this.updateVisibility();
+  }
+
+  private checkRTTrigger(): void {
+    try {
+      const rightCtrl = this.input?.xr?.gamepads?.right;
+      
+      if (rightCtrl) {
+        const triggerPressed = rightCtrl.getButtonDown("xr-standard-trigger");
+        
+        if (triggerPressed && !this.isRTTriggerPressed) {
+          this.isRTTriggerPressed = true;
+          this.onButtonClick();
+          console.log("[RaiseHandSystem] RT Trigger pressed - Toggling hand");
+        }
+        
+        if (!triggerPressed) {
+          this.isRTTriggerPressed = false;
+        }
+      }
+    } catch (error) {
+      // Silently handle if input is not available yet
+    }
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+
+    window.removeEventListener("hintFinished", this.onHintFinished);
+
+    socket.off("raiseHandUpdated", this.onRaiseHandUpdated);
+    socket.off("handToggled", this.onHandToggled);
+    socket.off("muteUpdated", this.onMuteUpdated);
+    socket.off("muteToggled", this.onMuteToggled);
+
+    if (this.circleElement) {
+      this.circleElement.removeEventListener?.("click", this.onButtonClick);
+      this.circleElement.removeEventListener?.("pointerdown", this.onButtonClick);
+    }
+
+    if (this.handModel?.parent) {
+      this.handModel.parent.remove(this.handModel);
+    }
+
+    this.handModel = null;
+    this.circleElement = null;
+    this.labelElement = null;
+    this.statusElement = null;
+    this.modelContainer = null;
+  }
+}

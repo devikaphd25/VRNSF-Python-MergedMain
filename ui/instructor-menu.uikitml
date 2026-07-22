@@ -1,0 +1,999 @@
+<style>
+  /* =========================================================
+     MAIN DASHBOARD
+     ========================================================= */
+
+  .dashboard-root {
+    width: 980;
+    flex-direction: column;
+    gap: 20;
+
+    padding-top: 30;
+    padding-bottom: 30;
+    padding-left: 32;
+    padding-right: 32;
+
+    background-color: rgba(12, 18, 32, 0.96);
+
+    border-radius: 28;
+    border-width: 2;
+    border-color: rgba(96, 165, 250, 0.5);
+     /* ✅ Let clicks pass through to children */
+   pointer-events: auto;
+  }
+ .dashboard-header,
+.dashboard-title-area,
+.header-actions,
+.global-control-card,
+.global-control-row,
+.global-destination-area,
+.student-section,
+.student-section-header,
+.student-list,
+.student-info,
+.student-destination-area,
+.student-action-area,
+.table-header {
+  pointer-events: none;
+}
+/* ✅ Only interactive elements should receive pointer events */
+.destination-toggle,
+.destination-option,
+.start-all-button,
+.return-all-button,
+.student-destination-toggle,
+.student-start-button,
+.close-button,
+.mic-button,
+#global-destination-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+}
+  /* =========================================================
+     HEADER
+     ========================================================= */
+
+  .dashboard-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+
+    padding-bottom: 18;
+
+    border-bottom-width: 2;
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .dashboard-title-area {
+    flex-direction: column;
+    gap: 6;
+  }
+
+  .dashboard-title {
+    color: #ffffff;
+    font-size: 32;
+    font-weight: 700;
+    font-family: inter;
+  }
+
+  .dashboard-subtitle {
+    color: #9ca3af;
+    font-size: 16;
+    font-family: inter;
+  }
+
+  .header-actions {
+    flex-direction: row;
+    align-items: center;
+    gap: 14;
+  }
+
+  /* =========================================================
+     MICROPHONE BUTTON
+     ========================================================= */
+
+  .mic-button {
+    width: 64;
+    height: 64;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(239, 68, 68, 0.22);
+
+    border-radius: 32;
+    border-width: 2;
+    border-color: rgba(248, 113, 113, 0.7);
+    min-height: 58;
+  padding-top: 8;
+  padding-bottom: 8;
+
+    cursor: pointer;
+  }
+
+  .mic-button:hover {
+    background-color: rgba(239, 68, 68, 0.4);
+    border-color: rgba(254, 202, 202, 1);
+  }
+
+  .mic-button-muted {
+    background-color: rgba(239, 68, 68, 0.22);
+    border-color: rgba(248, 113, 113, 0.7);
+  }
+
+  .mic-button-unmuted {
+    background-color: rgba(34, 197, 94, 0.24);
+    border-color: rgba(74, 222, 128, 0.8);
+  }
+
+  .mic-icon {
+    width: 42;
+    height: 42;
+  }
+
+  /* =========================================================
+     CLOSE BUTTON
+     ========================================================= */
+
+  .close-button {
+    width: 58;
+    height: 58;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(255, 255, 255, 0.12);
+
+    border-radius: 29;
+    border-width: 1;
+    border-color: rgba(255, 255, 255, 0.25);
+
+    color: #ffffff;
+    font-size: 22;
+    font-weight: 700;
+    min-height: 58;
+    padding-top: 8;
+    padding-bottom: 8;
+    cursor: pointer;
+  }
+
+  .close-button:hover {
+    background-color: rgba(239, 68, 68, 0.32);
+    border-color: rgba(248, 113, 113, 0.75);
+  }
+
+  /* =========================================================
+     WHOLE CLASS CONTROL
+     ========================================================= */
+    .focused-control {
+      border-width: 4;
+      border-color: rgba(250, 204, 21, 1);
+      background-color: rgba(250, 204, 21, 0.22);
+    }
+  .global-control-card {
+    flex-direction: column;
+    gap: 16;
+
+    padding-top: 20;
+    padding-bottom: 20;
+    padding-left: 22;
+    padding-right: 22;
+
+    background-color: rgba(37, 99, 235, 0.12);
+
+    border-radius: 20;
+    border-width: 1;
+    border-color: rgba(96, 165, 250, 0.35);
+  }
+
+  .global-card-title {
+    color: #bfdbfe;
+    font-size: 19;
+    font-weight: 700;
+    font-family: inter;
+  }
+
+  .global-control-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 16;
+  }
+
+  .global-label {
+    width: 140;
+
+    color: #dbeafe;
+    font-size: 17;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .global-destination-area {
+    width: 260;
+    flex-direction: column;
+    gap: 8;
+  }
+
+  /* =========================================================
+     DESTINATION BUTTONS
+     ========================================================= */
+
+  .destination-toggle {
+    width: 250;
+    height: 52;
+
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+
+    padding-left: 16;
+    padding-right: 16;
+
+    background-color: rgba(255, 255, 255, 0.1);
+
+    border-radius: 13;
+    border-width: 1;
+    border-color: rgba(147, 197, 253, 0.55);
+
+    cursor: pointer;
+  }
+
+  .destination-toggle:hover {
+    background-color: rgba(96, 165, 250, 0.23);
+  }
+
+  .destination-text {
+    color: #ffffff;
+    font-size: 17;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .destination-arrow {
+    color: #bfdbfe;
+    font-size: 17;
+    font-weight: 700;
+  }
+
+  .destination-options {
+    width: 250;
+    flex-direction: column;
+    gap: 6;
+
+    padding-top: 8;
+    padding-bottom: 8;
+    padding-left: 8;
+    padding-right: 8;
+
+    background-color: rgba(17, 24, 39, 0.98);
+
+    border-radius: 12;
+    border-width: 1;
+    border-color: rgba(96, 165, 250, 0.4);
+    /* ✅ Make sure dropdown is clickable */
+    pointer-events: auto;
+    z-index: 1000;
+  }
+
+  .destination-option {
+    width: 234;
+    height: 42;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(255, 255, 255, 0.07);
+
+    border-radius: 9;
+
+    color: #ffffff;
+    font-size: 15;
+    font-family: inter;
+
+    cursor: pointer;
+    /* ✅ Ensure options are clickable */
+   pointer-events: auto;
+
+   min-height: 50;
+   padding-top: 8;
+   padding-bottom: 8;
+  }
+
+  .destination-option:hover {
+    background-color: rgba(96, 165, 250, 0.3);
+  }
+
+  /* =========================================================
+     GLOBAL ACTION BUTTONS
+     ========================================================= */
+
+  .start-all-button {
+    width: 160;
+    height: 52;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(34, 197, 94, 0.95);
+
+    border-radius: 13;
+    border-width: 1;
+    border-color: rgba(134, 239, 172, 0.9);
+
+    color: #ffffff;
+    font-size: 17;
+    font-weight: 700;
+
+    cursor: pointer;
+    min-height: 58;
+   padding-top: 8;
+   padding-bottom: 8;
+  }
+
+  .start-all-button:hover {
+    background-color: rgba(22, 163, 74, 1);
+  }
+
+  .return-all-button {
+    width: 210;
+    height: 52;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(59, 130, 246, 0.24);
+
+    border-radius: 13;
+    border-width: 1;
+    border-color: rgba(96, 165, 250, 0.65);
+
+    color: #ffffff;
+    font-size: 16;
+    font-weight: 700;
+    min-height: 58;
+    padding-top: 8;
+    padding-bottom: 8;
+    cursor: pointer;
+  }
+
+  .return-all-button:hover {
+    background-color: rgba(59, 130, 246, 0.4);
+  }
+
+  /* =========================================================
+     ONLINE STUDENTS SECTION
+     ========================================================= */
+
+  .student-section {
+    flex-direction: column;
+    gap: 14;
+  }
+
+  .student-section-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .student-section-title {
+    color: #bfdbfe;
+    font-size: 21;
+    font-weight: 700;
+    font-family: inter;
+  }
+
+  .online-count {
+    padding-top: 8;
+    padding-bottom: 8;
+    padding-left: 14;
+    padding-right: 14;
+
+    background-color: rgba(34, 197, 94, 0.16);
+
+    border-radius: 12;
+    border-width: 1;
+    border-color: rgba(74, 222, 128, 0.4);
+
+    color: #86efac;
+    font-size: 15;
+    font-weight: 700;
+    font-family: inter;
+  }
+
+  /* =========================================================
+     TABLE HEADER
+     ========================================================= */
+
+  .table-header {
+    flex-direction: row;
+    align-items: center;
+
+    padding-top: 12;
+    padding-bottom: 12;
+    padding-left: 16;
+    padding-right: 16;
+
+    background-color: rgba(255, 255, 255, 0.08);
+
+    border-radius: 14;
+  }
+
+  .header-student {
+    width: 250;
+    color: #93c5fd;
+    font-size: 15;
+    font-weight: 700;
+  }
+
+  .header-seat {
+    width: 170;
+    color: #93c5fd;
+    font-size: 15;
+    font-weight: 700;
+  }
+
+  .header-destination {
+    width: 300;
+    color: #93c5fd;
+    font-size: 15;
+    font-weight: 700;
+  }
+
+  .header-action {
+    width: 160;
+    color: #93c5fd;
+    font-size: 15;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  /* =========================================================
+     STUDENT ROWS
+     ========================================================= */
+
+  .student-list {
+    flex-direction: column;
+    gap: 12;
+  }
+
+  .student-row {
+    flex-direction: row;
+    align-items: center;
+
+    padding-top: 14;
+    padding-bottom: 14;
+    padding-left: 16;
+    padding-right: 16;
+
+    background-color: rgba(255, 255, 255, 0.06);
+
+    border-radius: 16;
+    border-width: 1;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .student-info {
+    width: 250;
+    flex-direction: column;
+    gap: 5;
+  }
+
+  .student-name {
+    color: #ffffff;
+    font-size: 18;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .student-status {
+    color: #86efac;
+    font-size: 14;
+    font-family: inter;
+  }
+
+  .student-seat {
+    width: 170;
+
+    color: #d1d5db;
+    font-size: 16;
+    font-family: inter;
+  }
+
+  .student-destination-area {
+    width: 300;
+    flex-direction: column;
+    gap: 8;
+  }
+
+  .student-destination-toggle {
+    width: 260;
+    height: 48;
+
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+
+    padding-left: 15;
+    padding-right: 15;
+
+    background-color: rgba(37, 99, 235, 0.23);
+
+    border-radius: 12;
+    border-width: 1;
+    border-color: rgba(96, 165, 250, 0.5);
+
+    cursor: pointer;
+
+    min-height: 58;
+    padding-top: 8;
+    padding-bottom: 8;
+  }
+
+  .student-destination-toggle:hover {
+    background-color: rgba(37, 99, 235, 0.4);
+  }
+
+  .student-action-area {
+    width: 160;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .student-start-button {
+    width: 130;
+    height: 48;
+
+    align-items: center;
+    justify-content: center;
+
+    background-color: rgba(34, 197, 94, 0.9);
+
+    border-radius: 12;
+    border-width: 1;
+    border-color: rgba(134, 239, 172, 0.85);
+
+    color: #ffffff;
+    font-size: 16;
+    font-weight: 700;
+
+  min-height: 58;
+  padding-top: 8;
+  padding-bottom: 8;
+    cursor: pointer;
+  }
+
+  .student-start-button:hover {
+    background-color: rgba(22, 163, 74, 1);
+  }
+
+  /* =========================================================
+     VISIBILITY CLASSES
+     ========================================================= */
+
+  .dropdown-hidden {
+    display: none;
+  }
+
+  .dropdown-visible {
+    display: flex;
+  }
+
+  .student-hidden {
+    display: none;
+  }
+
+  .student-visible {
+    display: flex;
+  }
+</style>
+
+<Panel
+  id="instructor-dashboard-root"
+  class="dashboard-root"
+>
+  <!-- =======================================================
+       HEADER
+       ======================================================= -->
+
+  <div class="dashboard-header">
+    <div class="dashboard-title-area">
+      <span class="dashboard-title">
+        Instructor Dashboard
+      </span>
+
+      <span class="dashboard-subtitle">
+        Manage online students and classroom destinations
+      </span>
+    </div>
+
+    <div class="header-actions">
+      <!-- Default state is muted -->
+
+      <button
+        id="instructor-mic-button"
+        class="mic-button mic-button-muted"
+      >
+        <img
+          id="instructor-mic-icon"
+          class="mic-icon"
+          src="./images/mic-off.png"
+        />
+      </button>
+
+      <button
+        id="dashboard-close-button"
+        class="close-button"
+      >
+        X
+      </button>
+    </div>
+  </div>
+
+  <!-- =======================================================
+       WHOLE CLASS CONTROL
+       ======================================================= -->
+
+  <div class="global-control-card">
+    <span class="global-card-title">
+      Whole Class Control
+    </span>
+
+    <div class="global-control-row">
+      <span class="global-label">
+        Destination
+      </span>
+
+      <div class="global-destination-area">
+        <button
+          id="global-destination-toggle"
+          class="destination-toggle"
+        >
+          <span
+            id="global-destination-text"
+            class="destination-text"
+          >
+            Class
+          </span>
+
+          <span class="destination-arrow">
+            v
+          </span>
+        </button>
+
+        <div
+          id="global-destination-options"
+          class="destination-options dropdown-hidden"
+        >
+          <button
+            id="global-class-option"
+            class="destination-option"
+          >
+            Class
+          </button>
+
+          <button
+            id="global-presentation-option"
+            class="destination-option"
+          >
+            Presentation
+          </button>
+
+          <button
+            id="global-game1-option"
+            class="destination-option"
+          >
+            Game 1
+          </button>
+        </div>
+      </div>
+
+      <button
+        id="start-all-button"
+        class="start-all-button"
+      >
+        Start All
+      </button>
+
+      <button
+        id="return-all-button"
+        class="return-all-button"
+      >
+        Return All to Class
+      </button>
+    </div>
+  </div>
+
+  <!-- =======================================================
+       ONLINE STUDENTS
+       ======================================================= -->
+
+  <div class="student-section">
+    <div class="student-section-header">
+      <span class="student-section-title">
+        Online Students
+      </span>
+
+      <span
+        id="online-student-count"
+        class="online-count"
+      >
+        0 Online
+      </span>
+    </div>
+
+    <div class="table-header">
+      <span class="header-student">
+        Student
+      </span>
+
+      <span class="header-seat">
+        Seat
+      </span>
+
+      <span class="header-destination">
+        Destination
+      </span>
+
+      <span class="header-action">
+        Action
+      </span>
+    </div>
+
+    <div class="student-list">
+      <!-- ===================================================
+           STUDENT ROW 1
+           =================================================== -->
+
+      <div
+        id="student-row-1"
+        class="student-row student-hidden"
+      >
+        <div class="student-info">
+          <span
+            id="student-name-1"
+            class="student-name"
+          >
+            Student 1
+          </span>
+
+          <span
+            id="student-status-1"
+            class="student-status"
+          >
+            Online
+          </span>
+        </div>
+
+        <span
+          id="student-seat-1"
+          class="student-seat"
+        >
+          No seat
+        </span>
+
+        <div class="student-destination-area">
+          <button
+            id="student-destination-toggle-1"
+            class="student-destination-toggle"
+          >
+            <span
+              id="student-destination-text-1"
+              class="destination-text"
+            >
+              Class
+            </span>
+
+            <span class="destination-arrow">
+              v
+            </span>
+          </button>
+
+          <div
+            id="student-destination-options-1"
+            class="destination-options dropdown-hidden"
+          >
+            <button
+              id="student-class-option-1"
+              class="destination-option"
+            >
+              Class
+            </button>
+
+            <button
+              id="student-presentation-option-1"
+              class="destination-option"
+            >
+              Presentation
+            </button>
+
+            <button
+              id="student-game1-option-1"
+              class="destination-option"
+            >
+              Game 1
+            </button>
+          </div>
+        </div>
+
+        <div class="student-action-area">
+          <button
+            id="student-start-button-1"
+            class="student-start-button"
+          >
+            Start
+          </button>
+        </div>
+      </div>
+
+      <!-- ===================================================
+           STUDENT ROW 2
+           =================================================== -->
+
+      <div
+        id="student-row-2"
+        class="student-row student-hidden"
+      >
+        <div class="student-info">
+          <span
+            id="student-name-2"
+            class="student-name"
+          >
+            Student 2
+          </span>
+
+          <span
+            id="student-status-2"
+            class="student-status"
+          >
+            Online
+          </span>
+        </div>
+
+        <span
+          id="student-seat-2"
+          class="student-seat"
+        >
+          No seat
+        </span>
+
+        <div class="student-destination-area">
+          <button
+            id="student-destination-toggle-2"
+            class="student-destination-toggle"
+          >
+            <span
+              id="student-destination-text-2"
+              class="destination-text"
+            >
+              Class
+            </span>
+
+            <span class="destination-arrow">
+              v
+            </span>
+          </button>
+
+          <div
+            id="student-destination-options-2"
+            class="destination-options dropdown-hidden"
+          >
+            <button
+              id="student-class-option-2"
+              class="destination-option"
+            >
+              Class
+            </button>
+
+            <button
+              id="student-presentation-option-2"
+              class="destination-option"
+            >
+              Presentation
+            </button>
+
+            <button
+              id="student-game1-option-2"
+              class="destination-option"
+            >
+              Game 1
+            </button>
+          </div>
+        </div>
+
+        <div class="student-action-area">
+          <button
+            id="student-start-button-2"
+            class="student-start-button"
+          >
+            Start
+          </button>
+        </div>
+      </div>
+
+      <!-- ===================================================
+           STUDENT ROW 3
+           =================================================== -->
+
+      <div
+        id="student-row-3"
+        class="student-row student-hidden"
+      >
+        <div class="student-info">
+          <span
+            id="student-name-3"
+            class="student-name"
+          >
+            Student 3
+          </span>
+
+          <span
+            id="student-status-3"
+            class="student-status"
+          >
+            Online
+          </span>
+        </div>
+
+        <span
+          id="student-seat-3"
+          class="student-seat"
+        >
+          No seat
+        </span>
+
+        <div class="student-destination-area">
+          <button
+            id="student-destination-toggle-3"
+            class="student-destination-toggle"
+          >
+            <span
+              id="student-destination-text-3"
+              class="destination-text"
+            >
+              Class
+            </span>
+
+            <span class="destination-arrow">
+              v
+            </span>
+          </button>
+
+          <div
+            id="student-destination-options-3"
+            class="destination-options dropdown-hidden"
+          >
+            <button
+              id="student-class-option-3"
+              class="destination-option"
+            >
+              Class
+            </button>
+
+            <button
+              id="student-presentation-option-3"
+              class="destination-option"
+            >
+              Presentation
+            </button>
+
+            <button
+              id="student-game1-option-3"
+              class="destination-option"
+            >
+              Game 1
+            </button>
+          </div>
+        </div>
+
+        <div class="student-action-area">
+          <button
+            id="student-start-button-3"
+            class="student-start-button"
+          >
+            Start
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</Panel>

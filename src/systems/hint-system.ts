@@ -27,7 +27,7 @@ export class HintSystem extends createSystem({
  private activeHints: Map<string, { left: HTMLElement; right: HTMLElement }> = new Map();
  private hideTimeout: any = null;
  private seatConfirmed = false; // Track if seat is confirmed
-
+ private raiseHandReleased = false;
 
  init() {
    // Detect VR mode
@@ -188,28 +188,55 @@ export class HintSystem extends createSystem({
 
 
  // New method specifically for VR controller hints after seat confirmation
- private showVRControllerHints() {
-   if (!this.isVR) {
-     // For web mode, show different hints
-     this.showHints(
-       'Press M for Menu',     // Left bottom
-       'Controls Available',    // Right bottom
-       8000,                    // 8 seconds
-       'info'
-     );
-     return;
-   }
+private showVRControllerHints() {
+  const hintDuration = this.isVR ? 10000 : 8000;
 
+  if (!this.isVR) {
+    this.showHints(
+      "Press M for Menu",
+      "Controls Available",
+      hintDuration,
+      "info"
+    );
+  } else {
+    this.showHints(
+      "Press X to open menu",
+      "Press A to change mode",
+      hintDuration,
+      "info"
+    );
+  }
 
-   // VR Mode - Show controller hints
-   this.showHints(
-     'Press X to open menu',    // Left bottom - VR left controller
-     'Press A to change mode',  // Right bottom - VR right controller
-     10000,                     // 10 seconds (longer for VR)
-     'info'
-   );
- }
+  /*
+   * Wait for:
+   * 1. Hint duration
+   * 2. The 400 ms fade-out animation
+   *
+   * Then allow the Raise Hand button to appear.
+   */
+  setTimeout(() => {
+    this.releaseRaiseHandButton();
+  }, hintDuration + 450);
+}
+private releaseRaiseHandButton(): void {
+  // Prevent the event from running more than once
+  if (this.raiseHandReleased) {
+    return;
+  }
 
+  this.raiseHandReleased = true;
+
+  (window as any).isHintVisible = false;
+  (window as any).isRaiseHandReady = true;
+
+  window.dispatchEvent(
+    new CustomEvent("hintFinished")
+  );
+
+  console.log(
+    "[HintSystem] Hint disappeared — Raise Hand button can appear"
+  );
+}
 
  public showHints(
    leftText: string,

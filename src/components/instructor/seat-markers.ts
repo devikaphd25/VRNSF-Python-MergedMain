@@ -9,6 +9,7 @@ import {
 
 interface Student {
   id: string;
+  name?: string;
   seat: string;
   mode: string;
   isDemo?: boolean;
@@ -154,7 +155,7 @@ export function updateSeatMarkers(
 
     if (!marker) {
       const texture = createTexture(
-        student.id.substring(0, 6),
+       student.name ?? student.id.substring(0, 6),
         student.mode
       );
 
@@ -165,7 +166,7 @@ export function updateSeatMarkers(
         })
       );
 
-      marker.scale.set(0.75, 0.75, 0.75);
+      marker.scale.set(0.65, 0.65, 0.65);
       
       // Start hidden until player faces stage
       marker.visible = false;
@@ -176,7 +177,7 @@ export function updateSeatMarkers(
 
     marker.position.set(
       pos.x,
-      pos.y + 1.45,
+      pos.y + 0.75,
       pos.z
     );
   });
