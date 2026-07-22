@@ -1,70 +1,174 @@
-# VR-Classroom
+# VR Learning Platform
 
-A WebXR experience built with [Immersive Web SDK (IWSDK)](https://iwsdk.dev/) — Meta's open-source framework for building immersive web apps on top of Three.js.
+A multi-user WebXR learning environment built with the Immersive Web SDK (IWSDK). The platform consists of a virtual classroom and an individual Python Type Lab connected through Socket.IO for real-time communication.
 
-## Features
+---
 
-- Entity Component System (ECS) architecture
-- Spatial UI panels
-- Runs in VR/AR headsets, with mouse-and-keyboard emulation on desktop browsers — no headset required for development
+# System Architecture
 
-## Prerequisites
+The platform consists of the following components:
 
-- [Node.js](https://nodejs.org/) (LTS recommended)
-- A WebXR-compatible headset (Meta Quest, HTC Vive, etc.) for immersive testing — optional, thanks to the built-in emulator (IWER)
+| Component | Port | Description |
+|-----------|------|-------------|
+| Classroom Server | **3001** | Manages classroom logic, instructor controls, student sessions, and communication with the lab. |
+| Classroom Client | **8081** | VR classroom experience for students and instructors. |
+| Python Type Lab Client | **8082** | Individual Python typing lab environment. |
 
-## Getting Started
+```
+                 +----------------------+
+                 | Classroom Server     |
+                 |      Port 3001       |
+                 +----------+-----------+
+                            |
+          ---------------------------------------
+          |                                     |
++----------------------+              +----------------------+
+| Classroom Client     |              | Python Type Lab      |
+|      Port 8081       |              |      Port 8082       |
++----------------------+              +----------------------+
+```
 
-### Install dependencies
+The Classroom Server coordinates communication between the classroom and the Python Type Lab. Student identity, seat assignment, and learning progress are preserved while transitioning between environments.
+
+---
+
+# Features
+
+- Multi-user VR classroom
+- Instructor dashboard
+- Student seat selection
+- Raise hand functionality
+- Presentation mode
+- Individual Python Type Lab
+- Automatic return to classroom with seat restoration
+- Real-time synchronization using Socket.IO
+
+---
+
+# Prerequisites
+
+- Node.js (LTS recommended)
+- npm
+- WebXR compatible browser or VR headset (optional for development)
+
+---
+
+# Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/UMESVRTeam/VR-learning.git
+cd VR-learning
+```
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-### Run the development server
+---
+
+# Running the Project
+
+### 1. Start the Classroom Server
+
+```bash
+node server.js
+```
+
+Expected:
+
+```
+CLASSROOM SERVER
+Port: 3001
+```
+
+---
+
+### 2. Start the Classroom Client
 
 ```bash
 npm run dev
 ```
 
-This starts the Vite-based dev server with hot reload. Open the printed local URL in your browser to test with mouse/keyboard, or connect a headset on the same network to test immersively.
+The classroom client runs on:
 
-### Build for production
+```
+https://localhost:8081
+```
+
+---
+
+### 3. Start the Python Type Lab
+
+From the Python Lab project:
 
 ```bash
-npm run build
+cd ../VR-learning-python-type-lab
+npm install
+npm run dev
 ```
 
-## Project Structure
+The lab client runs on:
 
 ```
-vr-classroom/
-├── src/              # Application source code
-├── public/           # Static assets (models, textures, audio)
-├── vite.config.ts    # Build config with IWSDK plugins
-└── package.json
+https://localhost:8082
 ```
 
-## Tech Stack
+---
 
-- [Three.js](https://threejs.org/) — 3D rendering
-- [IWSDK](https://iwsdk.dev/) (`@iwsdk/core`) — WebXR framework, ECS, input, locomotion, spatial UI
-- [elics](https://github.com/elics-js/elics) — ECS engine
-- Vite — build tooling
+# GitHub Workflow
 
-## Assets
+The repository is organized into two development branches.
 
-3D models should be in **GLTF/GLB** format. Convert other formats (FBX, OBJ, etc.) using [Blender](https://www.blender.org/).
+| Branch | Purpose |
+|---------|---------|
+| `main` | VR Classroom |
+| `feature/python-type-lab` | Python Type Lab |
 
-## Deployment
+Recommended local structure:
 
-Build the project (`npm run build`) and deploy the output to any static host. WebXR apps built with IWSDK can be shared via a simple URL — no app store required.
+```
+VR-learning-classroom/
+    └── main
 
-## License
+VR-learning-python-type-lab/
+    └── feature/python-type-lab
+```
 
-TBD
+Develop each project in its corresponding branch to keep classroom and lab development independent.
 
-## Resources
+---
 
-- [IWSDK Documentation](https://iwsdk.dev/)
-- [IWSDK GitHub](https://github.com/facebook/immersive-web-sdk)
+# Project Structure
+
+```
+VR-learning/
+│
+├── server.js
+├── src/
+├── public/
+├── ui/
+├── package.json
+└── vite.config.ts
+```
+
+---
+
+# Technologies
+
+- Immersive Web SDK (IWSDK)
+- Three.js
+- Node.js
+- Express
+- Socket.IO
+- TypeScript
+- Vite
+
+---
+
+# License
+
+University of Maryland Eastern Shore (UMES)
