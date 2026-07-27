@@ -1,0 +1,36 @@
+<style>
+  .results-button {
+    width: 13;
+    height: 13;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.5;
+    background-color: rgba(6, 78, 59, 0.96);
+    border-width: 0.3;
+    border-color: #6ee7b7;
+    border-radius: 6.5;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 11001;
+  }
+
+  .results-icon {
+    color: #d1fae5;
+    font-size: 3.6;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .results-label {
+    color: white;
+    font-size: 1.25;
+    font-weight: bold;
+    text-align: center;
+  }
+</style>
+
+<Button id="lab-results-open-button" class="results-button">
+  <Text class="results-icon">LAB</Text>
+  <Text class="results-label">RESULTS</Text>
+</Button>

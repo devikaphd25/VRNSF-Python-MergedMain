@@ -1,4 +1,5 @@
 // components/instructor/seat-markers.ts
+
 import {
   Sprite,
   SpriteMaterial,
@@ -69,7 +70,10 @@ function createTexture(name: string, mode: string) {
   ctx.fillStyle = "white";
   ctx.font = "bold 34px Arial";
   ctx.textAlign = "center";
-  ctx.fillText(name, 256, 345);
+
+  // ✅ Show actual name (not ID)
+  const displayName = name.length > 8 ? name.substring(0, 8) + "..." : name;
+  ctx.fillText(displayName, 256, 345);
 
   return new CanvasTexture(canvas);
 }
@@ -83,15 +87,15 @@ function checkPlayerFacingStage(): boolean {
   try {
     const forward = new Vector3(0, 0, -1);
     forward.applyQuaternion(playerRef.quaternion);
-    
+
     const playerPos = new Vector3();
     playerRef.getWorldPosition(playerPos);
-    
+
     const toStage = new Vector3(0, playerPos.y, 0).sub(playerPos);
     toStage.normalize();
-    
+
     const dot = forward.dot(toStage);
-    
+
     return dot > FACING_THRESHOLD;
   } catch (e) {
     return true;
@@ -104,7 +108,7 @@ function checkPlayerFacingStage(): boolean {
 export function updateMarkerVisibility(player: any) {
   playerRef = player;
   isFacingStage = checkPlayerFacingStage();
-  
+
   markers.forEach((marker) => {
     marker.visible = isFacingStage;
   });
@@ -120,10 +124,13 @@ export function updateSeatMarkers(
 ) {
   console.log("[SeatMarkers] Updating markers for", students.length, "students");
 
+  // ✅ Filter out demo students and students without seats
+  const realStudents = students.filter(s => !s.isDemo && s.seat && s.seat !== "Not selected");
+
+  console.log("[SeatMarkers] Real students with seats:", realStudents.length);
+
   // Get current student IDs
-  const currentStudentIds = students
-    .filter(s => s.seat !== "Not selected")
-    .map(s => s.id);
+  const currentStudentIds = realStudents.map(s => s.id);
 
   // Remove markers for students no longer in the list
   const toRemove: string[] = [];
@@ -142,11 +149,17 @@ export function updateSeatMarkers(
   toRemove.forEach(id => markers.delete(id));
 
   // Update or create markers
-  students.forEach(student => {
-    if (student.seat === "Not selected") return;
+  realStudents.forEach(student => {
+    // ✅ Use the actual student name (from server)
+    const displayName = student.name || student.id.substring(0, 6);
+
+    console.log(`[SeatMarkers] Creating marker for ${displayName} at ${student.seat}`);
 
     const seat = classroom.getObjectByName(student.seat);
-    if (!seat) return;
+    if (!seat) {
+      console.warn(`[SeatMarkers] Seat not found: ${student.seat}`);
+      return;
+    }
 
     const pos = new Vector3();
     seat.getWorldPosition(pos);
@@ -154,25 +167,25 @@ export function updateSeatMarkers(
     let marker = markers.get(student.id);
 
     if (!marker) {
-      const texture = createTexture(
-       student.name ?? student.id.substring(0, 6),
-        student.mode
-      );
+      const texture = createTexture(displayName, student.mode);
 
       marker = new Sprite(
         new SpriteMaterial({
           map: texture,
-          transparent: true
+          transparent: true,
+          depthTest: false,  // ✅ Always render on top
         })
       );
 
       marker.scale.set(0.65, 0.65, 0.65);
-      
-      // Start hidden until player faces stage
-      marker.visible = false;
-      
+
+      // ✅ Start visible by default
+      marker.visible = true;
+
       scene.add(marker);
       markers.set(student.id, marker);
+
+      console.log(`[SeatMarkers] ✅ Created marker for ${displayName}`);
     }
 
     marker.position.set(
