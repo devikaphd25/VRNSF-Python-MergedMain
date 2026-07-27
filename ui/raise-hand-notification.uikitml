@@ -93,7 +93,7 @@
 
     <Panel id="notification-buttons" class="button-row">
         <Button id="notification-unmute" class="btn btn-unmute">
-            🔊 Unmute
+            ✋ Lower Hand
         </Button>
         <Button id="notification-cancel" class="btn btn-cancel">
             ✕ Cancel

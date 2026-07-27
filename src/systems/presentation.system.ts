@@ -20,6 +20,8 @@ export class PresentationSystem extends createSystem({}) {
   private savedSeatRotationY = 0;
   private presentationScreen?: Mesh;
   private blackRoom?: Mesh;
+  private transitionInProgress = false;
+  private savedClassroomUi = new Map<any, boolean>();
 
   init(): void {
     console.log("[PresentationSystem] Initializing");
@@ -143,6 +145,27 @@ export class PresentationSystem extends createSystem({}) {
   }
 
   private togglePresentationMode() {
+    if (this.transitionInProgress) {
+      return;
+    }
+
+    const transition =
+      (window as any).performEnvironmentTransition as
+        ((action: () => void) => Promise<void>) | undefined;
+
+    if (!transition) {
+      this.applyPresentationMode();
+      return;
+    }
+
+    this.transitionInProgress = true;
+    void transition(() => {
+      this.applyPresentationMode();
+      this.transitionInProgress = false;
+    });
+  }
+
+  private applyPresentationMode() {
     const instructorMesh = (window as any).instructorMesh;
     const classroomMesh = (window as any).classroomMesh;
 
@@ -153,8 +176,10 @@ export class PresentationSystem extends createSystem({}) {
       this.savedSeatQuaternion.copy(this.player.quaternion);
       this.savedSeatRotationY = this.player.rotation.y;
       (window as any).isPresentationOpen = true;
+      (window as any).isPresentationActive = true;
       if (classroomMesh) classroomMesh.visible = false;
       if (instructorMesh) instructorMesh.visible = false;
+      this.setClassroomUiVisible(false);
       if (this.blackRoom) this.blackRoom.visible = true;
       if (this.presentationScreen) this.presentationScreen.visible = true;
       this.updatePresentationTexture();
@@ -172,17 +197,47 @@ export class PresentationSystem extends createSystem({}) {
       this.player.quaternion.copy(this.savedSeatQuaternion);
       this.player.rotation.y = this.savedSeatRotationY;
       (window as any).isPresentationOpen = false;
+      (window as any).isPresentationActive = false;
       if (classroomMesh) classroomMesh.visible = true;
       if (instructorMesh) instructorMesh.visible = true;
+      this.setClassroomUiVisible(true);
       if (this.blackRoom) this.blackRoom.visible = false;
       if (this.presentationScreen) this.presentationScreen.visible = false;
 
       this.renderer.setClearColor(0x87ceeb, 1);
 
       this.isPresentationMode = false;
+      window.dispatchEvent(
+        new CustomEvent("restoreClassroomSeat")
+      );
       console.log("🏫 Returned to Classroom Mode");
       socket.emit("modeChanged", "Classroom Mode");
     }
+  }
+
+  private setClassroomUiVisible(visible: boolean): void {
+    const objects = [
+      (window as any).menuEntity?.object3D,
+      (window as any).hintEntity?.object3D,
+      (window as any).raiseHandEntity?.object3D,
+    ].filter(Boolean);
+
+    if (!visible) {
+      this.savedClassroomUi.clear();
+      for (const object of objects) {
+        this.savedClassroomUi.set(
+          object,
+          object.visible
+        );
+        object.visible = false;
+      }
+      return;
+    }
+
+    for (const [object, wasVisible] of this.savedClassroomUi) {
+      object.visible = wasVisible;
+    }
+    this.savedClassroomUi.clear();
   }
   
   private updatePresentationTexture() {

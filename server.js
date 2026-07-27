@@ -1,6 +1,33 @@
 import express from "express";
 import http from "http";
+import fs from "node:fs";
+import path from "node:path";
 import { Server } from "socket.io";
+import db from "./database/database.js";
+
+import {
+  students,
+  labSessions,
+  returningStudents,
+  connectedUsers,
+} from "./server/state/store.js";
+
+import {
+  LabSession,
+} from "./server/state/LabSession.js";
+import {
+  getStudentList,
+  findStudent,
+} from "./server/services/student.service.js";
+
+import {
+  broadcastStudentList,
+} from "./server/services/broadcast.service.js";
+import loginRoutes from "./server/routes/login.routes.js";
+
+console.log(
+  db.prepare("SELECT COUNT(*) AS total FROM users").get()
+);
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -12,154 +39,51 @@ const io = new Server(httpServer, {
 });
 
 // ========================================================
-// DEMO STUDENTS & MAIN SERVER CODE
+// SEAT ASSIGNMENT MAP - 10 Students
 // ========================================================
-
-const demoStudents = [
-  {
-    id: "demo-1",
-    name: "Demo 1",
-    seat: "Seat_R1_01",
-    mode: "Classroom Mode",
-    isDemo: true,
-    handRaised: false,
-    isMuted: false,
-  },
-  {
-    id: "demo-2",
-    name: "Demo 2",
-    seat: "Seat_R1_02",
-    mode: "Presentation Mode",
-    isDemo: true,
-    handRaised: false,
-    isMuted: false,
-  },
-  {
-    id: "demo-3",
-    name: "Demo 3",
-    seat: "Seat_R1_03",
-    mode: "Classroom Mode",
-    isDemo: true,
-    handRaised: false,
-    isMuted: false,
-  },
-];
-
-const students = {};
-const labSessions = {};
-
-/*
- * Stores students who finished the lab and are waiting
- * to reconnect to the classroom with a new socket ID.
- */
-const returningStudents = {};
-
-// ✅ Lab Session Class
-class LabSession {
-  constructor(studentId, studentName, seat) {
-    this.studentId = studentId;
-    this.studentName = studentName;
-    this.seat = seat;
-    this.socketId = null;
-    this.score = 0;
-    this.streak = 0;
-    this.wpm = 0;
-    this.accuracy = 0;
-    this.completedExercises = [];
-    this.currentExercise = 0;
-    this.gameState = { lessonState: "idle" };
-    this.joinedAt = new Date();
+function getUser(username) {
+   if (!username) {
+    return null;
   }
 
-  completeExercise(exerciseId, data = {}) {
-    if (!this.completedExercises.includes(exerciseId)) {
-      this.completedExercises.push(exerciseId);
-    }
-    this.currentExercise = Math.max(this.currentExercise, exerciseId);
-    this.score += data.score || 1;
-    this.streak = data.streak || 0;
-    this.wpm = data.wpm || 0;
-    this.accuracy = data.accuracy || 0;
-  }
-
-  getNextExercise() {
-    const nextId = this.currentExercise + 1;
-    const exercises = [
-      { id: 1, code: "print('Hello, World!')", title: "Basic Print", difficulty: "beginner" },
-      { id: 2, code: "name = 'Python'", title: "Variables", difficulty: "beginner" },
-      { id: 3, code: "age = 25", title: "Numbers", difficulty: "beginner" },
-      { id: 4, code: "print(f'My name is {name}')", title: "f-strings", difficulty: "beginner" },
-      { id: 5, code: "def greet(name): return f'Hello, {name}'", title: "Functions", difficulty: "intermediate" },
-      { id: 6, code: "for i in range(5): print(i)", title: "Loops", difficulty: "intermediate" },
-      { id: 7, code: "if x > 0: print('Positive')", title: "Conditionals", difficulty: "intermediate" },
-      { id: 8, code: "class Student: def __init__(self, name): self.name = name", title: "Classes", difficulty: "advanced" },
-      { id: 9, code: "import math; print(math.sqrt(16))", title: "Imports", difficulty: "advanced" },
-      { id: 10, code: "lambda x: x * 2", title: "Lambda", difficulty: "advanced" },
-    ];
-    
-    const exercise = exercises.find(e => e.id === nextId) || exercises[0];
-    return {
-      exerciseId: exercise.id,
-      exerciseData: {
-        title: exercise.title,
-        code: exercise.code,
-        difficulty: exercise.difficulty,
-        description: `Type the following ${exercise.difficulty} code correctly.`,
-      },
-    };
-  }
-
-  getProgress() {
-    return {
-      completed: this.completedExercises.length,
-      total: 10,
-      score: this.score,
-      streak: this.streak,
-      accuracy: this.accuracy,
-      wpm: this.wpm,
-    };
-  }
+  return db.prepare(`
+    SELECT
+      id,
+      username,
+      fullName,
+      role,
+      seat,
+      location
+    FROM users
+    WHERE LOWER(username) = LOWER(?)
+    LIMIT 1
+  `).get(username);
 }
 
+
+
+function isInstructorSocket(socket) {
+  const userId = Number(socket.data.userId);
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return false;
+  }
+
+  const user = db.prepare(`
+    SELECT role
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).get(userId);
+
+  return user?.role === "instructor";
+}
 // ========================================================
-// HELPER FUNCTIONS
+// HAND RAISE / MUTE HELPERS
 // ========================================================
-
-function getStudentList() {
-  return [...demoStudents, ...Object.values(students)];
-}
-
-function broadcastStudentList() {
-  io.emit("studentList", getStudentList());
-}
-
-function findStudent(studentId) {
-  const demoStudent = demoStudents.find(
-    (student) => student.id === studentId
-  );
-
-  if (demoStudent) {
-    return {
-      student: demoStudent,
-      isDemo: true,
-    };
-  }
-
-  const realStudent = students[studentId];
-
-  if (realStudent) {
-    return {
-      student: realStudent,
-      isDemo: false,
-    };
-  }
-
-  return null;
-}
 
 function sendHandState(studentId, student, raised, fromInstructor = true) {
   const normalizedRaised = Boolean(raised);
-
   student.handRaised = normalizedRaised;
 
   const isRealStudent = Boolean(students[studentId]);
@@ -172,7 +96,6 @@ function sendHandState(studentId, student, raised, fromInstructor = true) {
     isRealStudent,
     socketIsConnected,
     fromInstructor,
-    allSockets: Array.from(io.sockets.sockets.keys()),
   });
 
   if (isRealStudent && socketIsConnected) {
@@ -182,10 +105,6 @@ function sendHandState(studentId, student, raised, fromInstructor = true) {
       raised: normalizedRaised,
       fromInstructor,
     });
-
-    console.log("[Server] handToggled sent directly to:", studentId);
-  } else if (isRealStudent) {
-    console.warn("[Server] Student exists, but socket is not connected:", studentId);
   }
 
   io.emit("raiseHandUpdated", {
@@ -198,9 +117,8 @@ function sendHandState(studentId, student, raised, fromInstructor = true) {
     fromInstructor,
   });
 
-  broadcastStudentList();
-
-  console.log(`[Server] ${student.name} hand state changed to:`, normalizedRaised ? "raised" : "lowered");
+  broadcastStudentList(io);
+  console.log(`[Server] ${student.name} hand state: ${normalizedRaised ? "raised" : "lowered"}`);
 }
 
 function sendMuteState(studentId, student, isMuted) {
@@ -222,66 +140,411 @@ function sendMuteState(studentId, student, isMuted) {
     seat: student.seat,
   });
 
-  broadcastStudentList();
-
-  console.log(`[Server] ${student.name} mute state:`, isMuted ? "muted" : "unmuted");
+  broadcastStudentList(io);
+  console.log(`[Server] ${student.name} mute state: ${isMuted ? "muted" : "unmuted"}`);
 }
 
 // ========================================================
-// ✅ SOCKET.IO CONNECTION HANDLER
+// SOCKET.IO CONNECTION HANDLER
 // ========================================================
-
+app.use(express.json());
+app.use("/api", loginRoutes);
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
-  const studentName = socket.id.substring(0, 6);
 
-  const existingStudentId = Object.keys(students).find((key) => {
-    return students[key].name === studentName && key !== socket.id;
-  });
+socket.on("registerClassroomClient", data => {
+  const userId = Number(data?.userId);
+  const requestedUsername = String(
+    data?.username ?? ""
+  ).trim();
 
-  if (existingStudentId) {
-    console.log(`[Server] Found existing student with same name: ${existingStudentId}, removing...`);
-    delete students[existingStudentId];
+  // Validate the permanent database user ID.
+  if (
+    !Number.isInteger(userId) ||
+    userId <= 0
+  ) {
+    socket.emit("classroomRegistrationError", {
+      message: "A valid user ID is required.",
+    });
+
+    return;
   }
 
-  const notSelectedStudents = Object.keys(students).filter((key) => {
-    const student = students[key];
-    return student.seat === "Not selected" && !student.isDemo;
-  });
+  // Find the user in SQLite.
+  const databaseUser = db.prepare(`
+    SELECT
+      id,
+      username,
+      fullName,
+      role,
+      seat,
+      location
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).get(userId);
 
-  notSelectedStudents.forEach((key) => {
-    console.log(`Removing unseated student: ${key}`);
-    delete students[key];
-  });
+  if (!databaseUser) {
+    socket.emit("classroomRegistrationError", {
+      message: "The user was not found.",
+    });
 
+    return;
+  }
+
+  // Confirm that the provided username belongs to this user ID.
+  if (
+    requestedUsername &&
+    databaseUser.username.toLowerCase() !==
+      requestedUsername.toLowerCase()
+  ) {
+    socket.emit("classroomRegistrationError", {
+      message:
+        "The username does not match the user ID.",
+    });
+
+    return;
+  }
+
+  /*
+   * Remove a previous classroom socket for the same
+   * permanent user. This prevents duplicate avatars.
+   */
+  const previousClassroomSocketId =
+    connectedUsers[userId]?.classroomSocketId;
+
+  if (
+    previousClassroomSocketId &&
+    previousClassroomSocketId !== socket.id
+  ) {
+    delete students[previousClassroomSocketId];
+
+    const previousSocket =
+      io.sockets.sockets.get(
+        previousClassroomSocketId
+      );
+
+    if (previousSocket) {
+      previousSocket.emit("sessionReplaced", {
+        message:
+          "Your classroom account was opened in another connection.",
+      });
+    }
+  }
+
+  // Create the cross-application connection record once.
+connectedUsers[userId] ??= {
+  userId: databaseUser.id,
+  username: databaseUser.username,
+  fullName: databaseUser.fullName,
+  role: databaseUser.role,
+  seat: databaseUser.seat,
+  classroomSocketId: null,
+  labSocketId: null,
+  location: "classroom",
+  mode: "Classroom Mode",
+  inLab: false,
+  score: 0,
+  accuracy: 0,
+  wpm: 0,
+  completedExercises: 0,
+};
+
+const connectedUser =
+  connectedUsers[userId];
+
+connectedUser.userId =
+  databaseUser.id;
+
+connectedUser.username =
+  databaseUser.username;
+
+connectedUser.fullName =
+  databaseUser.fullName;
+
+connectedUser.role =
+  databaseUser.role;
+
+connectedUser.seat =
+  databaseUser.seat;
+
+connectedUser.classroomSocketId =
+  socket.id;
+
+connectedUser.location =
+  "classroom";
+
+connectedUser.mode =
+  "Classroom Mode";
+
+connectedUser.inLab =
+  false;
+
+  // Store validated identity on this Socket.IO connection.
+  socket.data.userId = databaseUser.id;
+  socket.data.username = databaseUser.username;
+  socket.data.clientType = "classroom";
+
+  /*
+   * Create the classroom student here.
+   * Do not depend on automatic creation in io.on("connection").
+   */
   students[socket.id] = {
     id: socket.id,
-    name: socket.id.substring(0, 6),
-    seat: "Not selected",
+
+    userId: databaseUser.id,
+
+    username: databaseUser.username,
+
+    name:
+      databaseUser.fullName ??
+      databaseUser.username,
+
+    role:
+      databaseUser.role ??
+      "student",
+
+    seat:
+      databaseUser.seat ??
+      "Not selected",
+
+    location: "classroom",
+
     mode: "Classroom Mode",
+
     isDemo: false,
-    position: { x: 0, y: 1, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
+
+    position: {
+      x: 0,
+      y: 1,
+      z: 0,
+    },
+
+    rotation: {
+      x: 0,
+      y: 0,
+      z: 0,
+    },
+
     handRaised: false,
+
     isMuted: false,
+
+    inLab: false,
+
+    isDisconnected: false,
   };
+const returnRecord =
+  returningStudents[databaseUser.id];
 
+if (returnRecord) {
+  students[socket.id].seat =
+    returnRecord.seat;
+
+  students[socket.id].mode =
+    "Classroom Mode";
+
+  students[socket.id].location =
+    "classroom";
+
+  students[socket.id].inLab =
+    false;
+
+  students[socket.id].isDisconnected =
+    false;
+
+  delete returningStudents[
+    databaseUser.id
+  ];
+
+  console.log(
+    `[Server] Restored ${databaseUser.fullName} to ${students[socket.id].seat}`
+  );
+}
+  // Update the permanent database location.
+  db.prepare(`
+    UPDATE users
+    SET
+      location = 'classroom',
+      updatedAt = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(databaseUser.id);
+
+  /*
+   * Send all current players to this newly registered
+   * classroom client.
+   */
   socket.emit("currentPlayers", students);
-  broadcastStudentList();
+
+  // Automatically confirm the database-assigned seat.
+  if (databaseUser.seat) {
+    socket.emit(
+      "seatAccepted",
+      students[socket.id].seat
+    );
+  }
+
+socket.emit(
+  "classroomClientRegistered",
+  {
+    success: true,
+
+    user: {
+      id:
+        databaseUser.id,
+
+      username:
+        databaseUser.username,
+
+      fullName:
+        databaseUser.fullName,
+
+      role:
+        databaseUser.role,
+
+      seat:
+        students[socket.id].seat,
+
+      location:
+        "classroom",
+    },
+  }
+);
+  broadcastStudentList(io);
+
+  console.log(
+    `[Server] Classroom registered: ${databaseUser.fullName}`,
+    {
+      userId: databaseUser.id,
+      socketId: socket.id,
+      seat:students[socket.id].seat,
+
+    }
+  );
+});
 
   // ========================================================
-  // ✅ GAME CLIENT EVENTS
+  // GAME CLIENT EVENTS
   // ========================================================
+ socket.on("registerLabClient", (data = {}) => {
+  const userId = Number(data.userId);
 
-  // --- Game client ready ---
+  if (!Number.isInteger(userId) || userId <= 0) {
+    socket.emit("labRegistrationFailed", {
+      success: false,
+      message: "A valid user ID is required.",
+    });
+    return;
+  }
+
+  const user = db.prepare(`
+    SELECT
+      id,
+      username,
+      fullName,
+      role,
+      seat,
+      location
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).get(userId);
+
+  if (!user) {
+    socket.emit("labRegistrationFailed", {
+      success: false,
+      message: `User ID ${userId} was not found.`,
+    });
+    return;
+  }
+
+  if (user.role !== "student") {
+    socket.emit("labRegistrationFailed", {
+      success: false,
+      message: "Only students can register in the lab.",
+    });
+    return;
+  }
+
+  console.log("[Lab] Registering student:", {
+    userId: user.id,
+    username: user.username,
+    seat: user.seat,
+    socketId: socket.id,
+  });
+
+  connectedUsers[user.id] ??= {
+  userId: user.id,
+  username: user.username,
+  fullName: user.fullName,
+  role: user.role,
+  seat: user.seat,
+  classroomSocketId: null,
+  labSocketId: null,
+  location: "classroom",
+  mode: "Classroom Mode",
+  inLab: false,
+  score: 0,
+  accuracy: 0,
+  wpm: 0,
+  completedExercises: 0,
+};
+
+const connectedUser = connectedUsers[user.id];
+
+connectedUser.userId = user.id;
+connectedUser.username = user.username;
+connectedUser.fullName = user.fullName;
+connectedUser.role = user.role;
+connectedUser.seat = user.seat;
+
+connectedUser.labSocketId = socket.id;
+connectedUser.location = "python_lab";
+connectedUser.mode = "Game Mode";
+connectedUser.inLab = true;
+
+  const labSession = new LabSession({
+    studentId: user.id,
+    studentName: user.fullName || user.username,
+    seat: user.seat,
+    socketId: socket.id,
+  });
+
+  labSessions[user.id] = labSession;
+
+  db.prepare(`
+    UPDATE users
+    SET location = ?
+    WHERE id = ?
+  `).run("python_lab", user.id);
+socket.data.userId = user.id;
+socket.data.username = user.username;
+socket.data.role = user.role;
+socket.data.clientType = "lab";
+socket.data.location = "python_lab";
+
+  socket.emit("labRegistrationSuccess", {
+    success: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      seat: user.seat,
+      location: "python_lab",
+    },
+  });
+
+  broadcastStudentList(io);
+});
   socket.on("gameClientReady", (data) => {
     console.log(`[Server] 🎮 Game client ready: ${data.studentName} (${data.studentId})`);
     socket.isGameClient = true;
     socket.studentId = data.studentId;
     socket.studentName = data.studentName;
     socket.seat = data.seat;
-    
+
     socket.emit("gameClientReadyAck", {
       status: "connected",
       studentId: data.studentId,
@@ -290,212 +553,795 @@ io.on("connection", (socket) => {
   });
 
   // --- Student joins lab ---
-  socket.on("studentJoinLab", (data) => {
-    console.log(`[Server] 🧪 Student joining lab: ${data.studentName}`);
-    
-    const { studentId, studentName, seat } = data;
-    
-    let session = labSessions[studentId];
-    if (!session) {
-      session = new LabSession(studentId, studentName, seat);
-      labSessions[studentId] = session;
-      console.log(`[Server] 🆕 Created new lab for ${studentName}`);
+socket.on(
+  "studentJoinLab",
+  data => {
+    const userId =
+      Number(
+        data?.userId ??
+        socket.data.userId
+      );
+
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0
+    ) {
+      socket.emit(
+        "labJoinError",
+        {
+          message:
+            "A permanent user ID is required.",
+        }
+      );
+
+      return;
     }
-    session.socketId = socket.id;
 
-    socket.emit("labEnvironment", {
-      studentId,
-      studentName,
-      seat,
-      isIndividual: true,
-      message: `Welcome to your individual lab, ${studentName}!`,
-      labState: {
-        score: session.score,
-        completedExercises: session.completedExercises.length,
-        currentExercise: session.currentExercise,
-      },
-      gameState: session.gameState,
-    });
+    const databaseUser =
+      db.prepare(`
+        SELECT
+          fullName,
+          username,
+          seat
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `).get(userId);
 
-    const exercise = session.getNextExercise();
-    socket.emit("nextExercise", exercise);
+    if (!databaseUser) {
+      socket.emit(
+        "labJoinError",
+        {
+          message:
+            "The database user was not found.",
+        }
+      );
 
-    io.emit("studentInLabNotification", {
-      studentId: studentId,
-      studentName: studentName,
-      labId: "python-type-lab",
-      labName: "Python Type Lab",
-    });
+      return;
+    }
 
-    console.log(`[Server] ✅ ${studentName} entered lab (Total: ${Object.keys(labSessions).length})`);
-  });
+    const studentName =
+      databaseUser.fullName ??
+      databaseUser.username;
+
+    /*
+     * Database-only seat.
+     * Do not trust data.seat from the browser.
+     */
+    const seat =
+      databaseUser.seat ??
+      "Not selected";
+
+    console.log(
+      `[Server] Student joining lab: ${studentName} (${userId})`
+    );
+
+    let session =
+      labSessions[userId];
+
+    if (!session) {
+      session =
+        new LabSession(
+          userId,
+          studentName,
+          seat
+        );
+
+      labSessions[userId] =
+        session;
+    }
+
+    session.studentName =
+      studentName;
+
+    session.seat =
+      seat;
+
+    session.socketId =
+      socket.id;
+
+    socket.emit(
+      "labEnvironment",
+      {
+        userId,
+
+        studentId:
+          userId,
+
+        studentName,
+
+        seat,
+
+        isIndividual:
+          true,
+
+        message:
+          `Welcome to your individual lab, ${studentName}!`,
+
+        labState: {
+          score:
+            session.score,
+
+          completedExercises:
+            session
+              .completedExercises
+              .length,
+
+          currentExercise:
+            session.currentExercise,
+        },
+
+        gameState:
+          session.gameState,
+      }
+    );
+
+    socket.emit(
+      "nextExercise",
+      session.getNextExercise()
+    );
+
+    io.emit(
+      "studentInLabNotification",
+      {
+        userId,
+
+        studentId:
+          userId,
+
+        studentName,
+
+        seat,
+
+        labId:
+          "python-type-lab",
+
+        labName:
+          "Python Type Lab",
+      }
+    );
+  }
+);
 
   // --- Student completes exercise ---
-  socket.on("typingExerciseComplete", (data) => {
-    const studentId = Object.keys(labSessions).find(
-      id => labSessions[id].socketId === socket.id
-    );
-    
-    if (!studentId) {
-      console.warn("[Server] ⚠️ Unknown student completed exercise");
+socket.on(
+  "typingExerciseComplete",
+  data => {
+    const userId =
+      Number(
+        socket.data.userId
+      );
+
+    if (!userId) {
+      console.warn(
+        "[Server] Lab socket has no permanent user ID."
+      );
+
+      socket.emit(
+        "typingExerciseError",
+        {
+          message:
+            "Your lab identity was not found.",
+        }
+      );
+
       return;
     }
 
-    const session = labSessions[studentId];
-    session.completeExercise(data.exerciseId, {
-      score: data.score || 1,
-      streak: data.streak || 0,
-      wpm: data.wpm || 0,
-      accuracy: data.accuracy || 0,
-    });
+    const session =
+      labSessions[userId];
 
-    const progress = session.getProgress();
-    
-    socket.emit("typingResult", {
-      exerciseId: data.exerciseId,
-      status: "completed",
-      score: session.score,
-      streak: session.streak,
-      wpm: session.wpm,
-      accuracy: session.accuracy,
-      progress: progress,
-      message: `Great job! Score: ${session.score}`,
-    });
+    if (!session) {
+      console.warn(
+        `[Server] No lab session found for user ${userId}`
+      );
 
-    console.log(`[Server] 📊 ${session.studentName} - Score: ${session.score}, Exercises: ${progress.completed}/10`);
-  });
+      socket.emit(
+        "typingExerciseError",
+        {
+          message:
+            "Your lab session was not found.",
+        }
+      );
 
-  // --- Student requests next exercise ---
-  socket.on("requestNextExercise", (data) => {
-    const studentId = Object.keys(labSessions).find(
-      id => labSessions[id].socketId === socket.id
-    );
-    
-    if (!studentId) {
-      console.warn("[Server] ⚠️ Unknown student requested next exercise");
       return;
     }
 
-    const session = labSessions[studentId];
-    const currentId = data?.currentExerciseId || session.currentExercise;
-    
-    if (currentId >= 10) {
-      socket.emit("labComplete", {
-        message: "🎉 Congratulations! You've completed all exercises!",
-        finalScore: session.score,
-        finalStats: session.getProgress(),
+    session.completeExercise(
+      Number(data?.exerciseId),
+      {
+        score:
+          Number(data?.score) ||
+          1,
+
+        streak:
+          Number(data?.streak) ||
+          0,
+
+        wpm:
+          Number(data?.wpm) ||
+          0,
+
+        accuracy:
+          Number(data?.accuracy) ||
+          0,
+      }
+    );
+
+    const progress =
+      session.getProgress();
+
+    const connectedUser =
+      connectedUsers[userId];
+
+    if (connectedUser) {
+      connectedUser.score =
+        session.score;
+
+      connectedUser.accuracy =
+        session.accuracy;
+
+      connectedUser.wpm =
+        session.wpm;
+
+      connectedUser.completedExercises =
+        progress.completed;
+    }
+
+    socket.emit(
+      "typingResult",
+      {
+        exerciseId:
+          data?.exerciseId,
+
+        status:
+          "completed",
+
+        score:
+          session.score,
+
+        streak:
+          session.streak,
+
+        wpm:
+          session.wpm,
+
+        accuracy:
+          session.accuracy,
+
+        progress,
+
+        message:
+          `Great job! Score: ${session.score}`,
+      }
+    );
+
+    io.emit(
+      "studentLabProgress",
+      {
+        userId,
+
+        studentName:
+          session.studentName,
+
+        location:
+          "python_lab",
+
+        score:
+          session.score,
+
+        streak:
+          session.streak,
+
+        wpm:
+          session.wpm,
+
+        accuracy:
+          session.accuracy,
+
+        completedExercises:
+          progress.completed,
+
+        totalExercises:
+          progress.total,
+      }
+    );
+
+    console.log(
+      `[Server] ${session.studentName}: score ${session.score}, exercises ${progress.completed}/${progress.total}`
+    );
+  }
+);
+
+  // --- Integrated in-session Python card lab progress ---
+  socket.on("labProgressUpdated", data => {
+    const userId = Number(socket.data.userId);
+    const connectedUser = connectedUsers[userId];
+
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0 ||
+      !connectedUser ||
+      connectedUser.role !== "student"
+    ) {
+      socket.emit("labSessionError", {
+        message: "A registered student identity is required.",
       });
       return;
     }
 
-    const exercise = session.getNextExercise();
-    socket.emit("nextExercise", exercise);
-    
-    console.log(`[Server] 📚 ${session.studentName} requested next exercise: ${exercise.exerciseId}`);
-  });
+    let session = labSessions[userId];
+    if (!session) {
+      session = new LabSession(
+        userId,
+        connectedUser.fullName ?? connectedUser.username,
+        connectedUser.seat ?? "Not selected"
+      );
+      labSessions[userId] = session;
+    }
 
-  // --- Student leaves lab ---
-  socket.on("studentLeaveLab", (data) => {
-  const studentId =
-    data?.studentId ||
-    Object.keys(labSessions).find(
-      (id) =>
-        labSessions[id].socketId === socket.id
+    const totalCards = Math.max(1, Number(data?.totalCards) || 12);
+    const completedCards = Math.min(
+      totalCards,
+      Math.max(0, Number(data?.completedCards) || 0)
     );
 
-  if (!studentId) {
-    console.warn(
-      "[Server] studentLeaveLab received without student ID."
+    session.socketId = socket.id;
+    session.score = Math.max(0, Number(data?.score) || 0);
+    session.streak = Math.max(0, Number(data?.streak) || 0);
+    session.accuracy = Math.max(
+      0,
+      Math.min(100, Number(data?.accuracy) || 0)
+    );
+    session.totalCards = totalCards;
+    session.correctAnswers = Math.max(
+      0,
+      Number(data?.correctAnswers) || 0
+    );
+    session.wrongAnswers = Math.max(
+      0,
+      Number(data?.wrongAnswers) || 0
+    );
+    session.durationSeconds = Math.max(
+      0,
+      Number(data?.durationSeconds) || 0
+    );
+    session.status =
+      data?.status === "completed"
+        ? "completed"
+        : data?.status === "incomplete"
+          ? "incomplete"
+          : "working";
+    session.returnReason =
+      typeof data?.returnReason === "string"
+        ? data.returnReason
+        : null;
+    session.currentExercise = completedCards;
+    session.completedExercises = Array.from(
+      { length: completedCards },
+      (_, index) => index + 1
     );
 
-    socket.emit("labLeaveError", {
-      message: "Student session was not found."
+    connectedUser.location = "python_lab";
+    connectedUser.mode = "Game Mode";
+    connectedUser.inLab = true;
+    connectedUser.score = session.score;
+    connectedUser.accuracy = session.accuracy;
+    connectedUser.correctAnswers = session.correctAnswers;
+    connectedUser.wrongAnswers = session.wrongAnswers;
+    connectedUser.durationSeconds = session.durationSeconds;
+    connectedUser.labReturnReason = session.returnReason;
+    connectedUser.completedExercises = completedCards;
+    connectedUser.labStatus = session.status;
+
+    const classroomStudent = Object.values(students).find(
+      student => Number(student.userId) === userId
+    );
+
+    if (classroomStudent) {
+      classroomStudent.location = "python_lab";
+      classroomStudent.mode = "Game Mode";
+      classroomStudent.inLab = true;
+      classroomStudent.score = session.score;
+      classroomStudent.accuracy = session.accuracy;
+      classroomStudent.correctAnswers = session.correctAnswers;
+      classroomStudent.wrongAnswers = session.wrongAnswers;
+      classroomStudent.durationSeconds = session.durationSeconds;
+      classroomStudent.labReturnReason = session.returnReason;
+      classroomStudent.completedExercises = completedCards;
+      classroomStudent.totalExercises = totalCards;
+      classroomStudent.labStatus = session.status;
+    }
+
+    io.emit("studentLabProgress", {
+      userId,
+      studentName: session.studentName,
+      location: "python_lab",
+      ...session.getProgress(),
     });
 
+    broadcastStudentList(io);
+  });
+
+  socket.on("labCompleted", data => {
+    const userId = Number(socket.data.userId);
+    const session = labSessions[userId];
+
+    if (!session) {
+      return;
+    }
+
+    session.status = "completed";
+    session.returnReason = "student_completed";
+
+    io.emit("studentLabCompleted", {
+      userId,
+      studentName: session.studentName,
+      result: session.getProgress(),
+      clientResult: data?.result,
+    });
+
+    broadcastStudentList(io);
+  });
+
+  socket.on("labMistake", data => {
+    const userId = Number(socket.data.userId);
+    const session = labSessions[userId];
+    const connectedUser = connectedUsers[userId];
+
+    if (!session || !connectedUser) {
+      return;
+    }
+
+    const mistake = {
+      userId,
+      studentName:
+        connectedUser.fullName ??
+        connectedUser.username,
+      seat: connectedUser.seat,
+      cardId: String(data?.cardId ?? ""),
+      question: String(data?.question ?? ""),
+      selectedType: String(data?.selectedType ?? ""),
+      correctType: String(data?.correctType ?? ""),
+      attempt: Math.max(1, Number(data?.attempt) || 1),
+      occurredAt: new Date().toISOString(),
+    };
+
+    session.mistakes.push(mistake);
+
+    io.emit("labMistakesUpdated", {
+      totalMistakes:
+        Object.values(labSessions)
+          .reduce(
+            (total, item) =>
+              total + item.mistakes.length,
+            0
+          ),
+    });
+  });
+
+  socket.on("requestLabMistakes", () => {
+    if (!isInstructorSocket(socket)) {
+      return;
+    }
+
+    const allMistakes =
+      Object.values(labSessions)
+        .flatMap(session => session.mistakes);
+
+    const grouped = new Map();
+
+    for (const mistake of allMistakes) {
+      const key =
+        `${mistake.question}|${mistake.correctType}`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          question: mistake.question,
+          correctType: mistake.correctType,
+          count: 0,
+          students: new Set(),
+          wrongChoices: new Set(),
+        });
+      }
+
+      const item = grouped.get(key);
+      item.count += 1;
+      item.students.add(mistake.studentName);
+      item.wrongChoices.add(mistake.selectedType);
+    }
+
+    const mistakes =
+      Array.from(grouped.values())
+        .map(item => ({
+          question: item.question,
+          correctType: item.correctType,
+          count: item.count,
+          students: Array.from(item.students),
+          wrongChoices: Array.from(item.wrongChoices),
+        }))
+        .sort((a, b) => b.count - a.count);
+
+    socket.emit("labMistakesReport", {
+      totalMistakes: allMistakes.length,
+      mistakes,
+    });
+  });
+
+  socket.on("labReturnConfirmed", data => {
+    const userId = Number(socket.data.userId);
+    const connectedUser = connectedUsers[userId];
+
+    if (!connectedUser) {
+      return;
+    }
+
+    connectedUser.location = "classroom";
+    connectedUser.mode = "Classroom Mode";
+    connectedUser.inLab = false;
+    connectedUser.labStatus =
+      data?.reason === "student_completed"
+        ? "completed"
+        : "returned";
+
+    const classroomStudent = Object.values(students).find(
+      student => Number(student.userId) === userId
+    );
+
+    if (classroomStudent) {
+      classroomStudent.location = "classroom";
+      classroomStudent.mode = "Classroom Mode";
+      classroomStudent.inLab = false;
+      classroomStudent.labStatus =
+        data?.reason === "student_completed"
+          ? "completed"
+          : "returned";
+    }
+
+    const session = labSessions[userId];
+    const result = data?.result ?? session?.getProgress();
+
+    connectedUser.correctAnswers =
+      Number(result?.correctAnswers) || 0;
+    connectedUser.wrongAnswers =
+      Number(result?.wrongAnswers) || 0;
+    connectedUser.durationSeconds =
+      Number(result?.durationSeconds) || 0;
+    connectedUser.labReturnReason =
+      data?.reason ?? "instructor_return";
+
+    if (classroomStudent) {
+      classroomStudent.correctAnswers =
+        connectedUser.correctAnswers;
+      classroomStudent.wrongAnswers =
+        connectedUser.wrongAnswers;
+      classroomStudent.durationSeconds =
+        connectedUser.durationSeconds;
+      classroomStudent.labReturnReason =
+        connectedUser.labReturnReason;
+    }
+
+    if (session) {
+      session.status =
+        data?.reason === "student_completed"
+          ? "completed"
+          : session.status;
+      session.returnReason =
+        data?.reason ?? "instructor_return";
+    }
+
+    if (
+      session &&
+      !session.resultSaved
+    ) {
+      db.prepare(`
+        INSERT INTO game_results (
+          userId,
+          gameName,
+          score,
+          durationSeconds,
+          status,
+          completedAt
+        )
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(
+        userId,
+        "Python Type Lab",
+        Number(result?.score) || 0,
+        Number(result?.durationSeconds) || 0,
+        data?.reason === "student_completed"
+          ? "completed"
+          : "instructor_return"
+      );
+
+      session.resultSaved = true;
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET location = 'classroom', updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(userId);
+
+    io.emit("studentReturnedFromLab", {
+      userId,
+      studentName: connectedUser.fullName,
+      returnReason: data?.reason ?? "instructor_return",
+      labData: result,
+    });
+
+    broadcastStudentList(io);
+  });
+
+  // --- Student requests next exercise ---
+socket.on(
+  "requestNextExercise",
+  data => {
+    const userId =
+      Number(
+        socket.data.userId
+      );
+
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0
+    ) {
+      console.warn(
+        "[Server] Unknown student requested the next exercise."
+      );
+
+      socket.emit(
+        "labSessionError",
+        {
+          message:
+            "Your lab identity was not found.",
+        }
+      );
+
+      return;
+    }
+
+    const session =
+      labSessions[userId];
+
+    if (!session) {
+      socket.emit(
+        "labSessionError",
+        {
+          message:
+            "The lab session was not found.",
+        }
+      );
+
+      return;
+    }
+
+    const currentId =
+      Number(
+        data?.currentExerciseId ??
+        session.currentExercise
+      );
+
+    if (currentId >= 10) {
+      socket.emit(
+        "labComplete",
+        {
+          message:
+            "🎉 Congratulations! You've completed all exercises!",
+
+          finalScore:
+            session.score,
+
+          finalStats:
+            session.getProgress(),
+        }
+      );
+
+      return;
+    }
+
+    const exercise =
+      session.getNextExercise();
+
+    socket.emit(
+      "nextExercise",
+      exercise
+    );
+
+    console.log(
+      `[Server] ${session.studentName} requested exercise ${exercise.exerciseId}`
+    );
+  }
+);
+
+  // --- Student leaves lab ---
+socket.on("studentLeaveLab", data => {
+  const userId = Number(
+    data?.userId ??
+    socket.data.userId
+  );
+
+  if (!userId) {
+    socket.emit("labLeaveError", {
+      message: "User ID was not found.",
+    });
     return;
   }
 
-  const session = labSessions[studentId];
+  const session = labSessions[userId];
 
   if (!session) {
-    console.warn(
-      `[Server] No lab session found for ${studentId}`
-    );
-
     socket.emit("labLeaveError", {
-      message: "Lab session was not found."
+      message: "Lab session was not found.",
     });
+    return;
+  }
 
+  const databaseUser = db.prepare(`
+    SELECT
+      id,
+      username,
+      fullName,
+      seat
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).get(userId);
+
+  if (!databaseUser) {
+    socket.emit("labLeaveError", {
+      message: "The database user was not found.",
+    });
     return;
   }
 
   const returnSeat =
-    session.seat ||
-    data?.seat ||
+    databaseUser.seat ??
+    session.seat ??
     "Not selected";
 
-  const returnName =
-    session.studentName ||
-    data?.studentName ||
-    "Student";
-
-  console.log(
-    `[Server] 📤 ${returnName} finished lab and will return to ${returnSeat}`
-  );
-
-  /*
-   * Save the student's seat temporarily.
-   * The classroom page will reconnect with a new socket ID.
-   */
-  returningStudents[studentId] = {
-    previousStudentId: studentId,
-    studentName: returnName,
+  returningStudents[userId] = {
+    userId,
+    studentName: databaseUser.fullName,
+    username: databaseUser.username,
     seat: returnSeat,
     mode: "Classroom Mode",
     labData: session.getProgress(),
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
 
-  /*
-   * Remove any old classroom record. The old socket ID
-   * must not continue owning the seat.
-   */
-  if (students[studentId]) {
-    delete students[studentId];
+  db.prepare(`
+    UPDATE users
+    SET
+      location = 'classroom',
+      updatedAt = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(userId);
 
-    console.log(
-      `[Server] Removed old classroom record: ${studentId}`
-    );
-  }
+  socket.emit("labLeft", {
+    userId,
+    studentName: databaseUser.fullName,
+    username: databaseUser.username,
+    seat: returnSeat,
+    classroomUrl: "http://localhost:8081",
+    message: "Return to the classroom.",
+  });
 
   io.emit("studentReturnedFromLab", {
-    studentId,
-    studentName: returnName,
+    userId,
+    studentName: databaseUser.fullName,
     seat: returnSeat,
     labData: session.getProgress(),
-    waitingForClassroomReconnect: true
+    waitingForClassroomReconnect: true,
   });
 
-  /*
-   * Tell the lab client that it can now navigate
-   * back to the classroom frontend.
-   */
-  socket.emit("labLeft", {
-    studentId,
-    studentName: returnName,
-    seat: returnSeat,
-    autoSeat: true,
-    message: "Return to the classroom."
-  });
-
-  delete labSessions[studentId];
-
-  broadcastStudentList();
+  delete labSessions[userId];
 
   console.log(
-    `[Server] ✅ Return information saved for ${returnName}`
+    `[Server] ${databaseUser.fullName} will return to ${returnSeat}`
   );
 });
+
   // --- Get lab students list ---
   socket.on("getLabStudents", () => {
     const studentsList = Object.keys(labSessions).map(id => {
@@ -512,14 +1358,14 @@ io.on("connection", (socket) => {
         joinedAt: session.joinedAt,
       };
     });
-    
+
     socket.emit("labStudentsList", {
       students: studentsList,
       total: studentsList.length,
       labName: "Python Type Lab",
     });
   });
-  
+
   // ========================================================
   // STUDENT REQUEST HANDLERS
   // ========================================================
@@ -527,331 +1373,1282 @@ io.on("connection", (socket) => {
   socket.on("requestStudentList", () => {
     socket.emit("studentList", getStudentList());
   });
+socket.on(
+  "requestAssignedSeat",
+  data => {
+    const userId = Number(
+      data?.userId ??
+      socket.data.userId
+    );
 
-  socket.on("requestJoinSeat", (seat) => {
-    const student = students[socket.id];
-    if (!student) return;
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0
+    ) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat: null,
+          message:
+            "A valid database user ID is required.",
+        }
+      );
 
-    const takenSeats = getStudentList()
-      .map((currentStudent) => currentStudent.seat)
-      .filter((currentSeat) => currentSeat && currentSeat !== "Not selected");
-
-    if (takenSeats.includes(seat)) {
-      socket.emit("seatRejected", {
-        seat,
-        message: "This seat is already taken.",
-      });
       return;
     }
 
-    const existingStudent = getStudentList().find((s) => s.seat === seat && s.id !== socket.id);
-    if (existingStudent && !existingStudent.isDemo) {
-      const oldSocketId = existingStudent.id;
-      if (students[oldSocketId]) {
-        delete students[oldSocketId];
-        console.log(`Removed duplicate student ${oldSocketId} from seat ${seat}`);
-      }
-    }
+    /*
+     * Make sure this socket was registered as
+     * the same classroom user.
+     */
+    if (
+      socket.data.clientType !==
+        "classroom" ||
+      Number(socket.data.userId) !==
+        userId
+    ) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat: null,
+          message:
+            "Register the classroom client before requesting a seat.",
+        }
+      );
 
-    student.seat = seat;
-    socket.emit("seatAccepted", seat);
-    console.log(`${student.name} selected ${seat}`);
-    broadcastStudentList();
-  });
-  // ========================================================
-// RESTORE SEAT AFTER RETURNING FROM LAB
-// ========================================================
-
-socket.on("requestRestoreSeat", (data) => {
-console.log("[Server] 🔄 requestRestoreSeat received:", data);
-
-  const previousStudentId = data?.previousStudentId;
-  const requestedSeat = data?.seat;
-  const requestedName = data?.studentName;
-
-  // ✅ Check returningStudents record first
-  let returnRecord = null;
-  if (previousStudentId && returningStudents[previousStudentId]) {
-    returnRecord = returningStudents[previousStudentId];
-    console.log(`[Server] Found returning student record:`, returnRecord);
-  }
-
-  // ✅ Determine final seat and name
-  const finalSeat = returnRecord?.seat || requestedSeat;
-  const finalName = returnRecord?.studentName || requestedName || socket.id.substring(0, 6);
-
-  console.log(`[Server] Final seat: ${finalSeat}, Final name: ${finalName}`);
-
-  // ✅ Validate seat
-  if (!finalSeat || finalSeat === "Unknown seat" || finalSeat === "Not selected") {
-    console.warn("[Server] No valid seat to restore");
-    socket.emit("seatRestoreRejected", {
-      message: "No valid previous seat was provided."
-    });
-    return;
-  }
-
-  // ✅ Check if demo student has the seat
-  const demoOccupant = demoStudents.find(s => s.seat === finalSeat);
-  if (demoOccupant) {
-    console.warn(`[Server] Seat ${finalSeat} is taken by demo student`);
-    socket.emit("seatRestoreRejected", {
-      seat: finalSeat,
-      message: "The previous seat is assigned to a demo student."
-    });
-    return;
-  }
-
-  // ✅ Remove any stale student holding this seat (except current socket)
-  const staleStudentId = Object.keys(students).find((studentId) => {
-    if (studentId === socket.id) return false;
-    return students[studentId]?.seat === finalSeat;
-  });
-
-  if (staleStudentId) {
-    const staleStudent = students[staleStudentId];
-    const belongsToReturningStudent = staleStudentId === previousStudentId || staleStudent?.name === finalName;
-    
-    if (belongsToReturningStudent) {
-      delete students[staleStudentId];
-      console.log(`[Server] Removed stale seat owner ${staleStudentId}`);
-    } else {
-      console.warn(`[Server] Seat ${finalSeat} is taken by another student: ${staleStudent?.name}`);
-      socket.emit("seatRestoreRejected", {
-        seat: finalSeat,
-        message: "Your previous seat is now occupied by another student."
-      });
-      return;
-    }
-  }
-
-  // ✅ Remove any existing record for this socket
-  if (students[socket.id]) {
-    console.log(`[Server] Removing existing record for socket ${socket.id}`);
-    delete students[socket.id];
-  }
-
-  // ✅ CREATE THE STUDENT RECORD WITH THE NEW SOCKET ID
-  students[socket.id] = {
-    id: socket.id,
-    name: finalName,
-    seat: finalSeat,
-    mode: "Classroom Mode",
-    isDemo: false,
-    position: { x: 0, y: 1, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    handRaised: false,
-    isMuted: false,
-    inLab: false,
-    isDisconnected: false,
-  };
-
-  console.log(`[Server] ✅ Created student record: ${finalName} at ${finalSeat} (${socket.id})`);
-
-  // ✅ Clean up returningStudents
-  if (previousStudentId && returningStudents[previousStudentId]) {
-    delete returningStudents[previousStudentId];
-    console.log(`[Server] Cleaned up returning student record for ${previousStudentId}`);
-  }
-
-  // ✅ Broadcast student list FIRST (so marker appears immediately)
-  broadcastStudentList();
-  console.log(`[Server] 📢 Broadcasted student list with ${finalName} at ${finalSeat}`);
-
-  // ✅ Then emit seat accepted events
-  socket.emit("seatAccepted", finalSeat);
-  
-  socket.emit("seatRestored", {
-    studentId: socket.id,
-    previousStudentId: previousStudentId,
-    studentName: finalName,
-    seat: finalSeat,
-    mode: "Classroom Mode"
-  });
-
-  console.log(`[Server] ✅ ${finalName} restored to ${finalSeat} with socket ${socket.id}`);
-});
-
-
-  // ========================================================
-  // INSTRUCTOR SENDS STUDENT TO MODE (Individual)
-  // ========================================================
-
-  socket.on("instructorSendStudent", ({ studentId, destination }) => {
-    console.log(`[Server] 🎯 instructorSendStudent called`);
-    console.log(`[Server] 🎯 Student ID: ${studentId}, Destination: ${destination}`);
-    console.log(`[Server] 🎯 Sender socket: ${socket.id}`);
-
-    const result = findStudent(studentId);
-
-    if (!result) {
-      console.log(`[Server] Student ${studentId} not found`);
-      socket.emit("serverError", { message: "Student not found" });
       return;
     }
 
-    const student = result.student;
-    const isDemo = result.isDemo;
+    const student =
+      students[socket.id];
 
-    let mode = "Classroom Mode";
-    if (destination === "Presentation") {
-      mode = "Presentation Mode";
-    } else if (destination === "Game 1") {
-      mode = "Game Mode";
+    if (!student) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat: null,
+          message:
+            "The classroom student record was not found.",
+        }
+      );
+
+      return;
     }
 
-    student.mode = mode;
+    /*
+     * The database is the only source of truth.
+     */
+    const databaseUser =
+      db.prepare(`
+        SELECT
+          id,
+          fullName,
+          seat
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `).get(userId);
 
-    console.log(`[Server] ${student.name} sent to ${destination} (${mode})`);
+    if (!databaseUser) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat: null,
+          message:
+            "The database user was not found.",
+        }
+      );
 
-    broadcastStudentList();
-
-    if (!isDemo && students[studentId]) {
-      console.log(`[Server] 📤 Sending modeChanged to ${studentId}`);
-      io.to(studentId).emit("modeChanged", {
-        mode: mode,
-        destination: destination,
-        fromInstructor: true,
-      });
-    } else {
-      console.log(`[Server] ⚠️ Not sending modeChanged (isDemo: ${isDemo}, exists: ${!!students[studentId]})`);
+      return;
     }
 
-    io.emit("studentModeChanged", {
-      studentId: studentId,
-      mode: mode,
-      destination: destination,
-      name: student.name,
-      seat: student.seat,
-    });
-  });
+    const assignedSeat =
+      typeof databaseUser.seat ===
+        "string"
+        ? databaseUser.seat.trim()
+        : "";
 
-  // ========================================================
-  // ✅ INSTRUCTOR SENDS ALL STUDENTS TO DESTINATION
-  // ========================================================
+    if (
+      !assignedSeat ||
+      assignedSeat === "Not selected"
+    ) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat: null,
+          message:
+            `${databaseUser.fullName} does not have a seat assigned in the database.`,
+        }
+      );
 
-  socket.on("instructorSendAllToDestination", ({ destination }) => {
-    console.log(`[Server] 🚀 =========================================`);
-    console.log(`[Server] 🚀 instructorSendAllToDestination called`);
-    console.log(`[Server] 🚀 Destination: ${destination}`);
-    console.log(`[Server] 🚀 Socket ID: ${socket.id}`);
-    
-    let mode = "Classroom Mode";
-    let isGame = false;
-    let gameId = null;
-    
-    if (destination === "Presentation") {
-      mode = "Presentation Mode";
-    } else if (destination === "Game 1") {
-      mode = "Game Mode";
-      isGame = true;
-      gameId = "game1";
+      return;
     }
-    
-    console.log(`[Server] Mode: ${mode}, IsGame: ${isGame}, GameId: ${gameId}`);
-    
-    const realStudents = Object.values(students);
-    console.log(`[Server] Found ${realStudents.length} real students to send`);
-    
-    realStudents.forEach((student, index) => {
-      student.mode = mode;
-      console.log(`[Server] [${index + 1}/${realStudents.length}] Updated ${student.name} to ${mode}`);
-      
-      // ✅ If sending to game, notify student directly
-      if (isGame && gameId) {
-        student.inLab = true;
-        student.labGameId = gameId;
-        console.log(`[Server] 🎮 Notifying ${student.name} (${student.id}) to enter ${gameId}`);
-        
-        // Notify student to enter the game
-        io.to(student.id).emit("gameChanged", {
-         gameId,
-         mode,
-         destination,
 
-         studentId: student.id,
-         studentName: student.name,
-         seat: student.seat,
+    const occupiedByAnotherStudent =
+      Object.values(students).find(
+        otherStudent =>
+          otherStudent.id !==
+            socket.id &&
+          otherStudent.userId !==
+            userId &&
+          otherStudent.seat ===
+            assignedSeat &&
+          otherStudent.location ===
+            "classroom"
+      );
+
+    if (occupiedByAnotherStudent) {
+      socket.emit(
+        "seatRejected",
+        {
+          seat:
+            assignedSeat,
 
           message:
-            `You were sent to ${gameId}`
-        });
+            `${assignedSeat} is currently occupied by ${occupiedByAnotherStudent.name}.`,
+        }
+      );
+
+      return;
+    }
+
+    student.seat =
+      assignedSeat;
+
+    student.location =
+      "classroom";
+
+    student.mode =
+      "Classroom Mode";
+
+    student.inLab =
+      false;
+
+    student.isDisconnected =
+      false;
+
+    socket.emit(
+      "seatAccepted",
+      assignedSeat
+    );
+
+    broadcastStudentList(io);
+
+    console.log(
+      `[Server] Confirmed database seat for ${student.name}: ${assignedSeat}`
+    );
+  }
+);
+
+
+  // ========================================================
+  // RESTORE SEAT AFTER RETURNING FROM LAB
+  // ========================================================
+
+socket.on(
+  "requestRestoreSeat",
+  data => {
+    const userId = Number(
+      data?.userId ??
+      socket.data.userId
+    );
+
+    const student =
+      students[socket.id];
+
+    if (
+      !Number.isInteger(userId) ||
+      userId <= 0 ||
+      !student
+    ) {
+      socket.emit(
+        "seatRestoreRejected",
+        {
+          message:
+            "Register the classroom client before restoring the seat.",
+        }
+      );
+
+      return;
+    }
+
+    const databaseUser =
+      db.prepare(`
+        SELECT
+          fullName,
+          seat
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `).get(userId);
+
+    const finalSeat =
+      typeof databaseUser?.seat ===
+        "string"
+        ? databaseUser.seat.trim()
+        : "";
+
+    if (
+      !finalSeat ||
+      finalSeat === "Not selected"
+    ) {
+      socket.emit(
+        "seatRestoreRejected",
+        {
+          message:
+            "No database seat was assigned to this user.",
+        }
+      );
+
+      return;
+    }
+
+    student.seat =
+      finalSeat;
+
+    student.mode =
+      "Classroom Mode";
+
+    student.location =
+      "classroom";
+
+    student.inLab =
+      false;
+
+    student.isDisconnected =
+      false;
+
+    delete returningStudents[
+      userId
+    ];
+
+    socket.emit(
+      "seatAccepted",
+      finalSeat
+    );
+
+    socket.emit(
+      "seatRestored",
+      {
+        userId,
+
+        studentId:
+          socket.id,
+
+        studentName:
+          student.name,
+
+        seat:
+          finalSeat,
+
+        mode:
+          "Classroom Mode",
       }
-    });
-    
-    demoStudents.forEach(student => {
-      student.mode = mode;
-    });
-    
-    broadcastStudentList();
-    
-    console.log(`[Server] 📢 Broadcasting modeChanged to ALL students`);
-    io.emit("modeChanged", {
-      mode: mode,
-      destination: destination,
-      fromInstructor: true,
-    });
-    
-    io.emit("allStudentsModeChanged", {
-      mode: mode,
-      destination: destination,
-      message: `All students sent to ${destination}`,
-    });
-    
-    if (isGame) {
-      io.emit("allStudentsSentToGame", {
-        gameId: gameId,
-        destination: destination,
-        count: realStudents.length,
-        message: `${realStudents.length} students sent to ${destination}`,
+    );
+
+    broadcastStudentList(io);
+
+    console.log(
+      `[Server] ${student.name} restored to database seat ${finalSeat}`
+    );
+  }
+);
+
+  // ========================================================
+  // INSTRUCTOR EVENTS
+  // ========================================================
+
+  socket.on("saveLabReport", () => {
+    if (!isInstructorSocket(socket)) {
+      socket.emit("labReportSaved", {
+        success: false,
+        message: "Only instructors can save lab reports.",
+      });
+      return;
+    }
+
+    try {
+      const reportDirectory =
+        path.resolve(process.cwd(), "lab");
+
+      fs.mkdirSync(reportDirectory, {
+        recursive: true,
+      });
+
+      const now = new Date();
+      const timestamp =
+        now.toISOString()
+          .replace(/:/g, "-")
+          .replace(/\..+$/, "")
+          .replace("T", "_");
+
+      const fileName =
+        `lab-results-${timestamp}.csv`;
+      const mistakesFileName =
+        `lab-mistakes-${timestamp}.csv`;
+
+      const escapeCsv = value => {
+        const text = String(value ?? "");
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+
+      const rows = [
+        [
+          "Student",
+          "Username",
+          "Seat",
+          "Question",
+          "Total Questions",
+          "Correct Answers",
+          "Wrong Attempts",
+          "Score",
+          "Accuracy",
+          "Duration Seconds",
+          "Duration Formatted",
+          "Status",
+          "Return Reason",
+          "Location",
+          "Saved At",
+        ],
+      ];
+
+      Object.values(students)
+        .filter(student =>
+          student.role === "student" &&
+          !student.isDemo
+        )
+        .sort((a, b) =>
+          String(a.seat).localeCompare(
+            String(b.seat)
+          )
+        )
+        .forEach(student => {
+          const completed =
+            Number(student.completedExercises) || 0;
+          const total =
+            Number(student.totalExercises) || 12;
+          const status =
+            student.isDisconnected
+              ? "Offline"
+              : student.labStatus === "completed"
+                ? "Finished"
+                : student.mode === "Game Mode"
+                  ? "Working"
+                  : completed > 0
+                    ? "Returned"
+                    : "Waiting";
+          const durationSeconds =
+            Number(student.durationSeconds) || 0;
+          const durationFormatted =
+            `${Math.floor(durationSeconds / 60)}:${String(
+              durationSeconds % 60
+            ).padStart(2, "0")}`;
+
+          rows.push([
+            student.name,
+            student.username,
+            student.seat,
+            status === "Finished"
+              ? total
+              : Math.min(completed + 1, total),
+            total,
+            Number(student.correctAnswers) || 0,
+            Number(student.wrongAnswers) || 0,
+            Number(student.score) || 0,
+            Number(student.accuracy) || 0,
+            durationSeconds,
+            durationFormatted,
+            status,
+            student.labReturnReason ?? "",
+            student.location,
+            now.toISOString(),
+          ]);
+        });
+
+      const csv =
+        rows
+          .map(row =>
+            row.map(escapeCsv).join(",")
+          )
+          .join("\n") + "\n";
+
+      fs.writeFileSync(
+        path.join(reportDirectory, fileName),
+        csv,
+        "utf8"
+      );
+
+      const mistakeRows = [
+        [
+          "Student",
+          "Seat",
+          "Question",
+          "Selected Type",
+          "Correct Type",
+          "Attempt",
+          "Occurred At",
+        ],
+        ...Object.values(labSessions)
+          .flatMap(session => session.mistakes)
+          .map(mistake => [
+            mistake.studentName,
+            mistake.seat,
+            mistake.question,
+            mistake.selectedType,
+            mistake.correctType,
+            mistake.attempt,
+            mistake.occurredAt,
+          ]),
+      ];
+
+      const mistakesCsv =
+        mistakeRows
+          .map(row =>
+            row.map(escapeCsv).join(",")
+          )
+          .join("\n") + "\n";
+
+      fs.writeFileSync(
+        path.join(
+          reportDirectory,
+          mistakesFileName
+        ),
+        mistakesCsv,
+        "utf8"
+      );
+
+      socket.emit("labReportSaved", {
+        success: true,
+        fileName,
+        mistakesFileName,
+        folder: reportDirectory,
+      });
+    } catch (error) {
+      console.error(
+        "[Server] Could not save lab report:",
+        error
+      );
+
+      socket.emit("labReportSaved", {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unknown save error",
       });
     }
-    
-    console.log(`[Server] ✅ All ${realStudents.length} students processed for ${destination}`);
   });
 
-  // ========================================================
-  // INSTRUCTOR RETURNS ALL STUDENTS TO CLASS
-  // ========================================================
+  socket.on("instructorSendStudent", ({ studentId, destination }) => {
 
-  socket.on("instructorReturnAllToClass", () => {
-    console.log("[Server] Instructor returning ALL students to Class");
+    if (!isInstructorSocket(socket)) {
+    socket.emit("serverError", {
+      message: "Only instructors can perform this action."
+    });
+    return;
+  }
+    console.log(
+    `[Server] 🎯 instructorSendStudent: ${studentId} → ${destination}`
+  );
 
-    Object.values(students).forEach((student) => {
-        // ✅ Keep student in list, just update mode
-        student.mode = "Classroom Mode";
-        student.inLab = false;
-        
-        io.to(student.id).emit("modeChanged", {
-            mode: "Classroom Mode",
-            destination: "Class",
-            fromInstructor: true,
-        });
+  const student = findStudent(studentId);
+
+  if (!student) {
+    socket.emit("serverError", {
+      message: "Student not found",
     });
 
-    // ✅ Also clean up any lab sessions
-    Object.keys(labSessions).forEach((studentId) => {
-        const session = labSessions[studentId];
-        console.log(`[Server] 🧹 Cleaning up lab session for ${session.studentName}`);
-        delete labSessions[studentId];
+    return;
+  }
+
+  if (destination === "Game 1") {
+    student.mode = "Game Mode";
+    student.inLab = true;
+    student.isDisconnected = false;
+    student.labGameId = "python-type-lab";
+
+    console.log(
+      `[Server] 🧪 Sending ${student.name} to Python Type Lab`
+    );
+
+   if (!student.userId) {
+      socket.emit(
+        "serverError",
+        {
+          message:
+            `${student.name} does not have a permanent database user ID.`,
+        }
+      );
+
+      return;
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET
+        location = 'python_lab',
+        updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(student.userId);
+
+  io.to(student.id).emit(
+    "gameChanged",
+    {
+      gameId,
+
+      mode,
+
+      destination,
+
+      userId:
+        student.userId,
+
+      studentId:
+        student.id,
+
+      username:
+        student.username,
+
+      studentName:
+        student.name,
+
+      seat:
+        student.seat,
+
+      message:
+        `You were sent to ${gameId}`,
+    }
+);
+  } else {
+    student.inLab = false;
+
+    if (destination === "Presentation") {
+      student.mode = "Presentation Mode";
+    } else {
+      student.mode = "Classroom Mode";
+    }
+
+    io.to(studentId).emit("modeChanged", {
+      mode: student.mode,
+      destination,
+      fromInstructor: true,
     });
+  }
 
-    demoStudents.forEach((student) => {
-        student.mode = "Classroom Mode";
-    });
+  broadcastStudentList(io);
 
-    // ✅ Broadcast updated student list (markers reappear)
-    broadcastStudentList();
-
-    io.emit("allStudentsReturnedToClass", {
-        message: "All students returned to Class mode",
-    });
-
-    console.log("[Server] All students returned to Class mode");
+  io.emit("studentModeChanged", {
+    studentId: student.id,
+    mode: student.mode,
+    destination,
+    name: student.name,
+    seat: student.seat,
+    inLab: student.inLab,
+  });
 });
+socket.on(
+  "instructorSendAllToDestination",
+  ({ destination }) => {
+    if (!isInstructorSocket(socket)) {
+      socket.emit("serverError", {
+        message:
+          "Only instructors can perform this action.",
+      });
+
+      return;
+    }
+
+    console.log(
+      `[Server] 🚀 Sending ALL students to ${destination}`
+    );
+
+    let mode =
+      "Classroom Mode";
+
+    let isGame =
+      false;
+
+    let gameId =
+      null;
+
+    if (
+      destination ===
+      "Presentation"
+    ) {
+      mode =
+        "Presentation Mode";
+    } else if (
+      destination ===
+      "Game 1"
+    ) {
+      mode =
+        "Game Mode";
+
+      isGame =
+        true;
+
+      gameId =
+        "python-type-lab";
+    }
+
+    /*
+     * Only select students who currently have an
+     * active classroom Socket.IO connection.
+     */
+    const realStudents =
+      Object.values(
+        connectedUsers
+      ).filter(
+        user =>
+          user.role ===
+            "student" &&
+          Boolean(
+            user.classroomSocketId
+          )
+      );
+
+    console.log(
+      `[Server] Found ${realStudents.length} real students to send`
+    );
+
+    realStudents.forEach(
+      (student, index) => {
+        student.mode =
+          mode;
+
+        console.log(
+          `[Server] [${index + 1}/${realStudents.length}] Updated ${student.fullName} to ${mode}`
+        );
+
+        if (
+          isGame &&
+          gameId
+        ) {
+          student.inLab =
+            true;
+
+          student.location =
+            "python_lab";
+
+          student.labGameId =
+            gameId;
+
+          if (
+            !student.userId
+          ) {
+            console.warn(
+              `[Server] ${student.fullName} has no permanent database user ID.`
+            );
+
+            return;
+          }
+
+          db.prepare(`
+            UPDATE users
+            SET
+              location = 'python_lab',
+              updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(
+            student.userId
+          );
+
+          labSessions[student.userId] =
+            new LabSession(
+              student.userId,
+              student.fullName ??
+                student.username,
+              student.seat ??
+                "Not selected"
+            );
+
+          console.log(
+            `[Server] 🎮 Notifying ${student.fullName} (${student.classroomSocketId}) to enter ${gameId}`
+          );
+
+          io.to(
+            student.classroomSocketId
+          ).emit(
+            "gameChanged",
+            {
+              gameId,
+              mode,
+              destination,
+
+              userId:
+                student.userId,
+
+              /*
+               * Permanent identity.
+               */
+              studentId:
+                student.userId,
+
+              username:
+                student.username,
+
+              studentName:
+                student.fullName,
+
+              seat:
+                student.seat,
+
+              message:
+                `You were sent to ${gameId}`,
+            }
+          );
+
+          return;
+        }
+
+        /*
+         * Presentation or classroom mode.
+         */
+        student.inLab =
+          false;
+
+        student.location =
+          "classroom";
+
+        io.to(
+          student.classroomSocketId
+        ).emit(
+          "modeChanged",
+          {
+            mode,
+            destination,
+            fromInstructor:
+              true,
+          }
+        );
+      }
+    );
+
+    broadcastStudentList(io);
+
+    io.emit(
+      "allStudentsModeChanged",
+      {
+        mode,
+        destination,
+
+        message:
+          `All students sent to ${destination}`,
+      }
+    );
+
+    if (isGame) {
+      io.emit(
+        "allStudentsSentToGame",
+        {
+          gameId,
+          destination,
+
+          count:
+            realStudents.length,
+
+          message:
+            `${realStudents.length} students sent to ${destination}`,
+        }
+      );
+    }
+
+    console.log(
+      `[Server] ✅ All ${realStudents.length} students processed for ${destination}`
+    );
+  }
+);
+
+  socket.on(
+  "instructorReturnStudentFromLab",
+  data => {
+     if (!isInstructorSocket(socket)) {
+      socket.emit("serverError", {
+        message: "Only instructors can perform this action."
+      });
+      return;
+    }
+    const userId =
+      Number(data?.userId);
+
+    const connectedUser =
+      connectedUsers[userId];
+
+    if (!userId || !connectedUser) {
+      socket.emit(
+        "serverError",
+        {
+          message:
+            "The lab student was not found.",
+        }
+      );
+
+      return;
+    }
+
+    const labSocketId =
+      connectedUser.labSocketId;
+
+    if (!labSocketId) {
+      socket.emit(
+        "serverError",
+        {
+          message:
+            "The student is not currently connected to the lab.",
+        }
+      );
+
+      return;
+    }
+
+    const session =
+      labSessions[userId];
+
+    const progress =
+      session?.getProgress() ?? {
+        completed:
+          connectedUser
+            .completedExercises,
+
+        total:
+          10,
+
+        score:
+          connectedUser.score,
+
+        streak:
+          0,
+
+        accuracy:
+          connectedUser.accuracy,
+
+        wpm:
+          connectedUser.wpm,
+      };
+
+    db.prepare(`
+      INSERT INTO game_results (
+        userId,
+        gameName,
+        score,
+        durationSeconds,
+        status,
+        completedAt
+      )
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      userId,
+      "Python Type Lab",
+      progress.score,
+      0,
+      "instructor_return"
+    );
+
+    db.prepare(`
+      UPDATE users
+      SET
+        location = 'classroom',
+        updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(userId);
+
+    connectedUser.location =
+      "classroom";
+
+    io.to(labSocketId).emit(
+      "returnToClassroom",
+      {
+        userId,
+
+        username:
+          connectedUser.username,
+
+        studentName:
+          connectedUser.fullName,
+
+        score:
+          progress.score,
+
+        accuracy:
+          progress.accuracy,
+
+        wpm:
+          progress.wpm,
+
+        completedExercises:
+          progress.completed,
+
+        seat:
+          db.prepare(`
+            SELECT seat
+            FROM users
+            WHERE id = ?
+          `).get(userId)?.seat,
+
+        classroomUrl:
+          "http://localhost:8081",
+      }
+    );
+
+    io.emit(
+      "studentReturnedFromLab",
+      {
+        userId,
+
+        studentName:
+          connectedUser.fullName,
+
+        labData:
+          progress,
+      }
+    );
+
+    console.log(
+      `[Server] Instructor returned ${connectedUser.fullName} from the lab`
+    );
+  }
+);
+ socket.on(
+  "instructorReturnAllToClass",
+  () => {
+    if (!isInstructorSocket(socket)) {
+      socket.emit("serverError", {
+        message:
+          "Only instructors can perform this action.",
+      });
+
+      return;
+    }
+
+    console.log(
+      "[Server] Instructor returning ALL students to Class"
+    );
+
+    let returnedCount = 0;
+
+    Object.values(
+      connectedUsers
+    ).forEach(
+      connectedUser => {
+        if (
+          connectedUser.role !==
+          "student"
+        ) {
+          return;
+        }
+
+        const userId =
+          Number(
+            connectedUser.userId
+          );
+
+        const wasInLab =
+          connectedUser.inLab === true ||
+          connectedUser.location === "python_lab";
+
+        connectedUser.mode =
+          "Classroom Mode";
+
+        connectedUser.location =
+          "classroom";
+
+        connectedUser.inLab =
+          false;
+
+        connectedUser.labStatus =
+          connectedUser.labStatus === "completed"
+            ? "completed"
+            : "returned";
+        connectedUser.labReturnReason =
+          connectedUser.labStatus === "completed"
+            ? "student_completed"
+            : "instructor_return";
+
+        const classroomStudent =
+          Object.values(students).find(
+            student =>
+              Number(student.userId) === userId
+          );
+
+        if (classroomStudent) {
+          classroomStudent.mode =
+            "Classroom Mode";
+          classroomStudent.location =
+            "classroom";
+          classroomStudent.inLab = false;
+          classroomStudent.labStatus =
+            connectedUser.labStatus;
+          classroomStudent.labReturnReason =
+            connectedUser.labReturnReason;
+        }
+
+        db.prepare(`
+          UPDATE users
+          SET
+            location = 'classroom',
+            updatedAt = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(userId);
+
+        /*
+         * Integrated lab: the student remains on the original
+         * classroom socket while their local scene changes.
+         */
+        if (
+          wasInLab &&
+          connectedUser.classroomSocketId
+        ) {
+          const session = labSessions[userId];
+          const progress = session?.getProgress() ?? {
+            completed: connectedUser.completedExercises ?? 0,
+            total: 12,
+            score: connectedUser.score ?? 0,
+            streak: 0,
+            accuracy: connectedUser.accuracy ?? 0,
+            wpm: 0,
+            status: "incomplete",
+            returnReason: "instructor_return",
+          };
+
+          const finalStatus =
+            progress.status === "completed"
+              ? "completed"
+              : "instructor_return";
+
+          if (!session?.resultSaved) {
+            db.prepare(`
+              INSERT INTO game_results (
+                userId,
+                gameName,
+                score,
+                durationSeconds,
+                status,
+                completedAt
+              )
+              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            `).run(
+              userId,
+              "Python Type Lab",
+              progress.score,
+              progress.durationSeconds ?? 0,
+              finalStatus
+            );
+
+            if (session) {
+              session.resultSaved = true;
+              session.returnReason =
+                finalStatus === "completed"
+                  ? "student_completed"
+                  : "instructor_return";
+            }
+          }
+
+          io.to(
+            connectedUser.classroomSocketId
+          ).emit(
+            "returnToClassroom",
+            {
+              userId,
+              username: connectedUser.username,
+              studentName: connectedUser.fullName,
+              seat: connectedUser.seat,
+              returnReason:
+                finalStatus === "completed"
+                  ? "student_completed"
+                  : "instructor_return",
+              result: progress,
+              message:
+                "The instructor returned you to the classroom.",
+            }
+          );
+
+          returnedCount += 1;
+          return;
+        }
+
+        /*
+         * Student is currently in the lab.
+         */
+        if (
+          connectedUser.labSocketId
+        ) {
+          const session =
+            labSessions[userId];
+
+          const progress =
+            session?.getProgress() ?? {
+              completed:
+                connectedUser.completedExercises ??
+                0,
+
+              total:
+                10,
+
+              score:
+                connectedUser.score ??
+                0,
+
+              accuracy:
+                connectedUser.accuracy ??
+                0,
+
+              wpm:
+                connectedUser.wpm ??
+                0,
+            };
+
+          const databaseUser =
+            db.prepare(`
+              SELECT
+                seat,
+                fullName,
+                username
+              FROM users
+              WHERE id = ?
+              LIMIT 1
+            `).get(userId);
+
+          returningStudents[userId] = {
+            userId,
+
+            studentName:
+              databaseUser?.fullName ??
+              connectedUser.fullName,
+
+            username:
+              databaseUser?.username ??
+              connectedUser.username,
+
+            seat:
+              databaseUser?.seat ??
+              connectedUser.seat,
+
+            mode:
+              "Classroom Mode",
+
+            labData:
+              progress,
+
+            createdAt:
+              Date.now(),
+          };
+
+          console.log(
+            `[Server] Returning ${connectedUser.fullName} through lab socket ${connectedUser.labSocketId}`
+          );
+
+          io.to(
+            connectedUser.labSocketId
+          ).emit(
+            "returnToClassroom",
+            {
+              userId,
+
+              username:
+                connectedUser.username,
+
+              studentName:
+                connectedUser.fullName,
+
+              seat:
+                databaseUser?.seat ??
+                connectedUser.seat,
+
+              score:
+                progress.score,
+
+              accuracy:
+                progress.accuracy,
+
+              wpm:
+                progress.wpm,
+
+              completedExercises:
+                progress.completed,
+
+              classroomUrl:
+                "http://localhost:8081",
+
+              message:
+                "The instructor returned you to the classroom.",
+            }
+          );
+
+          delete labSessions[
+            userId
+          ];
+
+          returnedCount += 1;
+          return;
+        }
+
+        /*
+         * Student is still connected to the classroom.
+         */
+        if (
+          connectedUser.classroomSocketId
+        ) {
+          io.to(
+            connectedUser.classroomSocketId
+          ).emit(
+            "modeChanged",
+            {
+              mode:
+                "Classroom Mode",
+
+              destination:
+                "Class",
+
+              fromInstructor:
+                true,
+            }
+          );
+
+          returnedCount += 1;
+        }
+      }
+    );
+
+    /*
+     * Guaranteed in-session return command. This is deliberately
+     * independent of the progress/location flags so a student can
+     * never become trapped in the lab because of stale state.
+     */
+    Object.values(connectedUsers).forEach(connectedUser => {
+      if (
+        connectedUser.role === "student" &&
+        connectedUser.classroomSocketId
+      ) {
+        io.to(connectedUser.classroomSocketId).emit(
+          "returnAllToClassroomNow",
+          {
+            returnReason: "instructor_return",
+          }
+        );
+      }
+    });
+
+    broadcastStudentList(io);
+
+    io.emit(
+      "allStudentsReturnedToClass",
+      {
+        count:
+          returnedCount,
+
+        message:
+          "All students returned to Class mode",
+      }
+    );
+
+    console.log(
+      `[Server] All ${returnedCount} students returned to Class mode`
+    );
+  }
+);
 
   // ========================================================
-  // STUDENT MODE CHANGE (from student side)
+  // STUDENT MODE CHANGE
   // ========================================================
 
   socket.on("modeChanged", (mode) => {
@@ -859,22 +2656,18 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
     if (!student) return;
     student.mode = mode;
     console.log(`${student.name} changed mode to ${mode}`);
-    broadcastStudentList();
+    broadcastStudentList(io);
   });
 
   // ========================================================
-  // STUDENT RAISES HAND
+  // HAND RAISE EVENTS
   // ========================================================
 
   socket.on("raiseHand", (data) => {
     const student = students[socket.id];
-
-    if (!student) {
-      return;
-    }
+    if (!student) return;
 
     const raised = Boolean(data?.raised);
-
     student.handRaised = raised;
 
     console.log(`${student.name} ${raised ? "raised" : "lowered"} their hand`);
@@ -889,48 +2682,26 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
       fromInstructor: false,
     });
 
-    broadcastStudentList();
+    broadcastStudentList(io);
   });
 
-  // ========================================================
-  // INSTRUCTOR TOGGLE HAND
-  // ========================================================
-
   socket.on("instructorToggleHand", ({ studentId, raised }) => {
-    console.log("[Server] instructorToggleHand received:", {
-      studentId,
-      raised,
-    });
+    console.log("[Server] instructorToggleHand received:", { studentId, raised });
 
-    const result = findStudent(studentId);
-
-    if (!result) {
+    const student = findStudent(studentId);
+    if (!student) {
       console.warn("[Server] Student not found:", studentId);
       return;
     }
 
-    const student = result.student;
-
     const nextState = typeof raised === "boolean" ? raised : !student.handRaised;
-
     sendHandState(studentId, student, nextState, true);
   });
-
-  // ========================================================
-  // INSTRUCTOR TOGGLE MUTE
-  // ========================================================
 
   socket.on("instructorToggleMute", ({ studentId }) => {
     console.log(`[Server] Instructor toggling mute for: ${studentId}`);
 
-    let student = demoStudents.find((s) => s.id === studentId);
-    let isDemo = true;
-
-    if (!student) {
-      student = students[studentId];
-      isDemo = false;
-    }
-
+    const student = findStudent(studentId);
     if (!student) {
       console.log(`[Server] Student ${studentId} not found`);
       socket.emit("error", { message: "Student not found" });
@@ -938,10 +2709,9 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
     }
 
     student.isMuted = !student.isMuted;
-
     console.log(`[Server] ${student.name} ${student.isMuted ? "muted" : "unmuted"} by instructor`);
 
-    broadcastStudentList();
+    broadcastStudentList(io);
 
     io.emit("muteUpdated", {
       playerId: studentId,
@@ -950,28 +2720,21 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
       seat: student.seat,
     });
 
-    if (!isDemo && students[studentId]) {
+    if (students[studentId]) {
       io.to(studentId).emit("muteToggled", {
         isMuted: student.isMuted,
       });
     }
   });
 
-  // ========================================================
-  // INSTRUCTOR UNMUTE AND LOWER HAND
-  // ========================================================
-
   socket.on("instructorUnmuteAndLowerHand", ({ studentId }) => {
     console.log("[Server] instructorUnmuteAndLowerHand received:", studentId);
 
-    const result = findStudent(studentId);
-
-    if (!result) {
+    const student = findStudent(studentId);
+    if (!student) {
       console.warn("[Server] Cannot unmute/lower. Student not found:", studentId);
       return;
     }
-
-    const student = result.student;
 
     sendMuteState(studentId, student, false);
     sendHandState(studentId, student, false, true);
@@ -979,23 +2742,18 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
     console.log(`[Server] Instructor unmuted and lowered hand for ${student.name}`);
   });
 
-  // ========================================================
-  // INSTRUCTOR LOWER HAND
-  // ========================================================
-
   socket.on("instructorLowerHand", ({ studentId }) => {
     console.log("[Server] instructorLowerHand received:", studentId);
 
-    const result = findStudent(studentId);
-
-    if (!result) {
+    const student = findStudent(studentId);
+    if (!student) {
       console.warn("[Server] Cannot lower hand. Student not found:", studentId);
       return;
     }
 
-    sendHandState(studentId, result.student, false, true);
+    sendHandState(studentId, student, false, true);
 
-    console.log(`[Server] Instructor lowered hand for ${result.student.name}`);
+    console.log(`[Server] Instructor lowered hand for ${student.name}`);
   });
 
   // ========================================================
@@ -1026,54 +2784,89 @@ console.log("[Server] 🔄 requestRestoreSeat received:", data);
   // ========================================================
 
   socket.on("disconnect", () => {
-  const student = students[socket.id];
-  console.log("Disconnected:", student?.name ?? socket.id);
-
-  const labStudentId = Object.keys(labSessions).find(
-    (id) => labSessions[id].socketId === socket.id
+    const permanentUserId =
+  Number(
+    socket.data.userId
   );
 
-  // ✅ Don't delete lab session on temporary disconnect
-  if (labStudentId) {
-    const session = labSessions[labStudentId];
-    session.socketId = null;
-    console.log(`[Server] Lab client disconnected temporarily: ${session.studentName}`);
-    return; // Don't remove from students list
+if (
+  permanentUserId &&
+  connectedUsers[permanentUserId]
+) {
+  const connectedUser =
+    connectedUsers[
+      permanentUserId
+    ];
+
+  if (
+    socket.data.clientType ===
+    "classroom"
+  ) {
+    connectedUser
+      .classroomSocketId =
+      null;
   }
 
-  // ✅ Check if student is in lab - don't remove them
-  const isInLab = student?.inLab === true;
-  
-  if (isInLab) {
-    console.log(`[Server] 🧪 ${student?.name} is in lab, keeping in student list`);
-    if (student) {
-      student.isDisconnected = true;
+  if (
+    socket.data.clientType ===
+    "lab"
+  ) {
+    connectedUser
+      .labSocketId =
+      null;
+  }
+}
+    const student = students[socket.id];
+    console.log("Disconnected:", student?.name ?? socket.id);
+
+    const labStudentId = Object.keys(labSessions).find(
+      (id) => labSessions[id].socketId === socket.id
+    );
+
+    // Don't delete lab session on temporary disconnect
+    if (
+      labStudentId &&
+      socket.data.clientType === "lab"
+    ) {
+      const session = labSessions[labStudentId];
+      session.socketId = null;
+      console.log(`[Server] Lab client disconnected temporarily: ${session.studentName}`);
+      return;
     }
-    broadcastStudentList();
-    return;
-  }
 
-  // ✅ Only remove if not in lab and not returning
-  if (students[socket.id]) {
-    delete students[socket.id];
-    io.emit("playerDisconnected", { id: socket.id });
-    broadcastStudentList();
-  }
-});
+    // Check if student is in lab - don't remove them
+    const isInLab = student?.inLab === true;
 
+    if (isInLab) {
+      console.log(`[Server] 🧪 ${student?.name} is in lab, keeping in student list`);
+      if (student) {
+        student.isDisconnected = true;
+      }
+      broadcastStudentList(io);
+      return;
+    }
+
+    // Remove if not in lab
+    if (students[socket.id]) {
+      delete students[socket.id];
+      io.emit("playerDisconnected", { id: socket.id });
+      broadcastStudentList(io);
+    }
+  });
 });
 
 // ========================================================
 // START SERVER
 // ========================================================
 
-httpServer.listen(3001, () => {
+const serverPort = Number(process.env.PORT) || 3001;
+
+httpServer.listen(serverPort, () => {
   console.log("================================================");
   console.log("🎓 CLASSROOM + LAB SERVER RUNNING");
   console.log("================================================");
-  console.log(`📍 http://localhost:3001`);
+  console.log(`📍 http://localhost:${serverPort}`);
   console.log("📊 Classroom Mode: Active");
   console.log("🧪 Lab Mode: Active (Individual Labs)");
-  console.log("👥 Demo Students: 3");
   console.log("================================================");
 });

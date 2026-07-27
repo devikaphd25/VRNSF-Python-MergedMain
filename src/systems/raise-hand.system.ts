@@ -24,12 +24,15 @@ export class RaiseHandSystem extends createSystem({}) {
   private destroyed = false;
   private isRTTriggerPressed = false;
   private isMuted = false; // ✅ Track mute state
+  private resultCooldown = false;
 
   init(): void {
     console.log("[RaiseHandSystem] Initializing");
 
     // ✅ Store reference to this instance
     (window as any).RaiseHandSystem = this;
+    (window as any).resetStudentRaiseHandAfterResult =
+      this.resetAfterResult;
 
     this.isEnabled = Boolean((window as any).isRaiseHandReady);
 
@@ -41,9 +44,6 @@ export class RaiseHandSystem extends createSystem({}) {
     // ✅ Listen for instructor toggling hand
     socket.on("handToggled", this.onHandToggled);
     
-    // ✅ Listen for mute updates
-    socket.on("muteUpdated", this.onMuteUpdated);
-    socket.on("muteToggled", this.onMuteToggled);
 
     this.waitForRaiseHandEntity();
   }
@@ -403,9 +403,32 @@ private onHandToggled = (
 
     const menuOpen = Boolean((window as any).isMenuOpen);
     const presentationOpen = Boolean((window as any).isPresentationOpen);
+    const labActive = Boolean((window as any).isLabActive);
+    const resultOpen = Boolean((window as any).isStudentResultOpen);
 
-    object.visible = this.isEnabled && !menuOpen && !presentationOpen;
+    object.visible =
+      this.isEnabled &&
+      !menuOpen &&
+      !presentationOpen &&
+      !labActive &&
+      !resultOpen &&
+      !this.resultCooldown;
   }
+
+  private resetAfterResult = (): void => {
+    this.isRaised = false;
+    this.resultCooldown = true;
+    this.updateAppearance();
+
+    socket.emit("raiseHand", {
+      raised: false
+    });
+
+    window.setTimeout(() => {
+      this.resultCooldown = false;
+      this.updateVisibility();
+    }, 1500);
+  };
 
  private onRaiseHandUpdated = (
   data: {
@@ -465,6 +488,11 @@ private onHandToggled = (
 
   private checkRTTrigger(): void {
     try {
+      if ((window as any).isLabActive) {
+        this.isRTTriggerPressed = false;
+        return;
+      }
+
       const rightCtrl = this.input?.xr?.gamepads?.right;
       
       if (rightCtrl) {
@@ -487,6 +515,7 @@ private onHandToggled = (
 
   destroy(): void {
     this.destroyed = true;
+    delete (window as any).resetStudentRaiseHandAfterResult;
 
     window.removeEventListener("hintFinished", this.onHintFinished);
 
