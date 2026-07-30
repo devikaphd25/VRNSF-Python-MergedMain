@@ -1,0 +1,82 @@
+<style>
+  .result-root {
+    width: 62;
+    padding: 4.5;
+    flex-direction: column;
+    gap: 2.2;
+    background-color: rgba(6, 15, 30, 0.98);
+    border-width: 0.25;
+    border-color: rgba(52, 211, 153, 0.85);
+    border-radius: 3.2;
+    pointer-events: auto;
+  }
+
+  .result-header {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .result-title {
+    color: white;
+    font-size: 3.6;
+    font-weight: bold;
+  }
+
+  .result-close {
+    width: 7;
+    height: 7;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(239, 68, 68, 0.28);
+    border-width: 0.2;
+    border-color: #f87171;
+    border-radius: 3.5;
+    color: white;
+    font-size: 2.5;
+    font-weight: bold;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .result-status {
+    color: #86efac;
+    font-size: 2.3;
+    font-weight: bold;
+  }
+
+  .stat-row {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    padding-top: 1.2;
+    padding-bottom: 1.2;
+    border-bottom-width: 0.1;
+    border-bottom-color: rgba(148, 163, 184, 0.2);
+  }
+
+  .stat-label {
+    color: #94a3b8;
+    font-size: 2;
+  }
+
+  .stat-value {
+    color: white;
+    font-size: 2.2;
+    font-weight: bold;
+  }
+</style>
+
+<Panel class="result-root">
+  <Panel class="result-header">
+    <Text class="result-title">Python Lab Result</Text>
+    <Button id="student-result-close" class="result-close">X</Button>
+  </Panel>
+  <Text id="student-result-status" class="result-status">Completed</Text>
+  <Panel class="stat-row"><Text class="stat-label">Score</Text><Text id="student-result-score" class="stat-value">0</Text></Panel>
+  <Panel class="stat-row"><Text class="stat-label">Correct answers</Text><Text id="student-result-correct" class="stat-value">0</Text></Panel>
+  <Panel class="stat-row"><Text class="stat-label">Mistakes</Text><Text id="student-result-mistakes" class="stat-value">0</Text></Panel>
+  <Panel class="stat-row"><Text class="stat-label">Accuracy</Text><Text id="student-result-accuracy" class="stat-value">0%</Text></Panel>
+  <Panel class="stat-row"><Text class="stat-label">Time</Text><Text id="student-result-time" class="stat-value">0 sec</Text></Panel>
+</Panel>

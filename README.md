@@ -1,66 +1,58 @@
-# VR Learning Platform
+# VRClass Integrated
 
-A multi-user WebXR learning environment built with the Immersive Web SDK (IWSDK). The platform consists of a virtual classroom and an individual Python Type Lab connected through Socket.IO for real-time communication.
+VRClass Integrated is a single WebXR application containing both the UMES
+virtual classroom and the Python Type Lab.
 
----
+Students never navigate to another website when an instructor starts the lab.
+The classroom and lab are two environments in the same WebXR world, so the
+headset session, player identity, assigned seat, and Socket.IO connection remain
+active throughout the transition.
 
-# System Architecture
+## Main workflow
 
-The platform consists of the following components:
+1. Students and the instructor sign in and enter the classroom.
+2. Each student is positioned at the seat assigned in SQLite.
+3. The instructor selects **Individual Lab** in the VR dashboard.
+4. Every connected student enters a private, locally rendered Python lab.
+5. Lab progress is reported through the student's existing classroom socket.
+6. Completed students remain available until the instructor returns the class.
+7. **Classroom Mode** returns all students to their assigned seats without
+   ending WebXR.
+8. Results record whether the student completed the lesson or was returned
+   early by the instructor.
 
-| Component | Port | Description |
-|-----------|------|-------------|
-| Classroom Server | **3001** | Manages classroom logic, instructor controls, student sessions, and communication with the lab. |
-| Classroom Client | **8081** | VR classroom experience for students and instructors. |
-| Python Type Lab Client | **8082** | Individual Python typing lab environment. |
+## Lab activity
 
-```
-                 +----------------------+
-                 | Classroom Server     |
-                 |      Port 3001       |
-                 +----------+-----------+
-                            |
-          ---------------------------------------
-          |                                     |
-+----------------------+              +----------------------+
-| Classroom Client     |              | Python Type Lab      |
-|      Port 8081       |              |      Port 8082       |
-+----------------------+              +----------------------+
-```
+The active lesson is a 12-card Python data-type sorting game. Students reveal
+and sort values into `int`, `float`, `bool`, and `str` bins. The application
+tracks:
 
-The Classroom Server coordinates communication between the classroom and the Python Type Lab. Student identity, seat assignment, and learning progress are preserved while transitioning between environments.
+- score and streak;
+- correct and incorrect attempts;
+- accuracy;
+- cards completed;
+- completion status;
+- elapsed time;
+- return reason.
 
----
+## Architecture
 
-# Features
+- `src/index.ts` creates the shared WebXR world.
+- `src/lab/` contains only the active Python card-game implementation.
+- `src/lab/LabEnvironmentManager.ts` switches environments without navigation.
+- `server.js` maintains classroom connections and per-user lab sessions.
+- `server/state/LabSession.js` stores each student's independent progress.
+- `database/database.js` manages SQLite users and saved game results.
 
-- Multi-user VR classroom
-- Instructor dashboard
-- Student seat selection
-- Raise hand functionality
-- Presentation mode
-- Individual Python Type Lab
-- Automatic return to classroom with seat restoration
-- Real-time synchronization using Socket.IO
+Lab state is indexed by the permanent database user ID, never by a URL
+parameter. Socket IDs are used only as temporary connection addresses.
 
----
+## Development
 
-# Prerequisites
+Requirements:
 
-- Node.js (LTS recommended)
+- Node.js 20.19+, 22.12+, or 24
 - npm
-- WebXR compatible browser or VR headset (optional for development)
-
----
-
-# Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/UMESVRTeam/VR-learning.git
-cd VR-learning
-```
 
 Install dependencies:
 
@@ -68,107 +60,33 @@ Install dependencies:
 npm install
 ```
 
----
-
-# Running the Project
-
-### 1. Start the Classroom Server
+Run the WebXR application and real-time server:
 
 ```bash
-node server.js
+npm run dev:full
 ```
 
-Expected:
+The application uses:
 
-```
-CLASSROOM SERVER
-Port: 3001
-```
+- WebXR application: `https://localhost:8081`
+- Classroom and lab server: `http://localhost:3001`
 
----
-
-### 2. Start the Classroom Client
+Build:
 
 ```bash
-npm run dev
+npm run build
 ```
 
-The classroom client runs on:
-
-```
-https://localhost:8081
-```
-
----
-
-### 3. Start the Python Type Lab
-
-From the Python Lab project:
+Type-check:
 
 ```bash
-cd ../VR-learning-python-type-lab
-npm install
-npm run dev
+npx tsc --noEmit
 ```
 
-The lab client runs on:
+## Default development users
 
-```
-https://localhost:8082
-```
+- Instructor: `admin`
+- Students: `Tina`, `Sager`, `Devika`, `Nyles`, and `Ahmed`
 
----
-
-# GitHub Workflow
-
-The repository is organized into two development branches.
-
-| Branch | Purpose |
-|---------|---------|
-| `main` | VR Classroom |
-| `feature/python-type-lab` | Python Type Lab |
-
-Recommended local structure:
-
-```
-VR-learning-classroom/
-    └── main
-
-VR-learning-python-type-lab/
-    └── feature/python-type-lab
-```
-
-Develop each project in its corresponding branch to keep classroom and lab development independent.
-
----
-
-# Project Structure
-
-```
-VR-learning/
-│
-├── server.js
-├── src/
-├── public/
-├── ui/
-├── package.json
-└── vite.config.ts
-```
-
----
-
-# Technologies
-
-- Immersive Web SDK (IWSDK)
-- Three.js
-- Node.js
-- Express
-- Socket.IO
-- TypeScript
-- Vite
-
----
-
-# License
-
-University of Maryland Eastern Shore (UMES)
+The existing authentication is development-only and should be replaced with
+password validation and signed session tokens before production deployment.

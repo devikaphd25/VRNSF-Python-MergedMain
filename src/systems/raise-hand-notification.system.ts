@@ -67,6 +67,9 @@ export class RaiseHandNotificationSystem extends createSystem({
       "[RaiseHandNotification] Initializing"
     );
 
+    (window as any).refreshInstructorHandNotification =
+      this.refreshVisibility;
+
     socket.on(
       "raiseHandUpdated",
       this.onRaiseHandUpdated
@@ -379,8 +382,7 @@ export class RaiseHandNotificationSystem extends createSystem({
       "Raise Hand"
     );
 
-    this.notificationEntity.object3D.visible =
-      true;
+    this.refreshVisibility();
 
     this.notificationEntity.object3D
       .updateMatrixWorld(true);
@@ -414,6 +416,24 @@ export class RaiseHandNotificationSystem extends createSystem({
     );
   }
 
+  private refreshVisibility = (): void => {
+    if (!this.notificationEntity?.object3D) {
+      return;
+    }
+
+    const overlayOpen =
+      Boolean((window as any).isInstructorDashboardOpen) ||
+      Boolean((window as any).isInstructorLabMonitorOpen) ||
+      Boolean((window as any).isInstructorMistakesOpen);
+
+    this.notificationEntity.object3D.visible =
+      Boolean(this.currentStudentId) &&
+      !overlayOpen;
+
+    this.notificationEntity.object3D
+      .updateMatrixWorld(true);
+  };
+
   // ========================================================
   // BUTTONS
   // ========================================================
@@ -429,12 +449,12 @@ export class RaiseHandNotificationSystem extends createSystem({
   }
 
   console.log(
-    "[RaiseHandNotification] Sending unmute-and-lower request:",
+    "[RaiseHandNotification] Sending lower-hand request:",
     studentId
   );
 
   socket.emit(
-    "instructorUnmuteAndLowerHand",
+    "instructorLowerHand",
     {
       studentId
     }
@@ -524,6 +544,7 @@ private onCancelClick = (): void => {
   // ========================================================
 
   destroy(): void {
+  delete (window as any).refreshInstructorHandNotification;
   socket.off(
     "raiseHandUpdated",
     this.onRaiseHandUpdated

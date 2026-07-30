@@ -1,23 +1,86 @@
 // src/network/socket.ts
 
-import { io } from "socket.io-client";
+import {
+  io
+} from "socket.io-client";
 
-/*
- * When opened on the Mac:
- * hostname may be localhost.
- *
- * When opened on the headset:
- * hostname will be the Mac's local IP address,
- * such as 192.168.1.25.
- */
-const serverHost = window.location.hostname;
+const serverHost =
+  window.location.hostname;
+
+
 
 const socketServerUrl =
-  `http://${serverHost}:3001`;
+   `http://${serverHost}:3001`;
+
+const urlParams =
+  new URLSearchParams(
+    window.location.search
+  );
+
+function readSavedUser(): {
+  username: string;
+  role: string;
+} {
+  const usernameFromUrl =
+    urlParams
+      .get("username")
+      ?.trim();
+
+  const savedUser =
+    localStorage.getItem(
+      "vrUser"
+    );
+
+  if (savedUser) {
+    try {
+      const parsed =
+        JSON.parse(savedUser);
+
+      return {
+        username:
+          usernameFromUrl ||
+          parsed.username ||
+          "student",
+
+        role:
+          parsed.role ===
+          "instructor"
+            ? "instructor"
+            : "student"
+      };
+    } catch (error) {
+      console.error(
+        "[Socket] Invalid vrUser:",
+        error
+      );
+    }
+  }
+
+  return {
+    username:
+      usernameFromUrl ||
+      "student",
+
+    role: "student"
+  };
+}
+
+const currentUser =
+  readSavedUser();
 
 console.log(
   "[Socket] Connecting to:",
   socketServerUrl
+);
+
+console.log(
+  "[Socket] Username:",
+  currentUser.username
+);
+
+console.log(
+  "[Socket] Role:",
+  currentUser.role
 );
 
 export const socket = io(
@@ -29,28 +92,48 @@ export const socket = io(
     ],
 
     reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000
+    reconnectionAttempts:
+      Infinity,
+
+    reconnectionDelay:
+      1000,
+
+    query: {
+      username:
+        currentUser.username,
+
+      role:
+        currentUser.role
+    }
   }
 );
 
-socket.on("connect", () => {
-  console.log(
-    "[Socket] Connected:",
-    socket.id
-  );
-});
+socket.on(
+  "connect",
+  () => {
+    console.log(
+      "[Socket] Connected:",
+      socket.id
+    );
+  }
+);
 
-socket.on("connect_error", (error) => {
-  console.error(
-    "[Socket] Connection error:",
-    error.message
-  );
-});
+socket.on(
+  "connect_error",
+  error => {
+    console.error(
+      "[Socket] Connection error:",
+      error.message
+    );
+  }
+);
 
-socket.on("disconnect", (reason) => {
-  console.warn(
-    "[Socket] Disconnected:",
-    reason
-  );
-});
+socket.on(
+  "disconnect",
+  reason => {
+    console.warn(
+      "[Socket] Disconnected:",
+      reason
+    );
+  }
+);

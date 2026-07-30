@@ -8,6 +8,7 @@ dist/
 
 # Environment files
 .env
+.env.*
 .env.local
 .env.production
 
@@ -32,6 +33,10 @@ pids
 *.pid
 *.seed
 *.pid.lock
+data/*.db
+data/*.db-shm
+data/*.db-wal
+lab/*.csv
 
 # Coverage directory used by tools like istanbul
 coverage/
