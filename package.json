@@ -18,6 +18,7 @@
   "dependencies": {
     "@iwsdk/core": "0.4.2",
     "@preact/signals-core": "^1.14.3",
+    "@supabase/supabase-js": "^2.109.0",
     "better-sqlite3": "^12.11.1",
     "concurrently": "^9.2.3",
     "express": "^5.2.1",
