@@ -38,7 +38,13 @@ export type RoomScore = {
 };
 
 type ClassroomCreateSessionType = { room_id: string };
-type ClassroomJoinSessionType = { room_id: string, participant_id: string, current_slide: number };
+export type ClassroomJoinSessionType = {
+    room_id: string;
+    participant_id: string;
+    current_slide: number;
+    display_name: string;
+    seat: string;
+};
 
 
 const NO_ACTIVE_ROOM = "NO_ACTIVE_ROOM";
@@ -84,6 +90,8 @@ export const ClassroomSessionService = {
             room_id: row.room_id,
             participant_id: row.participant_id,
             current_slide: row.current_slide,
+            display_name: row.display_name,
+            seat: row.seat,
         };
     },
 
