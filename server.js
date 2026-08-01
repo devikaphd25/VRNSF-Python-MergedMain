@@ -3,7 +3,6 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import db from "./database/database.js";
 
 import {
   students,
@@ -24,10 +23,18 @@ import {
   broadcastStudentList,
 } from "./server/services/broadcast.service.js";
 import loginRoutes from "./server/routes/login.routes.js";
+import { supabaseAdmin } from "./server/services/supabase-admin.service.js";
+import {
+  getAppUserById,
+  getAppUserByUsername,
+  getAppUserCount,
+  initializeAppDataRepository,
+  saveAppGameResult,
+  updateAppUserLocation,
+} from "./server/services/app-data.repository.js";
 
-console.log(
-  db.prepare("SELECT COUNT(*) AS total FROM users").get()
-);
+await initializeAppDataRepository();
+console.log({ total: getAppUserCount(), database: "Supabase" });
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -38,6 +45,45 @@ const io = new Server(httpServer, {
   },
 });
 
+const instructorRoomCloseTimers = new Map();
+const INSTRUCTOR_DISCONNECT_GRACE_MS = 60_000;
+
+function cancelScheduledRoomClose(roomId) {
+  const timer = instructorRoomCloseTimers.get(roomId);
+  if (timer) clearTimeout(timer);
+  instructorRoomCloseTimers.delete(roomId);
+}
+
+function scheduleRoomClose(roomId) {
+  cancelScheduledRoomClose(roomId);
+  const timer = setTimeout(async () => {
+    instructorRoomCloseTimers.delete(roomId);
+
+    const instructorReconnected = [...io.sockets.sockets.values()].some(
+      activeSocket =>
+        activeSocket.data.role === "instructor" &&
+        activeSocket.data.roomId === roomId &&
+        activeSocket.data.clientType === "classroom"
+    );
+    if (instructorReconnected) return;
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Room] Could not close ${roomId}:`, error.message);
+      return;
+    }
+    console.log(`[Room] Closed ${roomId} after instructor disconnected.`);
+  }, INSTRUCTOR_DISCONNECT_GRACE_MS);
+
+  instructorRoomCloseTimers.set(roomId, timer);
+  console.log(`[Room] Instructor disconnected; ${roomId} will close in 60 seconds.`);
+}
+
 // ========================================================
 // SEAT ASSIGNMENT MAP - 10 Students
 // ========================================================
@@ -46,18 +92,7 @@ function getUser(username) {
     return null;
   }
 
-  return db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE LOWER(username) = LOWER(?)
-    LIMIT 1
-  `).get(username);
+  return getAppUserByUsername(username);
 }
 
 
@@ -69,12 +104,7 @@ function isInstructorSocket(socket) {
     return false;
   }
 
-  const user = db.prepare(`
-    SELECT role
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const user = getAppUserById(userId);
 
   return user?.role === "instructor";
 }
@@ -153,8 +183,10 @@ io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
 
-socket.on("registerClassroomClient", data => {
+socket.on("registerClassroomClient", async data => {
   const userId = Number(data?.userId);
+  const roomId = String(data?.roomId ?? "").trim();
+  const participantId = String(data?.participantId ?? "").trim() || null;
   const requestedUsername = String(
     data?.username ?? ""
   ).trim();
@@ -171,25 +203,34 @@ socket.on("registerClassroomClient", data => {
     return;
   }
 
-  // Find the user in SQLite.
-  const databaseUser = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const databaseUser = getAppUserById(userId);
 
   if (!databaseUser) {
     socket.emit("classroomRegistrationError", {
       message: "The user was not found.",
     });
 
+    return;
+  }
+
+  if (!roomId) {
+    socket.emit("classroomRegistrationError", {
+      message: "A classroom session is required.",
+    });
+    return;
+  }
+
+  const { data: activeRoom, error: activeRoomError } = await supabaseAdmin
+    .from("rooms")
+    .select("id,is_active")
+    .eq("id", roomId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (activeRoomError || !activeRoom) {
+    socket.emit("classroomRegistrationError", {
+      message: "This classroom is no longer active.",
+    });
     return;
   }
 
@@ -284,7 +325,15 @@ connectedUser.inLab =
   // Store validated identity on this Socket.IO connection.
   socket.data.userId = databaseUser.id;
   socket.data.username = databaseUser.username;
+  socket.data.role = databaseUser.role;
+  socket.data.roomId = roomId;
+  socket.data.participantId = participantId;
   socket.data.clientType = "classroom";
+
+  if (databaseUser.role === "instructor") {
+    cancelScheduledRoomClose(roomId);
+    console.log(`[Room] Instructor activated classroom ${roomId}.`);
+  }
 
   /*
    * Create the classroom student here.
@@ -362,14 +411,7 @@ if (returnRecord) {
     `[Server] Restored ${databaseUser.fullName} to ${students[socket.id].seat}`
   );
 }
-  // Update the permanent database location.
-  db.prepare(`
-    UPDATE users
-    SET
-      location = 'classroom',
-      updatedAt = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(databaseUser.id);
+  void updateAppUserLocation(databaseUser.id, "classroom").catch(console.error);
 
   /*
    * Send all current players to this newly registered
@@ -438,18 +480,7 @@ socket.emit(
     return;
   }
 
-  const user = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const user = getAppUserById(userId);
 
   if (!user) {
     socket.emit("labRegistrationFailed", {
@@ -513,11 +544,7 @@ connectedUser.inLab = true;
 
   labSessions[user.id] = labSession;
 
-  db.prepare(`
-    UPDATE users
-    SET location = ?
-    WHERE id = ?
-  `).run("python_lab", user.id);
+  void updateAppUserLocation(user.id, "python_lab").catch(console.error);
 socket.data.userId = user.id;
 socket.data.username = user.username;
 socket.data.role = user.role;
@@ -577,16 +604,7 @@ socket.on(
       return;
     }
 
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          fullName,
-          username,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     if (!databaseUser) {
       socket.emit(
@@ -1134,34 +1152,19 @@ socket.on(
       session &&
       !session.resultSaved
     ) {
-      db.prepare(`
-        INSERT INTO game_results (
-          userId,
-          gameName,
-          score,
-          durationSeconds,
-          status,
-          completedAt
-        )
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(
+      void saveAppGameResult({
         userId,
-        "Python Type Lab",
-        Number(result?.score) || 0,
-        Number(result?.durationSeconds) || 0,
-        data?.reason === "student_completed"
+        score: Number(result?.score) || 0,
+        durationSeconds: Number(result?.durationSeconds) || 0,
+        status: data?.reason === "student_completed"
           ? "completed"
-          : "instructor_return"
-      );
+          : "instructor_return",
+      }).catch(console.error);
 
       session.resultSaved = true;
     }
 
-    db.prepare(`
-      UPDATE users
-      SET location = 'classroom', updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(userId);
+    void updateAppUserLocation(userId, "classroom").catch(console.error);
 
     io.emit("studentReturnedFromLab", {
       userId,
@@ -1277,16 +1280,7 @@ socket.on("studentLeaveLab", data => {
     return;
   }
 
-  const databaseUser = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      seat
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const databaseUser = getAppUserById(userId);
 
   if (!databaseUser) {
     socket.emit("labLeaveError", {
@@ -1310,13 +1304,7 @@ socket.on("studentLeaveLab", data => {
     createdAt: Date.now(),
   };
 
-  db.prepare(`
-    UPDATE users
-    SET
-      location = 'classroom',
-      updatedAt = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(userId);
+  void updateAppUserLocation(userId, "classroom").catch(console.error);
 
   socket.emit("labLeft", {
     userId,
@@ -1438,16 +1426,7 @@ socket.on(
     /*
      * The database is the only source of truth.
      */
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          id,
-          fullName,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     if (!databaseUser) {
       socket.emit(
@@ -1572,15 +1551,7 @@ socket.on(
       return;
     }
 
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          fullName,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     const finalSeat =
       typeof databaseUser?.seat ===
@@ -1883,13 +1854,7 @@ socket.on(
       return;
     }
 
-    db.prepare(`
-      UPDATE users
-      SET
-        location = 'python_lab',
-        updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(student.userId);
+    void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
   io.to(student.id).emit(
     "gameChanged",
@@ -2043,15 +2008,7 @@ socket.on(
             return;
           }
 
-          db.prepare(`
-            UPDATE users
-            SET
-              location = 'python_lab',
-              updatedAt = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).run(
-            student.userId
-          );
+          void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
           labSessions[student.userId] =
             new LabSession(
@@ -2226,31 +2183,14 @@ socket.on(
           connectedUser.wpm,
       };
 
-    db.prepare(`
-      INSERT INTO game_results (
-        userId,
-        gameName,
-        score,
-        durationSeconds,
-        status,
-        completedAt
-      )
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(
+    void saveAppGameResult({
       userId,
-      "Python Type Lab",
-      progress.score,
-      0,
-      "instructor_return"
-    );
+      score: progress.score,
+      durationSeconds: 0,
+      status: "instructor_return",
+    }).catch(console.error);
 
-    db.prepare(`
-      UPDATE users
-      SET
-        location = 'classroom',
-        updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(userId);
+    void updateAppUserLocation(userId, "classroom").catch(console.error);
 
     connectedUser.location =
       "classroom";
@@ -2278,12 +2218,7 @@ socket.on(
         completedExercises:
           progress.completed,
 
-        seat:
-          db.prepare(`
-            SELECT seat
-            FROM users
-            WHERE id = ?
-          `).get(userId)?.seat,
+        seat: getAppUserById(userId)?.seat,
 
         classroomUrl:
           "http://localhost:8081",
@@ -2382,13 +2317,7 @@ socket.on(
             connectedUser.labReturnReason;
         }
 
-        db.prepare(`
-          UPDATE users
-          SET
-            location = 'classroom',
-            updatedAt = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(userId);
+        void updateAppUserLocation(userId, "classroom").catch(console.error);
 
         /*
          * Integrated lab: the student remains on the original
@@ -2416,23 +2345,12 @@ socket.on(
               : "instructor_return";
 
           if (!session?.resultSaved) {
-            db.prepare(`
-              INSERT INTO game_results (
-                userId,
-                gameName,
-                score,
-                durationSeconds,
-                status,
-                completedAt
-              )
-              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `).run(
+            void saveAppGameResult({
               userId,
-              "Python Type Lab",
-              progress.score,
-              progress.durationSeconds ?? 0,
-              finalStatus
-            );
+              score: progress.score,
+              durationSeconds: progress.durationSeconds ?? 0,
+              status: finalStatus,
+            }).catch(console.error);
 
             if (session) {
               session.resultSaved = true;
@@ -2497,16 +2415,7 @@ socket.on(
                 0,
             };
 
-          const databaseUser =
-            db.prepare(`
-              SELECT
-                seat,
-                fullName,
-                username
-              FROM users
-              WHERE id = ?
-              LIMIT 1
-            `).get(userId);
+          const databaseUser = getAppUserById(userId);
 
           returningStudents[userId] = {
             userId,
@@ -2784,6 +2693,14 @@ socket.on(
   // ========================================================
 
   socket.on("disconnect", () => {
+    if (
+      socket.data.clientType === "classroom" &&
+      socket.data.role === "instructor" &&
+      socket.data.roomId
+    ) {
+      scheduleRoomClose(socket.data.roomId);
+    }
+
     const permanentUserId =
   Number(
     socket.data.userId

@@ -140,7 +140,7 @@ export class RaiseHandSystem extends createSystem({}) {
     // Set position (your working values)
     this.handModel.position.set(-0.025, 0.01, 0.02);
     this.handModel.rotation.set(0, Math.PI, 0);
-    this.handModel.scale.set(0.15, 0.15, 0.15);
+    this.handModel.scale.set(0.14, 0.14, 0.14);
 
     // Make materials look good
     this.handModel.traverse((child) => {
@@ -151,22 +151,34 @@ export class RaiseHandSystem extends createSystem({}) {
       child.castShadow = false;
       child.receiveShadow = false;
       child.renderOrder = 1000;
+      child.frustumCulled = false;
 
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
 
-      for (const material of materials) {
-        material.depthTest = false;
-        material.depthWrite = false;
-        material.transparent = false;
-        material.needsUpdate = true;
+      // Use an unlit material for this HUD icon. A MeshStandardMaterial can
+      // become black in a physical headset when the panel is outside the
+      // useful range of the classroom lights.
+      const hudMaterials = sourceMaterials.map((sourceMaterial) => {
+        const source = sourceMaterial as THREE.MeshStandardMaterial;
+        return new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          map: source.map ?? null,
+          alphaMap: source.alphaMap ?? null,
+          transparent: Boolean(source.transparent),
+          opacity: source.opacity ?? 1,
+          alphaTest: source.alphaTest ?? 0,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false,
+        });
+      });
 
-        if (material instanceof THREE.MeshStandardMaterial) {
-          material.emissive.setHex(0x4488ff);
-          material.emissiveIntensity = 0.2;
-          material.roughness = 0.4;
-          material.metalness = 0.1;
-        }
-      }
+      child.material = Array.isArray(child.material)
+        ? hudMaterials
+        : hudMaterials[0];
     });
 
     console.log("[RaiseHandSystem] ✅ GLB hand placed inside circle");
@@ -366,7 +378,7 @@ private onHandToggled = (
       return;
     }
 
-    const baseScale = 0.08;
+    const baseScale = 0.14;
     const scale = this.isRaised ? baseScale * 1.3 : baseScale;
     this.handModel.scale.set(scale, scale, scale);
 
@@ -378,16 +390,8 @@ private onHandToggled = (
       const materials = Array.isArray(child.material) ? child.material : [child.material];
 
       for (const material of materials) {
-        if (material instanceof THREE.MeshStandardMaterial) {
-          if (this.isRaised) {
-            material.emissive.setHex(0xff4400);
-            material.emissiveIntensity = 0.8;
-            material.color.setHex(0xff8800);
-          } else {
-            material.emissive.setHex(0x4488ff);
-            material.emissiveIntensity = 0.2;
-            material.color.setHex(0xffffff);
-          }
+        if (material instanceof THREE.MeshBasicMaterial) {
+          material.color.setHex(this.isRaised ? 0xff8800 : 0xffffff);
         }
       }
     });

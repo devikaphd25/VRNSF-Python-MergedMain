@@ -37,7 +37,7 @@ export type RoomScore = {
     avg_response_ms: number | null;
 };
 
-type ClassroomCreateSessionType = { room_id: string };
+type ClassroomCreateSessionType = { room_id: string; room_code: string };
 export type ClassroomJoinSessionType = {
     room_id: string;
     participant_id: string;
@@ -51,6 +51,10 @@ const NO_ACTIVE_ROOM = "NO_ACTIVE_ROOM";
 
 const ERROR_MAP: Record<string, string> = {
     INVALID_PIN: "Invalid Pin",
+    INVALID_CODE: "The classroom code must contain exactly 6 numbers.",
+    ROOM_NOT_FOUND: "This classroom code does not exist. Use 123456.",
+    ROOM_CODE_IN_USE: "That classroom code is already being used.",
+    ROOM_FULL: "This classroom has no available seats.",
     INVALID_SLIDE: "Invalid slide number",
 }
 
@@ -61,20 +65,62 @@ function mapRpcError(error: { message: string }, fallback: string): never {
 
 
 export const ClassroomSessionService = {
-    async create(): Promise<ClassroomCreateSessionType> {
+    async create(code: string): Promise<ClassroomCreateSessionType> {
 
-        const { data, error } = await supabase.rpc("create_room");
+        const { data, error } = await supabase.rpc("create_room_with_code", {
+            input_code: code,
+        });
 
-        if (error) mapRpcError(error, "Could not create classroom session. Please try again")
+        if (error) {
+            // A previous attempt may have created the Supabase room before the
+            // local headset login completed. Reuse that still-active room so a
+            // refresh does not strand the instructor behind "code in use".
+            if (error.message.includes("ROOM_CODE_IN_USE")) {
+                const { data: existingRoom, error: lookupError } = await supabase
+                    .from("rooms")
+                    .select("id, code")
+                    .eq("code", code)
+                    .eq("is_active", true)
+                    .order("created_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (!lookupError && existingRoom?.id) {
+                    return { room_id: existingRoom.id, room_code: existingRoom.code };
+                }
+            }
+
+            mapRpcError(error, "Could not create classroom session. Please try again")
+        }
 
         const row = data?.[0] as ClassroomCreateSessionType | undefined;
 
         if (!row) throw new ClassroomSessionError("Could not create room.")
-        return { room_id: row.room_id }
+        return { room_id: row.room_id, room_code: row.room_code }
     },
 
-    async joinActive(deviceId: string, name?: string): Promise<ClassroomJoinSessionType | null> {
-        const { data, error } = await supabase.rpc("join_active_room", {
+    async joinByCode(code: string, deviceId: string, name?: string): Promise<ClassroomJoinSessionType | null> {
+        // The Socket.IO server currently represents one shared classroom.
+        // Supabase may still contain older active rows (for example, if a
+        // previous session was not closed), so only the newest active room is
+        // allowed to accept students. This prevents an old but valid code from
+        // connecting a student to the instructor's current socket classroom.
+        const { data: currentRoom, error: currentRoomError } = await supabase
+            .from("rooms")
+            .select("id, code")
+            .eq("is_active", true)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (currentRoomError) {
+            mapRpcError(currentRoomError, "Could not check the classroom code. Please try again.");
+        }
+
+        if (!currentRoom || currentRoom.code !== code.trim()) return null;
+
+        const { data, error } = await supabase.rpc("join_room_with_code", {
+            input_code: code,
             input_device_id: deviceId,
             input_name: name ?? null,
         });
