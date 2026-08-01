@@ -1,71 +1,90 @@
 <style>
   .panel-root {
-    padding: 28px;
+    padding-top: 20px;
+    padding-right: 26px;
+    padding-bottom: 20px;
+    padding-left: 26px;
     flex-direction: column;
     align-items: center;
-    width: 480px;
-    background-color: #1c1c1e;
-    border-radius: 20px;
+    width: 500px;
+    background-color: rgba(10, 20, 43, 0.94);
+    border-width: 2px;
+    border-color: rgba(125, 211, 252, 0.72);
+    border-radius: 28px;
   }
 
-  .title {
-    font-size: 24px;
-    font-weight: 700;
-    color: white;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
-    color: #9a9a9e;
-    font-size: 14px;
-    margin-bottom: 20px;
-  }
-
-  .subtitle-error { color: #ff6b6b; }
-  .subtitle-success { color: #4ade80; }
-
-  .role-toggle {
-    flex-direction: row;
+  .brand-row {
     width: 100%;
-    background-color: #2c2c2e;
-    border-radius: 999px;
-    padding: 4px;
-    gap: 4px;
-    margin-bottom: 24px;
-  }
-
-  .role-segment {
     flex-direction: row;
-    width: 210px;
-    height: 40px;
     justify-content: center;
     align-items: center;
-    border-radius: 999px;
-    gap: 6px;
-    background-color: #5f5d5d;
-    color: #9a9a9e;
-    font-size: 14px;
+    gap: 12px;
+    margin-bottom: 4px;
     text-align: center;
     vertical-align: center;
   }
 
-  .role-icon {
-    width: 15px;
-    height: 15px;
-    color: #9a9a9e;
+  .brand-title {
+    color: white;
+    font-size: 24px;
+    font-weight: 800;
+  }
+
+  .title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #dbeafe;
+    margin-bottom: 5px;
+  }
+
+  .subtitle {
+    color: #a9bdd8;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+
+  .subtitle-error { color: #fda4af; }
+  .subtitle-success { color: #86efac; }
+
+  .role-toggle {
+    flex-direction: row;
+    width: 100%;
+    gap: 12px;
+    margin-bottom: 15px;
+  }
+
+  .role-segment {
+    width: 214px;
+    height: 60px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 18px;
+    border-width: 2px;
+    border-color: rgba(148, 163, 184, 0.38);
+    background-color: rgba(30, 41, 65, 0.88);
+    color: #cbd5e1;
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+    vertical-align: center;
   }
 
   .role-segment:hover {
-    background-color: #3a3a3c;
+    background-color: rgba(42, 64, 96, 0.96);
+    border-color: #7dd3fc;
   }
 
   .role-segment-selected {
-    background-color: #ffffff;
-    color: #1c1c1e;
+    background-color: #123d72;
+    border-color: #38bdf8;
+    color: white;
   }
 
-  .role-segment-selected .role-icon {
-    color: #1c1c1e;
+  .pin-label {
+    color: #dbeafe;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 10px;
   }
 
   .pin-row {
@@ -73,23 +92,23 @@
     justify-content: center;
     gap: 10px;
     width: 100%;
-    margin-bottom: 24px;
+    margin-bottom: 13px;
   }
 
   .pin-slot {
-    width: 44px;
-    height: 54px;
+    width: 43px;
+    height: 46px;
     justify-content: center;
     align-items: center;
-    border-radius: 10px;
-    background-color: #2c2c2e;
+    border-radius: 11px;
+    background-color: rgba(15, 23, 42, 0.92);
     border-width: 2px;
-    border-color: #3a3a3c;
+    border-color: #52637c;
   }
 
   .pin-slot-filled {
-    border-color: #ffffff;
-    background-color: #333335;
+    border-color: #38bdf8;
+    background-color: #17375f;
   }
 
   .pin-digit {
@@ -98,132 +117,116 @@
     text-align: center;
     vertical-align: center;
     color: white;
-    font-size: 22px;
-    font-weight: 600;
+    font-size: 23px;
+    font-weight: 700;
   }
 
   .keypad {
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 7px;
     width: 100%;
-    margin-bottom: 22px;
+    margin-bottom: 13px;
   }
 
   .keypad-row {
     flex-direction: row;
-    gap: 10px;
+    gap: 7px;
   }
 
   .keypad-key {
     width: 60px;
-    height: 54px;
+    height: 44px;
     justify-content: center;
     align-items: center;
-    border-radius: 10px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: rgba(125, 211, 252, 0.22);
   }
 
   .key-btn {
-    background-color: #2c2c2e;
+    background-color: #1e3558;
     color: white;
-    font-size: 19px;
-    text-align: center;
-    vertical-align: center;
-  }
-
-  .key-btn:hover {
-    background-color: #3a3a3c;
-  }
-
-  .key-pressed {
-    border-width: 2px;
-    border-color: #22c55e;
-  }
-
-  .key-spacer {
-    width: 75px;
-    height: 54px;
-  }
-
-  .backspace-btn {
-    background-color: #2c2c2e;
-    color: #ff6b6b;
-  }
-
-  .backspace-icon {
-    width: 20px;
-    height: 20px;
-    color: #ff6b6b;
-  }
-
-  .backspace-btn:hover {
-    background-color: #3a3a3c;
-  }
-
-  .backspace-btn:active {
-    background-color: #4a4a4c;
-  }
-
-  .backspace-pressed {
-    border-width: 2px;
-    border-color: #22c55e;
-  }
-
-  .btn-base {
-    width: 100%;
-    height: 48px;
-    justify-content: center;
-    align-items: center;
-    border-radius: 999px;
-    font-size: 15px;
+    font-size: 20px;
     font-weight: 600;
     text-align: center;
     vertical-align: center;
   }
 
+  .key-btn:hover {
+    background-color: #285486;
+    border-color: #7dd3fc;
+  }
+
+  .key-spacer {
+    width: 60px;
+    height: 44px;
+  }
+
+  .backspace-btn {
+    background-color: #3b2538;
+    color: #fda4af;
+    font-size: 13px;
+    text-align: center;
+    vertical-align: center;
+  }
+
+  .backspace-btn:hover {
+    background-color: #5d2941;
+    border-color: #fda4af;
+  }
+
+  .btn-base {
+    width: 100%;
+    height: 46px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    text-align: center;
+    vertical-align: center;
+  }
+
   .btn-continue {
-    background-color: #ffffff;
-    color: #1c1c1e;
+    background-color: #38bdf8;
+    color: #07162c;
   }
 
   .btn-continue:hover {
-    background-color: #e4e4e6;
+    background-color: #7dd3fc;
   }
 
-  .btn-continue-busy {
-    background-color: #5a5a5c;
-    color: #b0b0b2;
+  .helper {
+    color: #9fb3ce;
+    font-size: 12px;
+    margin-top: 12px;
   }
 
-  /* Students never type a code, so the keypad, pin row and confirm button are
-     hidden for that role — the panel just waits for a class to go live. */
-  .is-hidden {
-    display: none;
-  }
+  .is-hidden { display: none; }
 </style>
 
 <Panel id="panel-root" class="panel-root">
-  <text id="title-text" class="title">Create Classroom</text>
-  <text id="subtitle-text" class="subtitle">Enter the professor PIN</text>
-
-  <div id="role-toggle" class="role-toggle">
-    <button id="role-professor" class="role-segment role-segment-selected">
-      <GraduationCapIcon class="role-icon"></GraduationCapIcon>
-      Professor
-    </button>
-    <button id="role-student" class="role-segment">
-      <UserIcon class="role-icon"></UserIcon>
-      Student
-    </button>
+  <div class="brand-row">
+    <text class="brand-title">UMES VR Classroom</text>
   </div>
 
+  <text id="title-text" class="title">Create or Join a Classroom</text>
+  <text id="subtitle-text" class="subtitle">Choose a 6-digit classroom code</text>
+
+  <div id="role-toggle" class="role-toggle">
+    <button id="role-professor" class="role-segment role-segment-selected">Professor</button>
+    <button id="role-student" class="role-segment">Student</button>
+  </div>
+
+  <text id="pin-label" class="pin-label">Choose your 6-digit classroom code</text>
   <div id="pin-row" class="pin-row">
-    <div id="pin-slot-0" class="pin-slot"><text id="pin-digit-0" class="pin-digit">0</text></div>
-    <div id="pin-slot-1" class="pin-slot"><text id="pin-digit-1" class="pin-digit">0</text></div>
-    <div id="pin-slot-2" class="pin-slot"><text id="pin-digit-2" class="pin-digit">0</text></div>
-    <div id="pin-slot-3" class="pin-slot"><text id="pin-digit-3" class="pin-digit">0</text></div>
-    <div id="pin-slot-4" class="pin-slot"><text id="pin-digit-4" class="pin-digit">0</text></div>
-    <div id="pin-slot-5" class="pin-slot"><text id="pin-digit-5" class="pin-digit">0</text></div>
+    <div id="pin-slot-0" class="pin-slot"><text id="pin-digit-0" class="pin-digit">-</text></div>
+    <div id="pin-slot-1" class="pin-slot"><text id="pin-digit-1" class="pin-digit">-</text></div>
+    <div id="pin-slot-2" class="pin-slot"><text id="pin-digit-2" class="pin-digit">-</text></div>
+    <div id="pin-slot-3" class="pin-slot"><text id="pin-digit-3" class="pin-digit">-</text></div>
+    <div id="pin-slot-4" class="pin-slot"><text id="pin-digit-4" class="pin-digit">-</text></div>
+    <div id="pin-slot-5" class="pin-slot"><text id="pin-digit-5" class="pin-digit">-</text></div>
   </div>
 
   <div id="keypad" class="keypad">
@@ -245,11 +248,10 @@
     <div class="keypad-row">
       <div class="key-spacer"></div>
       <button id="key-0" class="key-btn keypad-key">0</button>
-      <button id="key-backspace" class="backspace-btn keypad-key">
-        <DeleteIcon class="backspace-icon"></DeleteIcon>
-      </button>
+      <button id="key-backspace" class="backspace-btn keypad-key">Back</button>
     </div>
   </div>
 
   <button id="confirm-btn" class="btn-base btn-continue">Create Classroom</button>
+  <text id="helper-text" class="helper">Students enter the same code and receive a seat</text>
 </Panel>

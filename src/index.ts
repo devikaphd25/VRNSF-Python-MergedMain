@@ -6,6 +6,7 @@ import {
   AssetManager,
   AssetManifest,
   AssetType,
+  DomeGradient,
   EnvironmentType,
   IBLTexture,
   LocomotionEnvironment,
@@ -35,7 +36,8 @@ import {
   PanelSystemComponent
 } from "./panel";
 
-import { socket } from "./network/socket";
+import { connectSocketForUser, socket } from "./network/socket";
+import { showVRLoginPanel } from "./systems/vr-login.system";
 if (typeof socket !== 'undefined') {
   socket.on("modeChanged", (data) => {
     console.log(`[Student] 🔔 TOP-LEVEL modeChanged received:`, data);
@@ -219,12 +221,13 @@ function getLoggedInUser(): VRUser | null {
 }
 
 function redirectToLogin(): void {
-  window.location.replace("./login.html");
+  window.location.replace("./");
 }
 
 function logout(): void {
   localStorage.removeItem("vrUser");
-  window.location.replace("./login.html");
+  localStorage.removeItem("vrClassroomSession");
+  window.location.replace("./");
 }
 
 (window as any).logout = logout;
@@ -233,15 +236,9 @@ function logout(): void {
 // CHECK LOGIN BEFORE CREATING THE VR WORLD
 // ============================================================
 
-const currentUser = getLoggedInUser();
-
-if (!currentUser) {
-  redirectToLogin();
-  throw new Error("No valid VR login was found.");
-}
-
-const isInstructor = currentUser.role === "instructor";
-const isStudent = currentUser.role === "student";
+let currentUser: VRUser | null = null;
+let isInstructor = currentUser?.role === "instructor";
+let isStudent = currentUser?.role === "student";
 function registerCurrentClassroomUser(): void {
   if (!socket.connected) {
     return;
@@ -252,7 +249,6 @@ function registerCurrentClassroomUser(): void {
       "[Classroom] Cannot register because currentUser is null."
     );
 
-    window.location.href = "/login.html";
     return;
   }
 
@@ -265,11 +261,22 @@ function registerCurrentClassroomUser(): void {
     }
   );
 
+  let classroomSession: { roomId?: string; participantId?: string | null } = {};
+  try {
+    classroomSession = JSON.parse(
+      localStorage.getItem("vrClassroomSession") ?? "{}"
+    );
+  } catch (error) {
+    console.error("[Classroom] Invalid saved classroom session:", error);
+  }
+
   socket.emit(
     "registerClassroomClient",
     {
       userId: currentUser.id,
-      username: currentUser.username
+      username: currentUser.username,
+      roomId: classroomSession.roomId ?? null,
+      participantId: classroomSession.participantId ?? null
     }
   );
 }
@@ -286,14 +293,7 @@ socket.on("connect", () => {
 if (socket.connected) {
   registerCurrentClassroomUser();
 }
-console.log("[Login] Current user:", currentUser.username);
-console.log("[Login] Current role:", currentUser.role);
-
-
-
-(window as any).vrUser = currentUser;
-(window as any).isInstructor = isInstructor;
-(window as any).isStudent = isStudent;
+console.log("[Login] Saved user:", currentUser?.username ?? "none");
 
 
 // ============================================================
@@ -333,7 +333,7 @@ World.create(
     }
   }
 )
-  .then((world) => {
+  .then(async (world) => {
     const { renderer, scene, camera, player } = world;
     (window as any).renderer =
   renderer;
@@ -344,37 +344,55 @@ World.create(
   (window as any).camera =
     camera;
 
-  (window as any).player =
+    (window as any).player =
     player;
 
-    const startupMessage = document.getElementById("startup-message");
-    if (startupMessage) {
-      startupMessage.textContent = isInstructor
-        ? `Welcome Instructor ${currentUser.username}`
-        : `Welcome Student ${currentUser.username}`;
-    }
+    const skyLevel = world.activeLevel.value;
+    skyLevel.addComponent(DomeGradient, {
+      sky: [0.04, 0.18, 0.38, 1],
+      equator: [0.18, 0.52, 0.78, 1],
+      ground: [0.015, 0.025, 0.06, 1],
+      intensity: 1.15,
+    });
 
-    document.title = isInstructor ? "UMES VR – Instructor" : "UMES VR – Student";
-
-    // ========================================================
-    // RENDERER SETTINGS
-    // ========================================================
-
+    // Configure the renderer and HDR environment before waiting for the VR
+    // login. On physical Quest hardware the XR session may already be
+    // presenting by the time the user submits the panel.
     renderer.shadowMap.enabled = false;
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.8;
     renderer.xr.enabled = true;
 
-    // ========================================================
-    // LIGHTING
-    // ========================================================
-
-    const levelRoot = world.activeLevel.value;
-    levelRoot.addComponent(IBLTexture, {
+    skyLevel.addComponent(IBLTexture, {
       src: "sunsetHDR",
       intensity: 0.9,
       rotation: [0, Math.PI / 4, 0]
     });
+
+    const startupMessage = document.getElementById("startup-message");
+
+    if (!currentUser) {
+      if (startupMessage) startupMessage.style.display = "none";
+      const login = await showVRLoginPanel(world, camera);
+      currentUser = login.user;
+    }
+
+    const activeUser = currentUser;
+    isInstructor = activeUser.role === "instructor";
+    isStudent = activeUser.role === "student";
+
+    (window as any).vrUser = activeUser;
+    (window as any).isInstructor = isInstructor;
+    (window as any).isStudent = isStudent;
+    connectSocketForUser(activeUser);
+
+    if (startupMessage) {
+      startupMessage.textContent = isInstructor
+        ? `Welcome Instructor ${activeUser.username}`
+        : `Welcome Student ${activeUser.username}`;
+    }
+
+    document.title = isInstructor ? "UMES VR – Instructor" : "UMES VR – Student";
 
     // ========================================================
     // LOAD CLASSROOM AND INSTRUCTOR AVATAR
@@ -1388,7 +1406,7 @@ World.create(
       startupMessage.style.display = "none";
     }
 
-    console.log(`[Index] ✅ Application initialized for ${currentUser.role}: ${currentUser.username}`);
+    console.log(`[Index] ✅ Application initialized for ${activeUser.role}: ${activeUser.username}`);
   })
   .catch((error) => {
     console.error("Failed to create world:", error);
