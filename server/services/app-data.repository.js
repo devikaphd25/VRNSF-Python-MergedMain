@@ -107,6 +107,44 @@ export async function saveAppGameResult({
   if (error) throw new Error(`Could not save game result: ${error.message}`);
 }
 
+export async function getRecentAppGameResults(limit = 50) {
+  const { data, error } = await supabaseAdmin
+    .from("game_results")
+    .select(`
+      id,
+      user_id,
+      game_name,
+      score,
+      duration_seconds,
+      status,
+      completed_at,
+      app_users!game_results_user_id_fkey(full_name,seat)
+    `)
+    .order("completed_at", { ascending: false })
+    .limit(Math.max(1, Math.min(Number(limit) || 50, 200)));
+
+  if (error) throw new Error(`Could not load game results: ${error.message}`);
+
+  const latestByUser = new Map();
+  for (const row of data ?? []) {
+    const userId = Number(row.user_id);
+    if (latestByUser.has(userId)) continue;
+    latestByUser.set(userId, {
+      id: Number(row.id),
+      userId,
+      name: row.app_users?.full_name ?? `Student ${userId}`,
+      seat: row.app_users?.seat ?? "Not selected",
+      gameName: row.game_name,
+      score: Number(row.score) || 0,
+      durationSeconds: Number(row.duration_seconds) || 0,
+      status: row.status,
+      completedAt: row.completed_at,
+    });
+  }
+
+  return [...latestByUser.values()];
+}
+
 export function verifyAppPassword(user, password) {
   if (!user?.passwordHash) return false;
   const [algorithm, saltHex, hashHex] = user.passwordHash.split("$");

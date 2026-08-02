@@ -172,10 +172,10 @@ export class VRLoginSystem extends createSystem({
       setClass(studentButton, "role-segment-selected", false);
       [pinLabel, pinRow, keypad, confirmButton].forEach((item) => setClass(item, "is-hidden", false));
       title.setProperties({ text: "Create or Join a Classroom" });
-      (pinLabel as UIKit.Text).setProperties({ text: "Enter the classroom code: 123456" });
+      (pinLabel as UIKit.Text).setProperties({ text: "Enter the 6-digit Professor PIN" });
       (confirmButton as UIKit.Text).setProperties({ text: "Create Classroom" });
       confirmButton.textContent = "Create Classroom";
-      setStatus("Activate the existing UMES classroom");
+      setStatus("Professor verification is required");
     };
 
     const tryStudentJoin = async (): Promise<void> => {
@@ -183,9 +183,9 @@ export class VRLoginSystem extends createSystem({
       this.busy = true;
       try {
         const deviceId = getPersistentDeviceId();
-        const session = await ClassroomSessionService.joinByCode(this.enteredPin, deviceId);
+        const session = await ClassroomSessionService.joinLatest(deviceId);
         if (!session) {
-          setStatus("No active classroom matches this code", true);
+          setStatus("Waiting for the instructor to start the classroom...");
           return;
         }
 
@@ -210,13 +210,17 @@ export class VRLoginSystem extends createSystem({
       refreshPin();
       setClass(studentButton, "role-segment-selected", true);
       setClass(professorButton, "role-segment-selected", false);
-      [pinLabel, pinRow, keypad, confirmButton].forEach((item) => setClass(item, "is-hidden", false));
+      [pinLabel, pinRow, keypad].forEach((item) => setClass(item, "is-hidden", true));
+      setClass(confirmButton, "is-hidden", false);
       title.setProperties({ text: "Join a Classroom" });
-      (pinLabel as UIKit.Text).setProperties({ text: "Enter the instructor's 6-digit code" });
-      (confirmButton as UIKit.Text).setProperties({ text: "Join Classroom" });
-      confirmButton.textContent = "Join Classroom";
-      setStatus("Enter the code shared by your instructor");
+      (confirmButton as UIKit.Text).setProperties({ text: "Join Latest Classroom" });
+      confirmButton.textContent = "Join Latest Classroom";
+      setStatus("Finding the latest active classroom...");
       this.stopWaiting();
+      void tryStudentJoin();
+      this.waitTimer = setInterval(() => {
+        void tryStudentJoin();
+      }, 2000);
     };
 
     for (const digit of "0123456789") {
@@ -239,20 +243,26 @@ export class VRLoginSystem extends createSystem({
     studentButton.addEventListener("pointerdown", showStudent);
     confirmButton.addEventListener("pointerdown", async () => {
       if (this.busy) return;
+      if (this.selectedRole === "student") {
+        await tryStudentJoin();
+        return;
+      }
+
       if (this.enteredPin.length !== 6) {
         setStatus("Enter all 6 digits", true);
         return;
       }
 
-      if (this.selectedRole === "student") {
-        await tryStudentJoin();
+      const professorPin = import.meta.env.VITE_PROFESSOR_VERIFICATION_CODE;
+      if (!professorPin || this.enteredPin !== professorPin) {
+        setStatus("The Professor PIN is incorrect", true);
         return;
       }
 
       this.busy = true;
       try {
         setStatus("Creating classroom...");
-        const session = await ClassroomSessionService.create(this.enteredPin);
+        const session = await ClassroomSessionService.create();
         // Keep the local instructor identity separate from the student
         // identity. This is especially important when both roles are tested
         // in different tabs of the same browser, because those tabs share

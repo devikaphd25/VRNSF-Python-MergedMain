@@ -1,5 +1,5 @@
 -- Run once in Supabase SQL Editor.
--- Adds instructor-selected six-digit classroom codes while preserving
+-- Adds Professor-PIN login with automatic classroom creation while preserving
 -- persistent headset identity, automatic student names, and fixed seats.
 
 alter table public.rooms add column if not exists code text;
@@ -14,59 +14,25 @@ create unique index if not exists rooms_one_active_code_idx
 on public.rooms(code)
 where is_active = true and code is not null;
 
-create or replace function public.create_room_with_code(input_code text)
-returns table(room_id uuid, room_code text)
+drop function if exists public.create_room_with_code(text);
+
+create or replace function public.create_room()
+returns table(room_id uuid)
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  selected_room rooms%rowtype;
 begin
-  input_code := trim(input_code);
-  if input_code !~ '^[0-9]{6}$' then
-    raise exception 'INVALID_CODE';
-  end if;
-
-  -- This application has one permanent classroom. The instructor activates
-  -- the existing row; this function must never create a new room.
-  if input_code <> '123456' then
-    raise exception 'ROOM_NOT_FOUND';
-  end if;
-
-  select r.* into selected_room
-  from rooms r
-  where r.code = input_code
-  order by r.created_at desc
-  limit 1
-  for update;
-
-  if selected_room.id is null then
-    raise exception 'ROOM_NOT_FOUND';
-  end if;
-
-  if selected_room.is_active then
-    raise exception 'ROOM_CODE_IN_USE';
-  end if;
-
-  -- Remove only data belonging to the previous use of this classroom. User
-  -- identities, fixed app-user seats, quiz questions, and lab results remain.
-  delete from quiz_responses qr
-  where qr.participant_id in (
-    select p.id from participants p where p.room_id = selected_room.id
-  );
-
-  delete from participants p
-  where p.room_id = selected_room.id;
-
+  -- The first deployment uses one live class at a time. Starting a new
+  -- instructor session closes any room left active by a closed browser.
   update rooms r
-  set is_active = true,
-      closed_at = null,
-      current_slide = 0
-  where r.id = selected_room.id;
+  set is_active = false,
+      closed_at = now()
+  where r.is_active = true;
 
-  room_id := selected_room.id;
-  room_code := selected_room.code;
+  insert into rooms(current_slide, is_active, created_at, closed_at, code)
+  values(0, true, now(), null, null)
+  returning id into room_id;
 
   insert into participants(room_id, role, display_name)
   values(room_id, 'professor', 'Instructor');
@@ -75,8 +41,9 @@ begin
 end;
 $$;
 
-create or replace function public.join_room_with_code(
-  input_code text,
+drop function if exists public.join_room_with_code(text, text, text);
+
+create or replace function public.join_latest_active_room(
   input_device_id text,
   input_name text default null
 )
@@ -98,16 +65,9 @@ declare
   selected_name text;
   student_number integer;
 begin
-  input_code := trim(input_code);
-  if input_code !~ '^[0-9]{6}$' then
-    raise exception 'INVALID_CODE';
-  end if;
-
   select r.* into selected_room
   from rooms r
-  where r.code = input_code
-    and r.is_active = true
-    and r.created_at > now() - interval '4 hours'
+  where r.is_active = true
   order by r.created_at desc
   limit 1;
 
@@ -159,5 +119,5 @@ begin
 end;
 $$;
 
-grant execute on function public.create_room_with_code(text) to anon, authenticated;
-grant execute on function public.join_room_with_code(text, text, text) to anon, authenticated;
+grant execute on function public.create_room() to anon, authenticated;
+grant execute on function public.join_latest_active_room(text, text) to anon, authenticated;

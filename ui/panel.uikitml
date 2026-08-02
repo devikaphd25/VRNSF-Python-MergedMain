@@ -212,7 +212,7 @@
   </div>
 
   <text id="title-text" class="title">Create or Join a Classroom</text>
-  <text id="subtitle-text" class="subtitle">Choose a 6-digit classroom code</text>
+  <text id="subtitle-text" class="subtitle">Professor activates the classroom; students join automatically</text>
 
   <div id="role-toggle" class="role-toggle">
     <button id="role-professor" class="role-segment role-segment-selected">Professor</button>
@@ -253,5 +253,5 @@
   </div>
 
   <button id="confirm-btn" class="btn-base btn-continue">Create Classroom</button>
-  <text id="helper-text" class="helper">Students enter the same code and receive a seat</text>
+  <text id="helper-text" class="helper">Students automatically join the active classroom and receive a seat</text>
 </Panel>
