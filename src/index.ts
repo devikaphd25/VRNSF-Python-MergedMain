@@ -290,6 +290,24 @@ socket.on("connect", () => {
   registerCurrentClassroomUser();
 });
 
+socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
+  let savedRoomId = "";
+  try {
+    const savedSession = JSON.parse(
+      localStorage.getItem("vrClassroomSession") ?? "{}"
+    );
+    savedRoomId = String(savedSession?.roomId ?? "");
+  } catch {
+    savedRoomId = "";
+  }
+
+  if (!data?.roomId || data.roomId !== savedRoomId) return;
+
+  localStorage.removeItem("vrUser");
+  localStorage.removeItem("vrClassroomSession");
+  window.location.replace("./");
+});
+
 if (socket.connected) {
   registerCurrentClassroomUser();
 }

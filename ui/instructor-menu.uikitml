@@ -293,6 +293,88 @@
     font-size: 15;
     font-family: inter;
   }
+
+  /* ======================================================
+     END CLASS
+     ====================================================== */
+
+  .is-hidden {
+    display: none;
+  }
+
+  .end-class-section {
+    flex-direction: column;
+    gap: 12;
+    pointer-events: auto;
+    pointer-events-order: 1000;
+  }
+
+  .end-class-button {
+    height: 70;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(127, 29, 29, 0.55);
+    border-radius: 16;
+    border-width: 2;
+    border-color: rgba(248, 113, 113, 0.72);
+    color: #fecaca;
+    font-size: 20;
+    font-weight: 700;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 10001;
+  }
+
+  .end-class-button:hover {
+    background-color: rgba(185, 28, 28, 0.72);
+    border-color: #fca5a5;
+  }
+
+  .end-class-confirm-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 12;
+    padding: 12;
+    background-color: rgba(69, 10, 10, 0.68);
+    border-radius: 16;
+    border-width: 1;
+    border-color: rgba(248, 113, 113, 0.5);
+    pointer-events: auto;
+  }
+
+  .end-class-confirm-text {
+    flex-grow: 1;
+    color: #fee2e2;
+    font-size: 16;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .end-class-confirm-button,
+  .end-class-cancel-button {
+    width: 180;
+    height: 58;
+    align-items: center;
+    justify-content: center;
+    border-radius: 13;
+    border-width: 1;
+    color: #ffffff;
+    font-size: 16;
+    font-weight: 700;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 10001;
+  }
+
+  .end-class-confirm-button {
+    background-color: rgba(220, 38, 38, 0.85);
+    border-color: #fca5a5;
+  }
+
+  .end-class-cancel-button {
+    background-color: rgba(51, 65, 85, 0.95);
+    border-color: rgba(148, 163, 184, 0.7);
+  }
 </style>
 
 <Panel
@@ -436,5 +518,23 @@
     >
       Select a classroom activity
     </span>
+  </div>
+
+  <div class="end-class-section">
+    <button id="end-class-button" class="end-class-button">
+      End Class
+    </button>
+
+    <div id="end-class-confirm-row" class="end-class-confirm-row is-hidden">
+      <span class="end-class-confirm-text">
+        End this class for everyone?
+      </span>
+      <button id="end-class-confirm-button" class="end-class-confirm-button">
+        Confirm End
+      </button>
+      <button id="end-class-cancel-button" class="end-class-cancel-button">
+        Cancel
+      </button>
+    </div>
   </div>
 </Panel>

@@ -467,6 +467,38 @@ socket.emit(
   );
 });
 
+  socket.on("endClass", async (_data, acknowledge) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+
+    if (!isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      acknowledge?.({ success: false, message: "Only the instructor can end the class." });
+      return;
+    }
+
+    if (!roomId) {
+      acknowledge?.({ success: false, message: "No active classroom was found." });
+      return;
+    }
+
+    cancelScheduledRoomClose(roomId);
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Room] Instructor could not end ${roomId}:`, error.message);
+      acknowledge?.({ success: false, message: "Could not update the classroom." });
+      return;
+    }
+
+    acknowledge?.({ success: true });
+    io.emit("classEnded", { roomId, message: "The instructor ended the class." });
+    console.log(`[Room] Instructor ended classroom ${roomId}.`);
+  });
+
   // ========================================================
   // GAME CLIENT EVENTS
   // ========================================================
