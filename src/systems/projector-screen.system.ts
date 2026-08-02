@@ -22,6 +22,7 @@ export class ProjectorScreenSystem extends createSystem({
 
     private currentIndex: number = 0;
     private isInstructor: boolean = false; // ✅ Flag to check if user is instructor
+    private joystickBusy = false;
 
     async init() {
         // ✅ Check if this user is the instructor
@@ -29,10 +30,31 @@ export class ProjectorScreenSystem extends createSystem({
         this.isInstructor = (window as any).isInstructor || false;
         console.log(`[ProjectorScreenSystem] isInstructor: ${this.isInstructor}`);
 
+        try {
+            const session = JSON.parse(
+                localStorage.getItem("vrClassroomSession") ?? "{}"
+            );
+            const savedSlide = Number(session?.currentSlide);
+            if (Number.isInteger(savedSlide) && savedSlide >= 0 && savedSlide < this.slides.length) {
+                this.currentIndex = savedSlide;
+            }
+        } catch {
+            this.currentIndex = 0;
+        }
+
         // ✅ Listen for slide changes from instructor
         socket.on('slideChanged', (data: { index: number }) => {
             console.log(`[ProjectorScreenSystem] Slide changed to: ${data.index}`);
             this.currentIndex = data.index;
+            try {
+                const session = JSON.parse(
+                    localStorage.getItem("vrClassroomSession") ?? "{}"
+                );
+                session.currentSlide = data.index;
+                localStorage.setItem("vrClassroomSession", JSON.stringify(session));
+            } catch {
+                // The live slide still updates even if local session storage is unavailable.
+            }
             this.loadSlide();
         });
 
@@ -68,6 +90,8 @@ export class ProjectorScreenSystem extends createSystem({
 
         this.material.emissiveMap = slide
         this.material.needsUpdate = true
+
+        ;(window as any).presentationSystem?.refreshPresentationTexture?.();
     }
 
     update() {
@@ -84,6 +108,7 @@ export class ProjectorScreenSystem extends createSystem({
                 }
             } else {
                 const leftCtrl = this.input.xr.gamepads.left
+                const rightCtrl = this.input.xr.gamepads.right
                /*
                 * Right trigger is reserved for opening
                 * the instructor dashboard.
@@ -100,6 +125,37 @@ export class ProjectorScreenSystem extends createSystem({
                 ) {
                     this.previous().then();
                 }
+                }
+
+
+                /*
+                 * While presenting, move the right thumbstick once to the
+                 * left/right to change exactly one slide. It must return to
+                 * center before another change, preventing rapid skipping.
+                 */
+                if (
+                    this.isInstructor &&
+                    (window as any).isPresentationActive &&
+                    rightCtrl
+                ) {
+                    const thumbstick = "xr-standard-thumbstick";
+                    const movedLeft = rightCtrl.getAxesEnteringLeft(thumbstick);
+                    const movedRight = rightCtrl.getAxesEnteringRight(thumbstick);
+
+                    if (!this.joystickBusy && movedLeft) {
+                        this.joystickBusy = true;
+                        this.previous().then();
+                    } else if (!this.joystickBusy && movedRight) {
+                        this.joystickBusy = true;
+                        this.next().then();
+                    }
+
+                    const axes = rightCtrl.getAxesValues(thumbstick);
+                    if (!axes || Math.abs(axes.x) < 0.35) {
+                        this.joystickBusy = false;
+                    }
+                } else {
+                    this.joystickBusy = false;
                 }
                             }
         });
