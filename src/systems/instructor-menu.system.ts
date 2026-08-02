@@ -134,6 +134,7 @@ export class InstructorDashboardSystem extends createSystem({
   private saveOverlayDocument?: UIKitDocument;
   private saveOverlayEntity?: any;
   private saveOverlayTimer?: number;
+  private isEndingClass = false;
 
   private currentMode: InstructorMode =
     "Classroom Mode";
@@ -408,6 +409,7 @@ export class InstructorDashboardSystem extends createSystem({
 
     this.connectCloseButton();
     this.connectModeButtons();
+    this.connectEndClassControls();
     this.updateModeDisplay();
     this.updateOnlineCountDisplay();
 
@@ -442,6 +444,55 @@ export class InstructorDashboardSystem extends createSystem({
       }
       );
     }
+  }
+
+  private connectEndClassControls(): void {
+    const document = this.dashboardDocument;
+    if (!document) return;
+
+    const endButton = document.getElementById("end-class-button");
+    const confirmRow = document.getElementById("end-class-confirm-row");
+
+    const showConfirmation = (visible: boolean): void => {
+      if (!endButton || !confirmRow) return;
+      if (visible) {
+        endButton.classList.add("is-hidden");
+        confirmRow.classList.remove("is-hidden");
+        this.showStatusMessage("Confirm that you want to end the class");
+      } else {
+        endButton.classList.remove("is-hidden");
+        confirmRow.classList.add("is-hidden");
+        this.showStatusMessage("Class remains active");
+      }
+      this.syncDocument(document);
+    };
+
+    this.bindSpatialButton(document, "end-class-button", () => {
+      if (!this.isEndingClass) showConfirmation(true);
+    });
+
+    this.bindSpatialButton(document, "end-class-cancel-button", () => {
+      if (!this.isEndingClass) showConfirmation(false);
+    });
+
+    this.bindSpatialButton(document, "end-class-confirm-button", () => {
+      if (this.isEndingClass) return;
+      this.isEndingClass = true;
+      this.showStatusMessage("Ending class for everyone...");
+
+      socket.emit(
+        "endClass",
+        {},
+        (response?: { success?: boolean; message?: string }) => {
+          if (response?.success) return;
+          this.isEndingClass = false;
+          this.showStatusMessage(
+            response?.message ?? "Could not end the class. Please try again."
+          );
+          showConfirmation(false);
+        }
+      );
+    });
   }
 
   private connectLabMonitor(
