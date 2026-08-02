@@ -34,6 +34,7 @@ type LoginCompletion = {
   user: VRLoginUser;
   roomId: string;
   participantId?: string;
+  currentSlide?: number;
 };
 
 let completeLogin: ((result: LoginCompletion) => void) | null = null;
@@ -112,6 +113,7 @@ export class VRLoginSystem extends createSystem({
     localStorage.setItem("vrClassroomSession", JSON.stringify({
       roomId: result.roomId,
       participantId: result.participantId ?? null,
+      currentSlide: result.currentSlide ?? 0,
     }));
     if (loginPanelEntity?.object3D) loginPanelEntity.object3D.visible = false;
     if (loginBackground?.parent) loginBackground.parent.remove(loginBackground);
@@ -196,7 +198,12 @@ export class VRLoginSystem extends createSystem({
           displayName: session.display_name,
           seat: session.seat,
         });
-        this.finish({ user, roomId: session.room_id, participantId: session.participant_id });
+        this.finish({
+          user,
+          roomId: session.room_id,
+          participantId: session.participant_id,
+          currentSlide: session.current_slide,
+        });
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Could not join classroom.", true);
       } finally {

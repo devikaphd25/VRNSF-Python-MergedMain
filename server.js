@@ -499,6 +499,50 @@ socket.emit(
     console.log(`[Room] Instructor ended classroom ${roomId}.`);
   });
 
+  socket.on("slideChanged", async (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const slideIndex = Number(data.index);
+
+    if (!isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("serverError", {
+        message: "Only the instructor can change presentation slides.",
+      });
+      return;
+    }
+
+    if (!roomId || !Number.isInteger(slideIndex) || slideIndex < 0 || slideIndex > 25) {
+      socket.emit("serverError", {
+        message: "The requested slide is invalid.",
+      });
+      return;
+    }
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ current_slide: slideIndex })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Slides] Could not save slide ${slideIndex}:`, error.message);
+      socket.emit("serverError", {
+        message: "Could not synchronize the presentation slide.",
+      });
+      return;
+    }
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.clientType === "classroom" &&
+        client.data.roomId === roomId
+      ) {
+        client.emit("slideChanged", { index: slideIndex });
+      }
+    }
+
+    console.log(`[Slides] Room ${roomId} moved to slide ${slideIndex + 1}.`);
+  });
+
   // ========================================================
   // GAME CLIENT EVENTS
   // ========================================================

@@ -20,6 +20,7 @@ interface Student {
 const markers = new Map<string, Sprite>();
 let playerRef: any = null;
 let isFacingStage = false;
+let markersSuppressed = false;
 const FACING_THRESHOLD = 0.5;
 
 function createTexture(name: string, mode: string) {
@@ -110,7 +111,7 @@ export function updateMarkerVisibility(player: any) {
   isFacingStage = checkPlayerFacingStage();
 
   markers.forEach((marker) => {
-    marker.visible = isFacingStage;
+    marker.visible = !markersSuppressed && isFacingStage;
   });
 }
 
@@ -180,7 +181,7 @@ export function updateSeatMarkers(
       marker.scale.set(0.65, 0.65, 0.65);
 
       // ✅ Start visible by default
-      marker.visible = true;
+      marker.visible = !markersSuppressed;
 
       scene.add(marker);
       markers.set(student.id, marker);
@@ -205,6 +206,7 @@ export function updateSeatMarkers(
 // Force show/hide markers (for debugging)
 // ==========================================
 export function showAllMarkers() {
+  markersSuppressed = false;
   markers.forEach((marker) => {
     marker.visible = true;
   });
@@ -212,10 +214,31 @@ export function showAllMarkers() {
 }
 
 export function hideAllMarkers() {
+  markersSuppressed = true;
   markers.forEach((marker) => {
     marker.visible = false;
   });
   console.log("[SeatMarkers] All markers forced hidden");
+}
+
+export function setSeatMarkersSuppressed(suppressed: boolean) {
+  markersSuppressed = suppressed;
+
+  if (suppressed) {
+    markers.forEach((marker) => {
+      marker.visible = false;
+    });
+  } else if (playerRef) {
+    updateMarkerVisibility(playerRef);
+  } else {
+    markers.forEach((marker) => {
+      marker.visible = true;
+    });
+  }
+
+  console.log(
+    `[SeatMarkers] Presentation suppression: ${suppressed ? "on" : "off"}`
+  );
 }
 
 // ==========================================

@@ -880,6 +880,10 @@ export class InstructorDashboardSystem extends createSystem({
       "instructorReturnAllToClass"
     );
 
+    (window as any)
+      .presentationSystem
+      ?.exitPresentationMode?.();
+
     this.setCurrentMode(
       "Classroom Mode"
     );
@@ -922,6 +926,10 @@ export class InstructorDashboardSystem extends createSystem({
           "Presentation"
       }
     );
+
+    (window as any)
+      .presentationSystem
+      ?.enterPresentationMode?.();
 
     this.setCurrentMode(
       "Presentation Mode"
