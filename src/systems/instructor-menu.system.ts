@@ -36,6 +36,8 @@ interface DashboardStudent {
   labStatus?: string;
   location?: string;
   inLab?: boolean;
+  savedResult?: boolean;
+  completedAt?: string;
 }
 
 export class InstructorDashboardSystem extends createSystem({
@@ -138,6 +140,7 @@ export class InstructorDashboardSystem extends createSystem({
 
   private onlineStudents = 0;
   private latestStudents: DashboardStudent[] = [];
+  private savedLabStudents: DashboardStudent[] = [];
   private hasLabResults = false;
   private hasObservedActiveLabStudent = false;
 
@@ -308,6 +311,29 @@ export class InstructorDashboardSystem extends createSystem({
         socket.emit("requestStudentList");
       }
     );
+
+    socket.on(
+      "savedLabResults",
+      (data: { results?: any[]; error?: string }) => {
+        this.savedLabStudents = (data?.results ?? []).map(result => ({
+          id: `saved-${result.id}`,
+          userId: Number(result.userId),
+          name: result.name,
+          seat: result.seat,
+          score: Number(result.score) || 0,
+          durationSeconds: Number(result.durationSeconds) || 0,
+          labStatus: result.status,
+          completedExercises: result.status === "completed" ? 12 : 0,
+          totalExercises: 12,
+          isDisconnected: true,
+          savedResult: true,
+          completedAt: result.completedAt,
+        }));
+        this.hasLabResults = this.savedLabStudents.length > 0 || this.hasLabResults;
+        this.setLabMonitorAvailable(this.hasLabResults);
+        this.updateLabMonitor();
+      }
+    );
   }
 
   // ======================================================
@@ -473,6 +499,7 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     this.updateLabMonitor();
+    socket.emit("requestSavedLabResults");
   }
 
   private bindSpatialButton(
@@ -600,6 +627,7 @@ export class InstructorDashboardSystem extends createSystem({
         "click",
         (event: any) => {
           event?.stopPropagation?.();
+          socket.emit("requestSavedLabResults");
           this.setLabMonitorVisible(true);
         }
       );
@@ -1039,8 +1067,20 @@ export class InstructorDashboardSystem extends createSystem({
       return;
     }
 
+    const studentsByUser = new Map<number | string, DashboardStudent>();
+
+    for (const student of this.savedLabStudents) {
+      studentsByUser.set(student.userId ?? student.id, student);
+    }
+
+    // Prefer current live data for connected students. If a student logs out,
+    // their saved Supabase result remains available in savedLabStudents.
+    for (const student of this.latestStudents) {
+      studentsByUser.set(student.userId ?? student.id, student);
+    }
+
     const students =
-      this.latestStudents
+      [...studentsByUser.values()]
         .filter(student =>
           !student.isDemo &&
           student.seat &&
@@ -1090,8 +1130,16 @@ export class InstructorDashboardSystem extends createSystem({
       return;
     }
 
+    const studentsByUser = new Map<number | string, DashboardStudent>();
+    for (const student of this.savedLabStudents) {
+      studentsByUser.set(student.userId ?? student.id, student);
+    }
+    for (const student of this.latestStudents) {
+      studentsByUser.set(student.userId ?? student.id, student);
+    }
+
     const students =
-      this.latestStudents
+      [...studentsByUser.values()]
         .filter(student =>
           !student.isDemo &&
           student.seat &&
@@ -1191,13 +1239,13 @@ export class InstructorDashboardSystem extends createSystem({
             );
 
       const statusLabel =
-        student.isDisconnected
-          ? "Offline"
-          : student.labStatus === "completed"
+        student.labStatus === "completed"
             ? "Finished"
-            : student.labStatus === "returned" ||
+          : student.labStatus === "returned" ||
                 student.labStatus === "instructor_return"
               ? "Returned by instructor"
+            : student.isDisconnected
+              ? "Offline"
             : student.mode === "Game Mode"
               ? "Working"
               : completed > 0

@@ -417,6 +417,36 @@ private onHandToggled = (
       !labActive &&
       !resultOpen &&
       !this.resultCooldown;
+
+    if (object.visible) {
+      this.restoreHandModel(object);
+    }
+  }
+
+  /**
+   * UIKit may rebuild the model container when the student result panel closes.
+   * Reattach the existing GLB so the blue raise-hand button does not return empty.
+   */
+  private restoreHandModel(panelObject: THREE.Object3D): void {
+    if (!this.handModel) {
+      this.createHandModel(panelObject);
+      return;
+    }
+
+    let currentContainer: THREE.Object3D | null = null;
+    panelObject.traverse((child) => {
+      if (child.name === "raise-hand-model-container") {
+        currentContainer = child;
+      }
+    });
+
+    const target = currentContainer ?? panelObject;
+    if (this.handModel.parent !== target) {
+      target.add(this.handModel);
+      this.modelContainer = currentContainer;
+    }
+
+    this.handModel.visible = true;
   }
 
   private resetAfterResult = (): void => {

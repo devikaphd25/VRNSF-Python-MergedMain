@@ -28,6 +28,7 @@ import {
   getAppUserById,
   getAppUserByUsername,
   getAppUserCount,
+  getRecentAppGameResults,
   initializeAppDataRepository,
   saveAppGameResult,
   updateAppUserLocation,
@@ -981,7 +982,7 @@ socket.on(
     broadcastStudentList(io);
   });
 
-  socket.on("labCompleted", data => {
+  socket.on("labCompleted", async data => {
     const userId = Number(socket.data.userId);
     const session = labSessions[userId];
 
@@ -992,10 +993,31 @@ socket.on(
     session.status = "completed";
     session.returnReason = "student_completed";
 
+    const result = data?.result ?? session.getProgress();
+
+    if (!session.resultSaved) {
+      try {
+        await saveAppGameResult({
+          userId,
+          score: Number(result?.score ?? session.score) || 0,
+          durationSeconds:
+            Number(result?.durationSeconds ?? session.durationSeconds) || 0,
+          status: "completed",
+        });
+        session.resultSaved = true;
+      } catch (error) {
+        console.error("[Lab] Could not persist completed result:", error);
+        socket.emit("labResultSaveError", {
+          message: "Your result could not be saved. Please notify the instructor.",
+        });
+        return;
+      }
+    }
+
     io.emit("studentLabCompleted", {
       userId,
       studentName: session.studentName,
-      result: session.getProgress(),
+      result,
       clientResult: data?.result,
     });
 
@@ -1352,6 +1374,21 @@ socket.on("studentLeaveLab", data => {
       total: studentsList.length,
       labName: "Python Type Lab",
     });
+  });
+
+  socket.on("requestSavedLabResults", async () => {
+    if (!isInstructorSocket(socket)) return;
+
+    try {
+      const results = await getRecentAppGameResults();
+      socket.emit("savedLabResults", { results });
+    } catch (error) {
+      console.error("[Lab] Could not load saved results:", error);
+      socket.emit("savedLabResults", {
+        results: [],
+        error: "Saved lab results could not be loaded.",
+      });
+    }
   });
 
   // ========================================================
@@ -2183,12 +2220,19 @@ socket.on(
           connectedUser.wpm,
       };
 
-    void saveAppGameResult({
-      userId,
-      score: progress.score,
-      durationSeconds: 0,
-      status: "instructor_return",
-    }).catch(console.error);
+    if (!session?.resultSaved) {
+      void saveAppGameResult({
+        userId,
+        score: progress.score,
+        durationSeconds: progress.durationSeconds ?? 0,
+        status: "instructor_return",
+      }).catch(console.error);
+
+      if (session) {
+        session.resultSaved = true;
+        session.returnReason = "instructor_return";
+      }
+    }
 
     void updateAppUserLocation(userId, "classroom").catch(console.error);
 
