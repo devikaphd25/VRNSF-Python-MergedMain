@@ -3,7 +3,6 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import db from "./database/database.js";
 
 import {
   students,
@@ -24,10 +23,19 @@ import {
   broadcastStudentList,
 } from "./server/services/broadcast.service.js";
 import loginRoutes from "./server/routes/login.routes.js";
+import { supabaseAdmin } from "./server/services/supabase-admin.service.js";
+import {
+  getAppUserById,
+  getAppUserByUsername,
+  getAppUserCount,
+  getRecentAppGameResults,
+  initializeAppDataRepository,
+  saveAppGameResult,
+  updateAppUserLocation,
+} from "./server/services/app-data.repository.js";
 
-console.log(
-  db.prepare("SELECT COUNT(*) AS total FROM users").get()
-);
+await initializeAppDataRepository();
+console.log({ total: getAppUserCount(), database: "Supabase" });
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -38,6 +46,46 @@ const io = new Server(httpServer, {
   },
 });
 
+const instructorRoomCloseTimers = new Map();
+const INSTRUCTOR_DISCONNECT_GRACE_MS = 60_000;
+const activeQuickChallenges = new Map();
+
+function cancelScheduledRoomClose(roomId) {
+  const timer = instructorRoomCloseTimers.get(roomId);
+  if (timer) clearTimeout(timer);
+  instructorRoomCloseTimers.delete(roomId);
+}
+
+function scheduleRoomClose(roomId) {
+  cancelScheduledRoomClose(roomId);
+  const timer = setTimeout(async () => {
+    instructorRoomCloseTimers.delete(roomId);
+
+    const instructorReconnected = [...io.sockets.sockets.values()].some(
+      activeSocket =>
+        activeSocket.data.role === "instructor" &&
+        activeSocket.data.roomId === roomId &&
+        activeSocket.data.clientType === "classroom"
+    );
+    if (instructorReconnected) return;
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Room] Could not close ${roomId}:`, error.message);
+      return;
+    }
+    console.log(`[Room] Closed ${roomId} after instructor disconnected.`);
+  }, INSTRUCTOR_DISCONNECT_GRACE_MS);
+
+  instructorRoomCloseTimers.set(roomId, timer);
+  console.log(`[Room] Instructor disconnected; ${roomId} will close in 60 seconds.`);
+}
+
 // ========================================================
 // SEAT ASSIGNMENT MAP - 10 Students
 // ========================================================
@@ -46,18 +94,7 @@ function getUser(username) {
     return null;
   }
 
-  return db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE LOWER(username) = LOWER(?)
-    LIMIT 1
-  `).get(username);
+  return getAppUserByUsername(username);
 }
 
 
@@ -69,12 +106,7 @@ function isInstructorSocket(socket) {
     return false;
   }
 
-  const user = db.prepare(`
-    SELECT role
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const user = getAppUserById(userId);
 
   return user?.role === "instructor";
 }
@@ -152,9 +184,152 @@ app.use("/api", loginRoutes);
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
+  socket.on("instructorQuickChallenge", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("error", {
+        message: "Only a registered classroom instructor can start a quick challenge.",
+      });
+      return;
+    }
 
-socket.on("registerClassroomClient", data => {
+    const previous = activeQuickChallenges.get(roomId);
+    if (previous?.timeout) clearTimeout(previous.timeout);
+
+    const durationSeconds = Math.min(
+      300,
+      Math.max(15, Number(data.durationSeconds) || 60)
+    );
+    const isTrueFalse = data.challengeType === "true-false";
+    const challenge = {
+      id: `quick-${roomId}-${Date.now()}`,
+      roomId,
+      question: isTrueFalse
+        ? "True or False: In Python, True is a Boolean value."
+        : "Which of these values is a Python integer?",
+      options: isTrueFalse
+        ? ["True", "False"]
+        : ["3.14", "42", "True", "Hello"],
+      correctIndex: isTrueFalse ? 0 : 1,
+      durationSeconds,
+      startedAt: Date.now(),
+      answers: new Map(),
+      timeout: null,
+    };
+    activeQuickChallenges.set(roomId, challenge);
+
+    const studentPayload = {
+      id: challenge.id,
+      question: challenge.question,
+      options: challenge.options,
+      durationSeconds: challenge.durationSeconds,
+      startedAt: challenge.startedAt,
+    };
+    const roomStudents = [];
+
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      const studentSocket = io.sockets.sockets.get(studentSocketId);
+      if (
+        !studentSocket ||
+        studentSocket.data.roomId !== roomId ||
+        studentSocket.data.role === "instructor" ||
+        studentSocket.data.clientType !== "classroom"
+      ) continue;
+
+      roomStudents.push({
+        studentId: studentSocketId,
+        userId: student.userId,
+        name: student.name,
+        seat: student.seat,
+      });
+      studentSocket.emit("quickChallengeStarted", studentPayload);
+    }
+
+    socket.emit("quickChallengeStartedForInstructor", {
+      ...studentPayload,
+      studentCount: roomStudents.length,
+      students: roomStudents,
+    });
+
+    challenge.timeout = setTimeout(() => {
+      if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
+      for (const client of io.sockets.sockets.values()) {
+        if (client.data.roomId === roomId) {
+          client.emit("quickChallengeEnded", { quizId: challenge.id });
+        }
+      }
+      activeQuickChallenges.delete(roomId);
+    }, durationSeconds * 1000 + 4000);
+  });
+
+  socket.on("quickChallengeAnswer", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const student = students[socket.id];
+    const challenge = activeQuickChallenges.get(roomId);
+
+    if (
+      !student ||
+      socket.data.role === "instructor" ||
+      !challenge ||
+      data.quizId !== challenge.id ||
+      challenge.answers.has(socket.id)
+    ) return;
+
+    const rawIndex = data.selectedIndex;
+    const selectedIndex =
+      Number.isInteger(rawIndex) &&
+      rawIndex >= 0 &&
+      rawIndex < challenge.options.length
+        ? rawIndex
+        : null;
+    const correct = selectedIndex === challenge.correctIndex;
+
+    challenge.answers.set(socket.id, {
+      selectedIndex,
+      correct,
+      answeredAt: Date.now(),
+    });
+
+    socket.emit("quickChallengeResult", {
+      quizId: challenge.id,
+      correct,
+      correctIndex: challenge.correctIndex,
+      selectedIndex,
+      message: correct
+        ? "Correct! 42 is a Python integer."
+        : "Not quite. The correct answer is B. 42.",
+    });
+
+    const answerPayload = {
+      quizId: challenge.id,
+      studentId: socket.id,
+      userId: student.userId,
+      name: student.name,
+      selectedIndex,
+      selectedOption:
+        selectedIndex === null ? null : challenge.options[selectedIndex],
+      correctIndex: challenge.correctIndex,
+      correctOption: challenge.options[challenge.correctIndex],
+      correct,
+      answeredCount: challenge.answers.size,
+    };
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.roomId === roomId &&
+        client.data.role === "instructor" &&
+        client.data.clientType === "classroom"
+      ) {
+        client.emit("quickChallengeStudentAnswered", answerPayload);
+      }
+    }
+  });
+
+
+socket.on("registerClassroomClient", async data => {
   const userId = Number(data?.userId);
+  const roomId = String(data?.roomId ?? "").trim();
+  const participantId = String(data?.participantId ?? "").trim() || null;
   const requestedUsername = String(
     data?.username ?? ""
   ).trim();
@@ -171,25 +346,34 @@ socket.on("registerClassroomClient", data => {
     return;
   }
 
-  // Find the user in SQLite.
-  const databaseUser = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const databaseUser = getAppUserById(userId);
 
   if (!databaseUser) {
     socket.emit("classroomRegistrationError", {
       message: "The user was not found.",
     });
 
+    return;
+  }
+
+  if (!roomId) {
+    socket.emit("classroomRegistrationError", {
+      message: "A classroom session is required.",
+    });
+    return;
+  }
+
+  const { data: activeRoom, error: activeRoomError } = await supabaseAdmin
+    .from("rooms")
+    .select("id,is_active")
+    .eq("id", roomId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (activeRoomError || !activeRoom) {
+    socket.emit("classroomRegistrationError", {
+      message: "This classroom is no longer active.",
+    });
     return;
   }
 
@@ -284,7 +468,15 @@ connectedUser.inLab =
   // Store validated identity on this Socket.IO connection.
   socket.data.userId = databaseUser.id;
   socket.data.username = databaseUser.username;
+  socket.data.role = databaseUser.role;
+  socket.data.roomId = roomId;
+  socket.data.participantId = participantId;
   socket.data.clientType = "classroom";
+
+  if (databaseUser.role === "instructor") {
+    cancelScheduledRoomClose(roomId);
+    console.log(`[Room] Instructor activated classroom ${roomId}.`);
+  }
 
   /*
    * Create the classroom student here.
@@ -362,14 +554,7 @@ if (returnRecord) {
     `[Server] Restored ${databaseUser.fullName} to ${students[socket.id].seat}`
   );
 }
-  // Update the permanent database location.
-  db.prepare(`
-    UPDATE users
-    SET
-      location = 'classroom',
-      updatedAt = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(databaseUser.id);
+  void updateAppUserLocation(databaseUser.id, "classroom").catch(console.error);
 
   /*
    * Send all current players to this newly registered
@@ -424,6 +609,82 @@ socket.emit(
   );
 });
 
+  socket.on("endClass", async (_data, acknowledge) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+
+    if (!isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      acknowledge?.({ success: false, message: "Only the instructor can end the class." });
+      return;
+    }
+
+    if (!roomId) {
+      acknowledge?.({ success: false, message: "No active classroom was found." });
+      return;
+    }
+
+    cancelScheduledRoomClose(roomId);
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Room] Instructor could not end ${roomId}:`, error.message);
+      acknowledge?.({ success: false, message: "Could not update the classroom." });
+      return;
+    }
+
+    acknowledge?.({ success: true });
+    io.emit("classEnded", { roomId, message: "The instructor ended the class." });
+    console.log(`[Room] Instructor ended classroom ${roomId}.`);
+  });
+
+  socket.on("slideChanged", async (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const slideIndex = Number(data.index);
+
+    if (!isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("serverError", {
+        message: "Only the instructor can change presentation slides.",
+      });
+      return;
+    }
+
+    if (!roomId || !Number.isInteger(slideIndex) || slideIndex < 0 || slideIndex > 25) {
+      socket.emit("serverError", {
+        message: "The requested slide is invalid.",
+      });
+      return;
+    }
+
+    const { error } = await supabaseAdmin
+      .from("rooms")
+      .update({ current_slide: slideIndex })
+      .eq("id", roomId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error(`[Slides] Could not save slide ${slideIndex}:`, error.message);
+      socket.emit("serverError", {
+        message: "Could not synchronize the presentation slide.",
+      });
+      return;
+    }
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.clientType === "classroom" &&
+        client.data.roomId === roomId
+      ) {
+        client.emit("slideChanged", { index: slideIndex });
+      }
+    }
+
+    console.log(`[Slides] Room ${roomId} moved to slide ${slideIndex + 1}.`);
+  });
+
   // ========================================================
   // GAME CLIENT EVENTS
   // ========================================================
@@ -438,18 +699,7 @@ socket.emit(
     return;
   }
 
-  const user = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      role,
-      seat,
-      location
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const user = getAppUserById(userId);
 
   if (!user) {
     socket.emit("labRegistrationFailed", {
@@ -513,11 +763,7 @@ connectedUser.inLab = true;
 
   labSessions[user.id] = labSession;
 
-  db.prepare(`
-    UPDATE users
-    SET location = ?
-    WHERE id = ?
-  `).run("python_lab", user.id);
+  void updateAppUserLocation(user.id, "python_lab").catch(console.error);
 socket.data.userId = user.id;
 socket.data.username = user.username;
 socket.data.role = user.role;
@@ -577,16 +823,7 @@ socket.on(
       return;
     }
 
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          fullName,
-          username,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     if (!databaseUser) {
       socket.emit(
@@ -963,7 +1200,7 @@ socket.on(
     broadcastStudentList(io);
   });
 
-  socket.on("labCompleted", data => {
+  socket.on("labCompleted", async data => {
     const userId = Number(socket.data.userId);
     const session = labSessions[userId];
 
@@ -974,10 +1211,31 @@ socket.on(
     session.status = "completed";
     session.returnReason = "student_completed";
 
+    const result = data?.result ?? session.getProgress();
+
+    if (!session.resultSaved) {
+      try {
+        await saveAppGameResult({
+          userId,
+          score: Number(result?.score ?? session.score) || 0,
+          durationSeconds:
+            Number(result?.durationSeconds ?? session.durationSeconds) || 0,
+          status: "completed",
+        });
+        session.resultSaved = true;
+      } catch (error) {
+        console.error("[Lab] Could not persist completed result:", error);
+        socket.emit("labResultSaveError", {
+          message: "Your result could not be saved. Please notify the instructor.",
+        });
+        return;
+      }
+    }
+
     io.emit("studentLabCompleted", {
       userId,
       studentName: session.studentName,
-      result: session.getProgress(),
+      result,
       clientResult: data?.result,
     });
 
@@ -1134,34 +1392,19 @@ socket.on(
       session &&
       !session.resultSaved
     ) {
-      db.prepare(`
-        INSERT INTO game_results (
-          userId,
-          gameName,
-          score,
-          durationSeconds,
-          status,
-          completedAt
-        )
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(
+      void saveAppGameResult({
         userId,
-        "Python Type Lab",
-        Number(result?.score) || 0,
-        Number(result?.durationSeconds) || 0,
-        data?.reason === "student_completed"
+        score: Number(result?.score) || 0,
+        durationSeconds: Number(result?.durationSeconds) || 0,
+        status: data?.reason === "student_completed"
           ? "completed"
-          : "instructor_return"
-      );
+          : "instructor_return",
+      }).catch(console.error);
 
       session.resultSaved = true;
     }
 
-    db.prepare(`
-      UPDATE users
-      SET location = 'classroom', updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(userId);
+    void updateAppUserLocation(userId, "classroom").catch(console.error);
 
     io.emit("studentReturnedFromLab", {
       userId,
@@ -1277,16 +1520,7 @@ socket.on("studentLeaveLab", data => {
     return;
   }
 
-  const databaseUser = db.prepare(`
-    SELECT
-      id,
-      username,
-      fullName,
-      seat
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-  `).get(userId);
+  const databaseUser = getAppUserById(userId);
 
   if (!databaseUser) {
     socket.emit("labLeaveError", {
@@ -1310,13 +1544,7 @@ socket.on("studentLeaveLab", data => {
     createdAt: Date.now(),
   };
 
-  db.prepare(`
-    UPDATE users
-    SET
-      location = 'classroom',
-      updatedAt = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(userId);
+  void updateAppUserLocation(userId, "classroom").catch(console.error);
 
   socket.emit("labLeft", {
     userId,
@@ -1364,6 +1592,21 @@ socket.on("studentLeaveLab", data => {
       total: studentsList.length,
       labName: "Python Type Lab",
     });
+  });
+
+  socket.on("requestSavedLabResults", async () => {
+    if (!isInstructorSocket(socket)) return;
+
+    try {
+      const results = await getRecentAppGameResults();
+      socket.emit("savedLabResults", { results });
+    } catch (error) {
+      console.error("[Lab] Could not load saved results:", error);
+      socket.emit("savedLabResults", {
+        results: [],
+        error: "Saved lab results could not be loaded.",
+      });
+    }
   });
 
   // ========================================================
@@ -1438,16 +1681,7 @@ socket.on(
     /*
      * The database is the only source of truth.
      */
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          id,
-          fullName,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     if (!databaseUser) {
       socket.emit(
@@ -1572,15 +1806,7 @@ socket.on(
       return;
     }
 
-    const databaseUser =
-      db.prepare(`
-        SELECT
-          fullName,
-          seat
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `).get(userId);
+    const databaseUser = getAppUserById(userId);
 
     const finalSeat =
       typeof databaseUser?.seat ===
@@ -1883,13 +2109,7 @@ socket.on(
       return;
     }
 
-    db.prepare(`
-      UPDATE users
-      SET
-        location = 'python_lab',
-        updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(student.userId);
+    void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
   io.to(student.id).emit(
     "gameChanged",
@@ -2043,15 +2263,7 @@ socket.on(
             return;
           }
 
-          db.prepare(`
-            UPDATE users
-            SET
-              location = 'python_lab',
-              updatedAt = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).run(
-            student.userId
-          );
+          void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
           labSessions[student.userId] =
             new LabSession(
@@ -2226,31 +2438,21 @@ socket.on(
           connectedUser.wpm,
       };
 
-    db.prepare(`
-      INSERT INTO game_results (
+    if (!session?.resultSaved) {
+      void saveAppGameResult({
         userId,
-        gameName,
-        score,
-        durationSeconds,
-        status,
-        completedAt
-      )
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(
-      userId,
-      "Python Type Lab",
-      progress.score,
-      0,
-      "instructor_return"
-    );
+        score: progress.score,
+        durationSeconds: progress.durationSeconds ?? 0,
+        status: "instructor_return",
+      }).catch(console.error);
 
-    db.prepare(`
-      UPDATE users
-      SET
-        location = 'classroom',
-        updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(userId);
+      if (session) {
+        session.resultSaved = true;
+        session.returnReason = "instructor_return";
+      }
+    }
+
+    void updateAppUserLocation(userId, "classroom").catch(console.error);
 
     connectedUser.location =
       "classroom";
@@ -2278,12 +2480,7 @@ socket.on(
         completedExercises:
           progress.completed,
 
-        seat:
-          db.prepare(`
-            SELECT seat
-            FROM users
-            WHERE id = ?
-          `).get(userId)?.seat,
+        seat: getAppUserById(userId)?.seat,
 
         classroomUrl:
           "http://localhost:8081",
@@ -2382,13 +2579,7 @@ socket.on(
             connectedUser.labReturnReason;
         }
 
-        db.prepare(`
-          UPDATE users
-          SET
-            location = 'classroom',
-            updatedAt = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(userId);
+        void updateAppUserLocation(userId, "classroom").catch(console.error);
 
         /*
          * Integrated lab: the student remains on the original
@@ -2416,23 +2607,12 @@ socket.on(
               : "instructor_return";
 
           if (!session?.resultSaved) {
-            db.prepare(`
-              INSERT INTO game_results (
-                userId,
-                gameName,
-                score,
-                durationSeconds,
-                status,
-                completedAt
-              )
-              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `).run(
+            void saveAppGameResult({
               userId,
-              "Python Type Lab",
-              progress.score,
-              progress.durationSeconds ?? 0,
-              finalStatus
-            );
+              score: progress.score,
+              durationSeconds: progress.durationSeconds ?? 0,
+              status: finalStatus,
+            }).catch(console.error);
 
             if (session) {
               session.resultSaved = true;
@@ -2497,16 +2677,7 @@ socket.on(
                 0,
             };
 
-          const databaseUser =
-            db.prepare(`
-              SELECT
-                seat,
-                fullName,
-                username
-              FROM users
-              WHERE id = ?
-              LIMIT 1
-            `).get(userId);
+          const databaseUser = getAppUserById(userId);
 
           returningStudents[userId] = {
             userId,
@@ -2784,6 +2955,14 @@ socket.on(
   // ========================================================
 
   socket.on("disconnect", () => {
+    if (
+      socket.data.clientType === "classroom" &&
+      socket.data.role === "instructor" &&
+      socket.data.roomId
+    ) {
+      scheduleRoomClose(socket.data.roomId);
+    }
+
     const permanentUserId =
   Number(
     socket.data.userId

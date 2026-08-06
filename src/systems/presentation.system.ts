@@ -12,6 +12,7 @@ import {
   BackSide
 } from "@iwsdk/core";
 import { socket } from "../network/socket";
+import { setSeatMarkersSuppressed } from "../components/instructor/seat-markers";
 
 export class PresentationSystem extends createSystem({}) {
   private isPresentationMode = false;
@@ -133,7 +134,7 @@ export class PresentationSystem extends createSystem({}) {
     const screenGeo = new PlaneGeometry(11.8, 6.3, 64, 1);
    
     const screenMat = new MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0x05070a,
         side: DoubleSide
     });
 
@@ -179,6 +180,7 @@ export class PresentationSystem extends createSystem({}) {
       (window as any).isPresentationActive = true;
       if (classroomMesh) classroomMesh.visible = false;
       if (instructorMesh) instructorMesh.visible = false;
+      setSeatMarkersSuppressed(true);
       this.setClassroomUiVisible(false);
       if (this.blackRoom) this.blackRoom.visible = true;
       if (this.presentationScreen) this.presentationScreen.visible = true;
@@ -200,6 +202,7 @@ export class PresentationSystem extends createSystem({}) {
       (window as any).isPresentationActive = false;
       if (classroomMesh) classroomMesh.visible = true;
       if (instructorMesh) instructorMesh.visible = true;
+      setSeatMarkersSuppressed(false);
       this.setClassroomUiVisible(true);
       if (this.blackRoom) this.blackRoom.visible = false;
       if (this.presentationScreen) this.presentationScreen.visible = false;
@@ -256,11 +259,21 @@ export class PresentationSystem extends createSystem({}) {
     clonedTexture.needsUpdate = true;
 
     const mat = this.presentationScreen.material as MeshBasicMaterial;
+    if (mat.map && mat.map !== sourceTexture) {
+      mat.map.dispose();
+    }
     mat.map = clonedTexture;
     mat.needsUpdate = true;
   }
 
+  public refreshPresentationTexture(): void {
+    if (this.isPresentationMode) {
+      this.updatePresentationTexture();
+    }
+  }
+
   destroy(): void {
+    setSeatMarkersSuppressed(false);
     socket.off("modeChanged", this.onModeChanged);
     socket.off("studentModeChanged", this.onStudentModeChanged);
     console.log("[PresentationSystem] Destroyed");

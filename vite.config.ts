@@ -26,7 +26,7 @@ export default defineConfig({
     host: "0.0.0.0",
   port: 8081,
   strictPort: true,
-  open: "/login.html",
+  open: "/",
 
   proxy: {
     "/api": {

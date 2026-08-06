@@ -21,6 +21,7 @@ type VRUser = {
   id?: number;
   userId?: number;
   username?: string;
+  fullName?: string;
   role?: "student" | "instructor";
 };
 
@@ -47,6 +48,7 @@ export class SeatSystem extends createSystem({
   private isStudent = false;
 
   private requestSent = false;
+  private classroomRegistered = false;
   private destroyed = false;
 
   init(): void {
@@ -70,6 +72,7 @@ export class SeatSystem extends createSystem({
     }
 
     this.studentName =
+      currentUser?.fullName?.trim() ||
       currentUser?.username?.trim() ||
       "Student";
 
@@ -101,10 +104,8 @@ export class SeatSystem extends createSystem({
       "restoreClassroomSeat",
       this.onRestoreClassroomSeat
     );
-    this.requestAssignedSeat();
-
     console.log(
-      `[SeatSystem] Waiting for database seat for ${this.studentName}`,
+      `[SeatSystem] Waiting for classroom registration for ${this.studentName}`,
       {
         userId: this.userId
       }
@@ -142,8 +143,8 @@ export class SeatSystem extends createSystem({
       "[SeatSystem] Socket connected"
     );
 
+    this.classroomRegistered = false;
     this.requestSent = false;
-    this.requestAssignedSeat();
   };
 
   private onRestoreClassroomSeat = (): void => {
@@ -178,6 +179,8 @@ export class SeatSystem extends createSystem({
       return;
     }
 
+    this.classroomRegistered = true;
+
     const seatName =
       data.user?.seat?.trim();
 
@@ -208,6 +211,7 @@ export class SeatSystem extends createSystem({
     if (
       this.destroyed ||
       this.requestSent ||
+      !this.classroomRegistered ||
       !this.userId
     ) {
       return;
