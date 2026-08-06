@@ -1,440 +1,319 @@
 <style>
   .dashboard-root {
-    width: 900;
+    width: 920;
+    height: 620;
     flex-direction: column;
-    gap: 24;
-
-    padding-top: 34;
-    padding-bottom: 34;
-    padding-left: 38;
-    padding-right: 38;
-
-    background-color: rgba(8, 15, 30, 0.98);
-
-    border-radius: 32;
+    gap: 18;
+    padding-top: 28;
+    padding-bottom: 24;
+    padding-left: 30;
+    padding-right: 30;
+    background-color: rgba(5, 13, 29, 0.97);
+    border-radius: 30;
     border-width: 2;
-    border-color: rgba(96, 165, 250, 0.55);
-
+    border-color: rgba(125, 211, 252, 0.58);
     pointer-events: auto;
-    pointer-events-order: 1000;
   }
 
-  /* ======================================================
-     HEADER
-     ====================================================== */
-
   .dashboard-header {
+    height: 78;
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-
-    padding-bottom: 22;
-
+    padding-bottom: 16;
     border-bottom-width: 1;
     border-bottom-color: rgba(255, 255, 255, 0.14);
-
-    pointer-events: auto;
   }
 
-  .title-area {
-    flex-direction: column;
+  .title-area { flex-direction: column; gap: 6; }
+  .dashboard-title { color: #ffffff; font-size: 32; font-weight: 700; font-family: inter; }
+  .dashboard-subtitle { color: #94a3b8; font-size: 15; font-family: inter; }
+
+  .header-right { flex-direction: row; gap: 14; align-items: center; }
+  .online-pill {
+    flex-direction: row;
     gap: 8;
-    pointer-events: none;
-  }
-
-  .dashboard-title {
-    color: #ffffff;
-    font-size: 36;
-    font-weight: 700;
-    font-family: inter;
-  }
-
-  .dashboard-subtitle {
-    color: #94a3b8;
-    font-size: 17;
-    font-family: inter;
-  }
-
-  .live-badge {
-    width: 150;
-    padding-top: 6;
-    padding-bottom: 6;
-    padding-left: 10;
-    padding-right: 10;
-    background-color: rgba(16, 185, 129, 0.16);
+    align-items: center;
+    padding-left: 15;
+    padding-right: 15;
+    padding-top: 9;
+    padding-bottom: 9;
+    background-color: rgba(16, 185, 129, 0.15);
+    border-radius: 18;
     border-width: 1;
-    border-color: rgba(52, 211, 153, 0.55);
-    border-radius: 12;
-    color: #86efac;
-    font-size: 13;
-    font-weight: 700;
-    text-align: center;
+    border-color: rgba(52, 211, 153, 0.45);
   }
+  .online-number { color: #86efac; font-size: 17; font-weight: 700; font-family: inter; }
+  .online-label { color: #d1fae5; font-size: 13; font-family: inter; }
 
   .close-button {
-    width: 58;
-    height: 58;
-
+    width: 52;
+    height: 52;
     align-items: center;
     justify-content: center;
-
-    background-color: rgba(255, 255, 255, 0.1);
-
-    border-radius: 29;
+    background-color: rgba(255, 255, 255, 0.09);
+    border-radius: 26;
     border-width: 1;
-    border-color: rgba(255, 255, 255, 0.22);
-
+    border-color: rgba(255, 255, 255, 0.2);
     color: #ffffff;
-    font-size: 22;
+    font-size: 20;
     font-weight: 700;
-
     cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 10001;
   }
+  .close-button:hover { background-color: rgba(239, 68, 68, 0.32); border-color: #f87171; }
 
-  .close-button:hover {
-    background-color: rgba(239, 68, 68, 0.35);
-    border-color: rgba(248, 113, 113, 0.8);
-  }
-
-  /* ======================================================
-     SUMMARY CARDS
-     ====================================================== */
-
-  .summary-row {
-    flex-direction: row;
-    gap: 18;
-
-    pointer-events: none;
-  }
-
-  .summary-card {
-    flex-grow: 1;
-    height: 150;
-
+  .content-row { height: 390; flex-direction: row; gap: 18; }
+  .section-card {
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8;
-
-    background-color: rgba(30, 41, 59, 0.8);
-
+    gap: 12;
+    padding: 16;
+    background-color: rgba(15, 27, 51, 0.88);
     border-radius: 22;
     border-width: 1;
-    border-color: rgba(148, 163, 184, 0.25);
   }
+  .tasks-section { width: 555; border-color: rgba(56, 189, 248, 0.48); }
+  .games-section { width: 287; border-color: rgba(139, 92, 246, 0.52); }
+  .section-header { flex-direction: row; justify-content: space-between; align-items: center; }
+  .section-title { color: #ffffff; font-size: 23; font-weight: 700; font-family: inter; }
+  .task-title { color: #7dd3fc; }
+  .game-title { color: #c4b5fd; }
+  .section-note { color: #94a3b8; font-size: 12; font-family: inter; }
 
-  .online-card {
-    background-color: rgba(22, 101, 52, 0.28);
-    border-color: rgba(74, 222, 128, 0.5);
-  }
-
-  .mode-card {
-    background-color: rgba(30, 64, 175, 0.25);
-    border-color: rgba(96, 165, 250, 0.5);
-  }
-
-  .summary-number {
-    color: #86efac;
-    font-size: 52;
-    font-weight: 700;
-    font-family: inter;
-  }
-
-  .summary-label {
-    color: #d1fae5;
-    font-size: 17;
-    font-weight: 600;
-    font-family: inter;
-  }
-
-  .summary-small-label {
-    color: #93c5fd;
-    font-size: 15;
-    font-weight: 600;
-    font-family: inter;
-  }
-
-  .current-mode {
-    color: #ffffff;
-    font-size: 25;
-    font-weight: 700;
-    font-family: inter;
-    text-align: center;
-  }
-
-  /* ======================================================
-     ACTIVITY SECTION
-     ====================================================== */
-
-  .activity-section {
+  .task-body { flex-grow: 1; flex-direction: row; gap: 10; }
+  .task-scroll {
+    width: 455;
+    height: 310;
     flex-direction: column;
-    gap: 16;
-    pointer-events: auto;
-    pointer-events-order: 1000;
+    gap: 10;
+    overflow: hidden;
+    padding-right: 8;
   }
-
-  .section-title {
-    color: #e2e8f0;
-    font-size: 22;
+  .lesson-page { height: 300; flex-direction: column; gap: 10; }
+  .lesson-page-hidden { display: none; }
+  .scroll-controls { width: 58; flex-direction: column; justify-content: center; gap: 12; }
+  .scroll-button {
+    width: 58;
+    height: 62;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(14, 116, 144, 0.32);
+    border-radius: 14;
+    border-width: 1;
+    border-color: rgba(103, 232, 249, 0.52);
+    color: #cffafe;
+    font-size: 13;
     font-weight: 700;
     font-family: inter;
-    pointer-events: none;
-  }
-
-  .mode-grid {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 16;
+    cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 1000;
   }
+  .scroll-button:hover { background-color: rgba(8, 145, 178, 0.58); border-color: #67e8f9; }
 
-  .mode-button {
-    width: 395;
-    height: 150;
+  .lesson-label {
+    color: #64748b;
+    font-size: 12;
+    font-weight: 700;
+    font-family: inter;
+    padding-top: 5;
+    padding-left: 5;
+  }
+  .menu-card {
+    min-height: 78;
+    flex-direction: row;
+    align-items: center;
+    gap: 13;
+    padding-left: 14;
+    padding-right: 14;
+    padding-top: 11;
+    padding-bottom: 11;
+    background-color: rgba(24, 42, 70, 0.94);
+    border-radius: 16;
+    border-width: 1;
+    border-color: rgba(148, 163, 184, 0.24);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .menu-card:hover { background-color: rgba(30, 64, 105, 1); border-color: rgba(125, 211, 252, 0.8); }
+  .mode-button-active { background-color: rgba(3, 105, 161, 0.43); border-color: #7dd3fc; }
+  .task-type {
+    width: 92;
+    height: 34;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10;
+    color: #ffffff;
+    font-size: 11;
+    font-weight: 700;
+    font-family: inter;
+  }
+  .video-type { background-color: rgba(14, 116, 144, 0.72); }
+  .challenge-type { background-color: rgba(180, 83, 9, 0.72); }
+  .briefing-type { background-color: rgba(79, 70, 229, 0.72); }
+  .card-copy { flex-grow: 1; flex-direction: column; gap: 4; }
+  .card-title { color: #ffffff; font-size: 16; font-weight: 700; font-family: inter; }
+  .card-description { color: #aebdd0; font-size: 12; font-family: inter; }
 
+  .game-list { flex-direction: column; gap: 14; padding-top: 8; }
+  .game-card {
+    height: 124;
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
-    gap: 10;
-
-    padding-left: 24;
-    padding-right: 24;
-    padding-top: 20;
-    padding-bottom: 20;
-
-    background-color: rgba(30, 41, 59, 0.9);
-
-    border-radius: 22;
-    border-width: 2;
-    border-color: rgba(148, 163, 184, 0.25);
-
+    gap: 7;
+    padding: 16;
+    background-color: rgba(46, 31, 82, 0.72);
+    border-radius: 17;
+    border-width: 1;
+    border-color: rgba(167, 139, 250, 0.34);
     cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 10001;
   }
+  .game-card:hover { background-color: rgba(76, 29, 149, 0.64); border-color: #c4b5fd; }
+  .game-code { color: #ddd6fe; font-size: 12; font-weight: 700; font-family: inter; }
+  .game-name { color: #ffffff; font-size: 18; font-weight: 700; font-family: inter; }
+  .game-description { color: #b7aacd; font-size: 12; font-family: inter; }
 
-  .mode-button:hover {
-    background-color: rgba(51, 65, 85, 1);
-    border-color: rgba(96, 165, 250, 0.75);
-  }
-
-  .mode-button-active {
-    background-color: rgba(37, 99, 235, 0.35);
-    border-color: rgba(96, 165, 250, 1);
-  }
-
-  .class-button {
-    background-color: rgba(30, 64, 175, 0.24);
-  }
-
-  .presentation-button {
-    background-color: rgba(109, 40, 217, 0.23);
-  }
-
-  .lab-button {
-    background-color: rgba(5, 150, 105, 0.22);
-  }
-
-  .challenge-button {
-    background-color: rgba(217, 119, 6, 0.22);
-  }
-
-  .button-icon {
-    color: #ffffff;
-    font-size: 31;
-    font-weight: 700;
-    pointer-events: none;
-    font-family: inter;
-  }
-
-  .button-title {
-    color: #ffffff;
-    font-size: 22;
-    font-weight: 700;
-    pointer-events: none;
-    font-family: inter;
-  }
-
-  .button-description {
-    color: #cbd5e1;
-    font-size: 14;
-    font-family: inter;
-    pointer-events: none;
-  }
-
-  /* ======================================================
-     STATUS
-     ====================================================== */
-
-  .status-area {
+  .footer-row { height: 58; flex-direction: row; align-items: center; justify-content: space-between; gap: 15; }
+  .footer-actions { width: 210; height: 52; flex-direction: row; gap: 10; }
+  .logout-button {
+    width: 190;
+    height: 56;
     align-items: center;
     justify-content: center;
-
-    padding-top: 15;
-    padding-bottom: 15;
+    background-color: rgba(127, 29, 29, 0.46);
+    border-radius: 16;
+    border-width: 1;
+    border-color: rgba(248, 113, 113, 0.72);
+    color: #fecaca;
+    font-size: 18;
+    font-weight: 700;
+    font-family: inter;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .logout-button:hover { background-color: rgba(185, 28, 28, 0.7); border-color: #fca5a5; }
+  .end-class-button {
+    width: 210;
+    height: 52;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(154, 52, 18, 0.5);
+    border-radius: 16;
+    border-width: 1;
+    border-color: rgba(251, 146, 60, 0.72);
+    color: #fed7aa;
+    font-size: 15;
+    font-weight: 700;
+    font-family: inter;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .end-class-button:hover { background-color: rgba(194, 65, 12, 0.72); border-color: #fdba74; }
+  .end-confirm-row { width: 210; height: 52; flex-direction: row; gap: 8; }
+  .end-confirm-button, .end-cancel-button {
+    width: 101;
+    height: 52;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16;
+    border-width: 1;
+    color: #ffffff;
+    font-size: 12;
+    font-weight: 700;
+    font-family: inter;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .end-confirm-button { background-color: rgba(185, 28, 28, 0.78); border-color: #f87171; }
+  .end-cancel-button { background-color: rgba(51, 65, 85, 0.92); border-color: #94a3b8; }
+  .is-hidden { display: none; }
+  .status-area {
+    flex-grow: 1;
+    height: 52;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
     padding-left: 18;
     padding-right: 18;
-
-    background-color: rgba(15, 23, 42, 0.9);
-
-    border-radius: 14;
+    background-color: rgba(15, 23, 42, 0.92);
+    border-radius: 15;
     border-width: 1;
     border-color: rgba(148, 163, 184, 0.2);
-
-    pointer-events: none;
   }
-
-
-  .status-text {
-    color: #94a3b8;
-    font-size: 15;
-    font-family: inter;
-  }
+  .status-text { color: #cbd5e1; font-size: 14; font-family: inter; }
+  .current-mode { color: #7dd3fc; font-size: 13; font-weight: 700; font-family: inter; }
 </style>
 
-<Panel
-  id="instructor-dashboard-root"
-  class="dashboard-root"
->
+<Panel id="instructor-dashboard-root" class="dashboard-root">
   <div class="dashboard-header">
     <div class="title-area">
-      <span class="dashboard-title">
-        Instructor Command Center
-      </span>
-
-      <span class="dashboard-subtitle">
-        Orchestrate the live immersive classroom
-      </span>
-
-      <span class="live-badge">
-        UMES VR  •  LIVE
-      </span>
+      <span class="dashboard-title">VR Classroom Instructor</span>
+      <span class="dashboard-subtitle">Choose a task or launch a learning game</span>
     </div>
-
-    <button
-      id="dashboard-close-button"
-      class="close-button"
-    >
-      X
-    </button>
-  </div>
-
-  <div class="summary-row">
-    <div class="summary-card online-card">
-      <span
-        id="online-student-count"
-        class="summary-number"
-      >
-        0
-      </span>
-
-      <span
-        id="online-student-label"
-        class="summary-label"
-      >
-        Students Online
-      </span>
-    </div>
-
-    <div class="summary-card mode-card">
-      <span class="summary-small-label">
-        Current Activity
-      </span>
-
-      <span
-        id="current-mode-text"
-        class="current-mode"
-      >
-        Classroom Mode
-      </span>
+    <div class="header-right">
+      <div class="online-pill">
+        <span id="online-student-count" class="online-number">0</span>
+        <span id="online-student-label" class="online-label">Students Online</span>
+      </div>
+      <button id="dashboard-close-button" class="close-button">X</button>
     </div>
   </div>
 
-  <div class="activity-section">
-    <span class="section-title">
-      Choose Classroom Activity
-    </span>
+  <div class="content-row">
+    <div class="section-card tasks-section">
+      <div class="section-header">
+        <span class="section-title task-title">TASKS</span>
+        <span class="section-note">Use UP / DOWN to change lessons</span>
+      </div>
+      <div class="task-body">
+        <div id="task-scroll-container" class="task-scroll">
+          <div id="lesson-page-1" class="lesson-page">
+            <span id="lesson-1-label" class="lesson-label">LESSON 1 - PYTHON BASICS</span>
+            <button id="presentation-mode-button" class="menu-card"><span id="lesson-1-task-1-type" class="task-type video-type">VIDEO</span><div class="card-copy"><span id="lesson-1-task-1-title" class="card-title">Watch Python Introduction</span><span id="lesson-1-task-1-description" class="card-description">Play the lesson video for all students</span></div></button>
+            <button id="quick-challenge-button" class="menu-card"><span id="lesson-1-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-1-task-2-title" class="card-title">Python Basics Challenge</span><span id="lesson-1-task-2-description" class="card-description">Start a short interactive class challenge</span></div></button>
+            <button id="class-mode-button" class="menu-card mode-button-active"><span id="lesson-1-task-3-type" class="task-type briefing-type">BRIEFING</span><div class="card-copy"><span id="lesson-1-task-3-title" class="card-title">Review and Briefing</span><span id="lesson-1-task-3-description" class="card-description">Return to class and discuss the results</span></div></button>
+          </div>
+          <div id="lesson-page-2" class="lesson-page lesson-page-hidden">
+            <span id="lesson-2-label" class="lesson-label">LESSON 2 - VARIABLES</span>
+            <button id="task-lesson2-video" class="menu-card"><span id="lesson-2-task-1-type" class="task-type video-type">VIDEO</span><div class="card-copy"><span id="lesson-2-task-1-title" class="card-title">Variables and Data Types</span><span id="lesson-2-task-1-description" class="card-description">Present the next instructional video</span></div></button>
+            <button id="task-lesson2-challenge" class="menu-card"><span id="lesson-2-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-2-task-2-title" class="card-title">Variable Builder</span><span id="lesson-2-task-2-description" class="card-description">Test variables with an interactive activity</span></div></button>
+            <button id="task-lesson2-briefing" class="menu-card"><span id="lesson-2-task-3-type" class="task-type briefing-type">BRIEFING</span><div class="card-copy"><span id="lesson-2-task-3-title" class="card-title">Variables Review</span><span id="lesson-2-task-3-description" class="card-description">Discuss answers with the class</span></div></button>
+          </div>
+        </div>
+        <div class="scroll-controls">
+          <button id="task-scroll-up" class="scroll-button">UP</button>
+          <button id="task-scroll-down" class="scroll-button">DOWN</button>
+        </div>
+      </div>
+    </div>
 
-    <div class="mode-grid">
-      <button
-        id="class-mode-button"
-        class="mode-button class-button mode-button-active"
-      >
-        <span class="button-icon">
-          CLASS
-        </span>
-
-        <span class="button-title">
-          Classroom Mode
-        </span>
-
-        <span class="button-description">
-          Return all students to their assigned seats
-        </span>
-      </button>
-
-      <button
-        id="presentation-mode-button"
-        class="mode-button presentation-button"
-      >
-        <span class="button-icon">
-          PRESENT
-        </span>
-
-        <span class="button-title">
-          Presentation
-        </span>
-
-        <span class="button-description">
-          Focus all students on the projector screen
-        </span>
-      </button>
-
-      <button
-        id="lab-mode-button"
-        class="mode-button lab-button"
-      >
-        <span class="button-icon">
-          LAB
-        </span>
-
-        <span class="button-title">
-          Individual Lab
-        </span>
-
-        <span class="button-description">
-          Send students to the Python learning activity
-        </span>
-      </button>
-
-      <button
-        id="quick-challenge-button"
-        class="mode-button challenge-button"
-      >
-        <span class="button-icon">
-          QUIZ
-        </span>
-
-        <span class="button-title">
-          Quick Challenge
-        </span>
-
-        <span class="button-description">
-          Start a short classroom knowledge challenge
-        </span>
-      </button>
+    <div class="section-card games-section">
+      <div class="section-header">
+        <span class="section-title game-title">GAMES</span>
+      </div>
+      <div class="game-list">
+        <button id="lab-mode-button" class="game-card">
+          <span class="game-code">GAME 01</span><span class="game-name">Variable Sorting</span><span class="game-description">Sort Python values into the correct data-type bins</span>
+        </button>
+        <button id="game-space-quiz-button" class="game-card">
+          <span class="game-code">GAME 02</span><span class="game-name">True or False</span><span class="game-description">Launch a quick true-or-false class challenge</span>
+        </button>
+      </div>
     </div>
   </div>
 
-  <div class="status-area">
-    <span
-      id="dashboard-status-text"
-      class="status-text"
-    >
-      Select a classroom activity
-    </span>
+  <div class="footer-row">
+    <div class="footer-actions">
+      <button id="end-class-button" class="end-class-button">END CLASS</button>
+      <div id="end-class-confirm-row" class="end-confirm-row is-hidden">
+        <button id="end-class-confirm-button" class="end-confirm-button">CONFIRM END</button>
+        <button id="end-class-cancel-button" class="end-cancel-button">CANCEL</button>
+      </div>
+    </div>
+    <div class="status-area">
+      <span id="dashboard-status-text" class="status-text">Select a task or game</span>
+      <span id="current-mode-text" class="current-mode">Classroom Mode</span>
+    </div>
   </div>
 </Panel>

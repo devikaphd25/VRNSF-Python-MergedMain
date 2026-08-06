@@ -1,7 +1,50 @@
 import express from "express";
-import db from "../../database/database.js";
+import { supabaseAdmin } from "../services/supabase-admin.service.js";
+import {
+  getAppUserByUsername,
+  upsertDeviceAppUser,
+} from "../services/app-data.repository.js";
 
 const router = express.Router();
+
+router.post("/device-login", async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || "").trim();
+    const role = String(req.body?.role || "").trim();
+    const displayName = String(req.body?.displayName || "").trim();
+    const seat = req.body?.seat ? String(req.body.seat).trim() : null;
+
+    if (!deviceId || !displayName || !["student", "instructor"].includes(role)) {
+      return res.status(400).json({ success: false, message: "Invalid device login." });
+    }
+
+    const user = await upsertDeviceAppUser({ deviceId, displayName, role, seat });
+
+    // A participant represents this permanent user inside a particular room.
+    // The join-room RPC already stored the same device ID, so all matching
+    // participant rows can now point to the permanent app_users record.
+    const { error: participantError } = await supabaseAdmin
+      .from("participants")
+      .update({ user_id: user.id })
+      .eq("device_id", deviceId);
+
+    if (participantError) {
+      console.error(
+        "[Device Login] Participant link failed:",
+        participantError.message
+      );
+      return res.status(503).json({
+        success: false,
+        message: "Classroom participant could not be linked.",
+      });
+    }
+
+    return res.json({ success: true, user });
+  } catch (error) {
+    console.error("[Device Login] Server error:", error);
+    return res.status(500).json({ success: false, message: "Device login failed." });
+  }
+});
 
 router.post("/login", (req, res) => {
   try {
@@ -26,18 +69,7 @@ router.post("/login", (req, res) => {
       });
     }
 
-    const user = db.prepare(`
-      SELECT
-        id,
-        username,
-        fullName,
-        role,
-        seat,
-        location
-      FROM users
-      WHERE LOWER(username)=LOWER(?)
-      LIMIT 1
-    `).get(username);
+    const user = getAppUserByUsername(username);
 
     if (!user) {
       return res.status(404).json({

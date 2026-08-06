@@ -11,7 +11,10 @@
   .hint-left {
     background-color: rgba(0, 0, 0, 0.8);
     color: #4ade80;
-    padding: 20px 28px;
+    padding-top: 20px;
+    padding-right: 28px;
+    padding-bottom: 20px;
+    padding-left: 28px;
     border-radius: 12px;
     font-size: 20px;
     font-weight: 600;
@@ -24,7 +27,10 @@
   .hint-right {
     background-color: rgba(0, 0, 0, 0.8);
     color: #60a5fa;
-    padding: 20px 28px;
+    padding-top: 20px;
+    padding-right: 28px;
+    padding-bottom: 20px;
+    padding-left: 28px;
     border-radius: 12px;
     font-size: 20px;
     font-weight: 600;

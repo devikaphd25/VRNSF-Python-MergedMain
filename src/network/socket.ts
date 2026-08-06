@@ -86,6 +86,7 @@ console.log(
 export const socket = io(
   socketServerUrl,
   {
+    autoConnect: false,
     transports: [
       "websocket",
       "polling"
@@ -107,6 +108,19 @@ export const socket = io(
     }
   }
 );
+
+export function connectSocketForUser(user: { username: string; role: string }): void {
+  socket.io.opts.query = {
+    username: user.username,
+    role: user.role
+  };
+
+  if (socket.connected) {
+    socket.disconnect();
+  }
+
+  socket.connect();
+}
 
 socket.on(
   "connect",
