@@ -1,92 +1,201 @@
-# VRClass Integrated
+# UMES VR Classroom
 
-VRClass Integrated is a single WebXR application containing both the UMES
-virtual classroom and the Python Type Lab.
+UMES VR Classroom is a synchronous WebXR learning environment built with the
+Meta Immersive Web SDK, Three.js, Socket.IO, and Supabase. It provides a shared
+virtual classroom for instructors and students, an integrated Python learning
+lab, classroom challenges, persistent seating, and instructor result tracking.
 
-Students never navigate to another website when an instructor starts the lab.
-The classroom and lab are two environments in the same WebXR world, so the
-headset session, player identity, assigned seat, and Socket.IO connection remain
-active throughout the transition.
+The application runs in a desktop browser, the local Meta Quest emulator, and
+a physical Meta Quest headset.
 
-## Main workflow
+## Current workflow
 
-1. Students and the instructor sign in and enter the classroom.
-2. Each student is positioned at the seat assigned in SQLite.
-3. The instructor selects **Individual Lab** in the VR dashboard.
-4. Every connected student enters a private, locally rendered Python lab.
-5. Lab progress is reported through the student's existing classroom socket.
-6. Completed students remain available until the instructor returns the class.
-7. **Classroom Mode** returns all students to their assigned seats without
-   ending WebXR.
-8. Results record whether the student completed the lesson or was returned
-   early by the instructor.
+1. The instructor selects **Professor** and enters the six-digit verification
+   PIN configured for the application.
+2. The application creates the active classroom.
+3. Students select **Student** and automatically join the latest active room.
+4. Each headset receives a persistent device identity, student name, and fixed
+   seat.
+5. The instructor can teach in Classroom Mode, start an activity, review
+   results, return students to class, or end the classroom session.
 
-## Lab activity
+Students do not need to enter a classroom code. The first deployment supports
+one active class at a time to minimize student input.
 
-The active lesson is a 12-card Python data-type sorting game. Students reveal
-and sort values into `int`, `float`, `bool`, and `str` bins. The application
-tracks:
+## Features
+
+### VR classroom
+
+- 25 fixed student seats across five tiered rows
+- NASA-inspired classroom styling and space-window environment
+- Browser, mouse, Meta Quest controller-ray, and WebXR support
+- Persistent headset identity and automatic seat assignment
+- Instructor stage position and student avatars
+- Student hand raising and instructor notifications
+- Classroom, presentation, lab, and challenge modes
+
+### Instructor dashboard
+
+- Controller-ray-compatible floating dashboard
+- Online student count
+- Two lesson pages with three task buttons per page
+- Variable Sorting lab launcher
+- True-or-False challenge launcher
+- Quick Challenge monitoring
+- Lab result monitoring and CSV export
+- End Class control
+
+Lesson text is separated from dashboard behavior in
+`src/config/instructor-menu-content.ts`. This allows the current local content
+to be replaced by Supabase content later without rewriting menu pagination.
+
+### Python Type Lab
+
+The integrated lab is a 12-card Python data-type sorting activity. Students
+sort values into `int`, `float`, `bool`, and `str` bins. The system records:
 
 - score and streak;
 - correct and incorrect attempts;
 - accuracy;
-- cards completed;
-- completion status;
-- elapsed time;
-- return reason.
+- completed exercises;
+- duration;
+- completion status; and
+- whether the student completed the activity or was returned by the instructor.
+
+The student remains in the same WebXR application during the transition. The
+headset session, identity, seat, and Socket.IO connection remain active.
+
+### Quick Challenge
+
+- One multiple-choice question with four answer options
+- Mouse and VR controller-ray selection
+- Instructor view of student answers
+- Correct/incorrect status monitoring
+- Automatic return to the classroom workflow
+
+## Database
+
+The current testing environment uses hosted Supabase. The same migrations can
+later be deployed to a university-managed local Supabase installation.
+
+| Table | Purpose |
+| --- | --- |
+| `rooms` | Stores classroom sessions, active status, presentation state, and timestamps. |
+| `participants` | Stores the instructor and students participating in each room, including device identity and assigned seat. |
+| `quiz_questions` | Stores multiple-choice questions and their available answers. |
+| `quiz_responses` | Stores each student's selected answer and correctness result. |
+| `app_users` | Stores permanent application identities, full names, roles, device IDs, fixed seats, and current locations. |
+| `game_results` | Stores Python lab scores, duration, completion status, and completion date. |
+
+Database migrations are located in:
+
+- `supabase/room-code-migration.sql`
+- `supabase/app-data-migration.sql`
+
+Run `room-code-migration.sql` first, followed by
+`app-data-migration.sql`.
 
 ## Architecture
 
-- `src/index.ts` creates the shared WebXR world.
-- `src/lab/` contains only the active Python card-game implementation.
-- `src/lab/LabEnvironmentManager.ts` switches environments without navigation.
-- `server.js` maintains classroom connections and per-user lab sessions.
-- `server/state/LabSession.js` stores each student's independent progress.
-- `database/database.js` manages SQLite users and saved game results.
+- `src/index.ts` creates and coordinates the shared WebXR world.
+- `src/systems/vr-login.system.ts` controls the in-headset login panel.
+- `src/systems/instructor-menu.system.ts` controls instructor dashboard behavior.
+- `src/config/instructor-menu-content.ts` contains editable lesson/task content.
+- `src/systems/quick-challenge.system.ts` controls the student challenge panel.
+- `src/lab/` contains the Python lab environment and activity systems.
+- `src/lab/LabEnvironmentManager.ts` switches between classroom and lab modes.
+- `src/services/` contains Supabase classroom and device services.
+- `server.js` maintains Socket.IO classroom connections and activity sessions.
+- `server/services/` provides server-side Supabase access.
+- `ui/` contains the UIKitML interface definitions.
+- `supabase/` contains the database migrations.
 
-Lab state is indexed by the permanent database user ID, never by a URL
-parameter. Socket IDs are used only as temporary connection addresses.
+## Requirements
 
-## Development
-
-Requirements:
-
-- Node.js 20.19+, 22.12+, or 24
+- Node.js 20.19 or later
 - npm
+- A Supabase project with the supplied migrations installed
+- Meta Quest Browser for physical-headset testing
 
-Install dependencies:
+## Installation
 
 ```bash
+git clone https://github.com/UMESVRTeam/VR-learning.git
+cd VR-learning
+git switch feature/supabase-only
 npm install
 ```
 
-Run the WebXR application and real-time server:
+## Environment configuration
+
+Create `.env.development` in the project root for browser-safe values:
+
+```env
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_KEY
+VITE_PROFESSOR_VERIFICATION_CODE=YOUR_SIX_DIGIT_PIN
+```
+
+Create `.env.server` for server-only values:
+
+```env
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=YOUR_SECRET_KEY
+PORT=3001
+```
+
+Do not commit either environment file or expose `SUPABASE_SECRET_KEY` in client
+code.
+
+## Running the project
+
+Start the WebXR application and Socket.IO server together:
 
 ```bash
 npm run dev:full
 ```
 
-The application uses:
+Default local endpoints:
 
 - WebXR application: `https://localhost:8081`
-- Classroom and lab server: `http://localhost:3001`
+- Socket.IO server: `http://localhost:3001`
 
-Build:
+If port `3001` is already in use, locate and stop the old process before
+restarting:
+
+```bash
+lsof -nP -iTCP:3001 -sTCP:LISTEN
+kill <PID>
+```
+
+## Verification
+
+Build the project:
 
 ```bash
 npm run build
 ```
 
-Type-check:
+Type-check the source:
 
 ```bash
 npx tsc --noEmit
 ```
 
-## Default development users
+For a two-user test, open one browser session as the instructor and a second
+incognito browser or headset session as a student. Start an activity, complete
+it as the student, return to the classroom, and confirm that the instructor can
+open the saved result.
 
-- Instructor: `admin`
-- Students: `Tina`, `Sager`, `Devika`, `Nyles`, and `Ahmed`
+## Security notes
 
-The existing authentication is development-only and should be replaced with
-password validation and signed session tokens before production deployment.
+The Professor PIN is a simple classroom gate, not full production
+authentication. Before a production deployment, use authenticated instructor
+accounts, signed sessions, appropriate Row Level Security policies, HTTPS, and
+server-side secret management.
+
+## Branch integration
+
+The active integrated implementation is developed on
+`feature/supabase-only`. Changes should be reviewed through a pull request
+before merging into `main`.
