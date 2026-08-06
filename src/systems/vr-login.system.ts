@@ -10,6 +10,7 @@ import {
 } from "@iwsdk/core";
 import {
   BackSide,
+  DoubleSide,
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
@@ -43,6 +44,102 @@ let loginBackground: Mesh | null = null;
 let loginBackgroundTexture: Texture | null = null;
 let loginLogo: Mesh | null = null;
 let loginLogoTexture: Texture | null = null;
+
+export function hideVRLoginBackground(): void {
+  if (loginBackground?.parent) loginBackground.parent.remove(loginBackground);
+  loginBackground?.geometry.dispose();
+  (loginBackground?.material as MeshBasicMaterial | undefined)?.dispose();
+  loginBackgroundTexture?.dispose();
+  loginBackground = null;
+  loginBackgroundTexture = null;
+}
+
+export function disposeVRLoginResources(): void {
+  hideVRLoginBackground();
+
+  if (loginLogo?.parent) loginLogo.parent.remove(loginLogo);
+  loginLogo?.geometry.dispose();
+  (loginLogo?.material as MeshBasicMaterial | undefined)?.dispose();
+  loginLogoTexture?.dispose();
+  loginLogo = null;
+  loginLogoTexture = null;
+
+  const panelObject = loginPanelEntity?.object3D;
+  if (panelObject) {
+    if (panelObject.parent) panelObject.parent.remove(panelObject);
+    const disposedTextures = new Set<Texture>();
+    const disposedMaterials = new Set<any>();
+    const disposedGeometries = new Set<any>();
+
+    panelObject.traverse((object: any) => {
+      if (object.geometry && !disposedGeometries.has(object.geometry)) {
+        disposedGeometries.add(object.geometry);
+        object.geometry.dispose?.();
+      }
+
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : object.material
+          ? [object.material]
+          : [];
+      materials.forEach((material: any) => {
+        if (!material || disposedMaterials.has(material)) return;
+        disposedMaterials.add(material);
+        Object.values(material).forEach((value) => {
+          if (value instanceof Texture && !disposedTextures.has(value)) {
+            disposedTextures.add(value);
+            value.dispose();
+          }
+        });
+        material.dispose?.();
+      });
+    });
+    panelObject.clear();
+  }
+
+  // Remove the ECS components when supported by this IWSDK build so UIKit no
+  // longer keeps the hidden login document or its render target in memory.
+  try {
+    (loginPanelEntity as any)?.removeComponent?.(RayInteractable);
+    (loginPanelEntity as any)?.removeComponent?.(PanelUI);
+  } catch (error) {
+    console.warn("[Login] UIKit component cleanup was not available.", error);
+  }
+  loginPanelEntity = null;
+}
+
+function attachLoginLogoToPanel(): void {
+  const panelObject = loginPanelEntity?.object3D;
+  if (!panelObject || !loginLogo) {
+    console.warn("[Login] Could not attach the UMES logo to the panel");
+    return;
+  }
+
+  // Keep the logo in panel-local 3D space. UIKit containers manage their own
+  // children and may clip custom Three.js meshes, while the panel entity still
+  // makes the logo follow both the Professor and Student layouts.
+  panelObject.add(loginLogo);
+  loginLogo.position.set(-0.31, 0.565, 0.015);
+  loginLogo.rotation.set(0, 0, 0);
+  loginLogo.scale.set(1, 1, 1);
+  loginLogo.visible = true;
+  loginLogo.frustumCulled = false;
+  panelObject.updateMatrixWorld(true);
+  console.log("[Login] UMES logo attached to login panel");
+}
+
+function positionLoginLogo(role: "student" | "instructor"): void {
+  if (!loginLogo) return;
+
+  // The Student layout hides the PIN and keypad, making the panel much
+  // shorter. Keep the logo aligned with the brand row in both layouts.
+  loginLogo.position.set(
+    -0.31,
+    role === "student" ? 0.275 : 0.565,
+    0.015
+  );
+  loginLogo.updateMatrixWorld(true);
+}
 
 function setClass(element: any, className: string, enabled: boolean): void {
   if (!element) return;
@@ -116,12 +213,10 @@ export class VRLoginSystem extends createSystem({
       currentSlide: result.currentSlide ?? 0,
     }));
     if (loginPanelEntity?.object3D) loginPanelEntity.object3D.visible = false;
-    if (loginBackground?.parent) loginBackground.parent.remove(loginBackground);
-    loginBackground?.geometry.dispose();
-    (loginBackground?.material as MeshBasicMaterial | undefined)?.dispose();
-    loginBackgroundTexture?.dispose();
-    loginBackground = null;
-    loginBackgroundTexture = null;
+    // Remove the large campus panorama immediately. A normal browser RAF can
+    // be suspended while Quest is presenting an XR session, which previously
+    // left this sphere visible through openings in the classroom ceiling.
+    hideVRLoginBackground();
     if (loginLogo?.parent) loginLogo.parent.remove(loginLogo);
     loginLogo?.geometry.dispose();
     (loginLogo?.material as MeshBasicMaterial | undefined)?.dispose();
@@ -177,6 +272,7 @@ export class VRLoginSystem extends createSystem({
       (pinLabel as UIKit.Text).setProperties({ text: "Enter the 6-digit Professor PIN" });
       (confirmButton as UIKit.Text).setProperties({ text: "Create Classroom" });
       confirmButton.textContent = "Create Classroom";
+      positionLoginLogo("instructor");
       setStatus("Professor verification is required");
     };
 
@@ -222,6 +318,7 @@ export class VRLoginSystem extends createSystem({
       title.setProperties({ text: "Join a Classroom" });
       (confirmButton as UIKit.Text).setProperties({ text: "Join Latest Classroom" });
       confirmButton.textContent = "Join Latest Classroom";
+      positionLoginLogo("student");
       setStatus("Finding the latest active classroom...");
       this.stopWaiting();
       void tryStudentJoin();
@@ -316,19 +413,18 @@ export function showVRLoginPanel(
 
     loginLogoTexture = new TextureLoader().load("./images/umes-logo-icon.png");
     loginLogo = new Mesh(
-      new PlaneGeometry(0.11, 0.11),
+      new PlaneGeometry(0.1, 0.1),
       new MeshBasicMaterial({
         map: loginLogoTexture,
         transparent: true,
         depthTest: false,
         depthWrite: false,
         toneMapped: false,
+        side: DoubleSide,
       }),
     );
     loginLogo.name = "UMESLoginLogo";
-    loginLogo.position.set(-0.36, 0.545, -1.57);
     loginLogo.renderOrder = 2000;
-    camera.add(loginLogo);
 
     world.registerSystem(VRLoginSystem, { priority: 0 });
     loginPanelEntity = world
@@ -340,6 +436,8 @@ export function showVRLoginPanel(
       camera.add(loginPanelEntity.object3D);
       loginPanelEntity.object3D.position.set(0, -0.01, -1.6);
       loginPanelEntity.object3D.frustumCulled = false;
+      attachLoginLogoToPanel();
     }
+
   });
 }

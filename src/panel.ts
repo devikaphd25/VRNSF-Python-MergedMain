@@ -39,7 +39,7 @@ export class PanelSystem extends createSystem({
     where: [eq(PanelUI, "config", "./ui/seat-panel.json")],
   },
 }) {
-  private ROWS = ["1", "2", "3"];
+  private ROWS = ["1", "2", "3", "4", "5"];
   private SEAT_PER_ROWS = 5;
   private takenSeats: string[] = [];
   private seatEntity!: Entity;

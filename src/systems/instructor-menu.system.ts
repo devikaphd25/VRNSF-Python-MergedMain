@@ -10,6 +10,10 @@ import {
 import {
   socket
 } from "../network/socket";
+import {
+  INSTRUCTOR_LESSONS,
+  InstructorTaskAction
+} from "../config/instructor-menu-content";
 
 type InstructorMode =
   | "Classroom Mode"
@@ -38,6 +42,23 @@ interface DashboardStudent {
   inLab?: boolean;
   savedResult?: boolean;
   completedAt?: string;
+}
+
+interface QuizMonitorStudent {
+  studentId: string;
+  name: string;
+  seat?: string;
+  selectedIndex?: number | null;
+  selectedOption?: string | null;
+  correct?: boolean;
+  answered?: boolean;
+}
+
+interface InstructorQuizPayload {
+  id: string;
+  question: string;
+  options: string[];
+  students?: QuizMonitorStudent[];
 }
 
 export class InstructorDashboardSystem extends createSystem({
@@ -126,6 +147,17 @@ export class InstructorDashboardSystem extends createSystem({
         "./ui/instructor-mistakes.json"
       )
     ]
+  },
+
+  quizMonitor: {
+    required: [PanelUI, PanelDocument],
+    where: [
+      eq(
+        PanelUI,
+        "config",
+        "./ui/instructor-quiz-monitor.json"
+      )
+    ]
   }
 }) {
   private dashboardDocument?: UIKitDocument;
@@ -135,6 +167,9 @@ export class InstructorDashboardSystem extends createSystem({
   private saveOverlayEntity?: any;
   private saveOverlayTimer?: number;
   private isEndingClass = false;
+  private quizMonitorDocument?: UIKitDocument;
+  private activeQuiz?: InstructorQuizPayload;
+  private quizStudents: QuizMonitorStudent[] = [];
 
   private currentMode: InstructorMode =
     "Classroom Mode";
@@ -144,6 +179,7 @@ export class InstructorDashboardSystem extends createSystem({
   private savedLabStudents: DashboardStudent[] = [];
   private hasLabResults = false;
   private hasObservedActiveLabStudent = false;
+  private activeLessonPage = 0;
 
   // ======================================================
   // INITIALIZATION
@@ -210,6 +246,11 @@ export class InstructorDashboardSystem extends createSystem({
           entity.index
         );
       }
+    );
+
+    this.queries.quizMonitor.subscribe(
+      "qualify",
+      entity => this.connectQuizMonitor(entity.index)
     );
 
     socket.on(
@@ -299,7 +340,9 @@ export class InstructorDashboardSystem extends createSystem({
       () => {
         this.hasLabResults = true;
         this.hasObservedActiveLabStudent = true;
-        this.setLabMonitorAvailable(true);
+        // Keep the launcher hidden while the student is still in the game.
+        // It becomes available after studentReturnedFromLab (or return-all).
+        this.setLabMonitorAvailable(false);
       }
     );
 
@@ -331,8 +374,51 @@ export class InstructorDashboardSystem extends createSystem({
           completedAt: result.completedAt,
         }));
         this.hasLabResults = this.savedLabStudents.length > 0 || this.hasLabResults;
-        this.setLabMonitorAvailable(this.hasLabResults);
+        // Historical rows populate the report but must not reveal the icon at
+        // startup. The current session's return event controls visibility.
+        this.setLabMonitorAvailable(false);
         this.updateLabMonitor();
+      }
+    );
+
+    socket.on(
+      "quickChallengeStartedForInstructor",
+      (data: InstructorQuizPayload) => {
+        this.activeQuiz = data;
+        this.quizStudents = (data.students ?? []).map(student => ({
+          ...student,
+          answered: false,
+          selectedIndex: null,
+          selectedOption: null
+        }));
+        this.renderQuizMonitor();
+        this.setQuizMonitorVisible(true);
+      }
+    );
+
+    socket.on(
+      "quickChallengeStudentAnswered",
+      data => {
+        if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
+        const student = this.quizStudents.find(
+          item => item.studentId === data.studentId
+        );
+        if (!student) return;
+
+        student.answered = true;
+        student.selectedIndex = data.selectedIndex ?? null;
+        student.selectedOption = data.selectedOption ?? null;
+        student.correct = Boolean(data.correct);
+        this.renderQuizMonitor();
+      }
+    );
+
+    socket.on(
+      "quickChallengeEnded",
+      () => {
+        this.setCurrentMode("Classroom Mode");
+        this.showStatusMessage("Quick challenge finished");
+        this.renderQuizMonitor(true);
       }
     );
   }
@@ -407,8 +493,11 @@ export class InstructorDashboardSystem extends createSystem({
     this.dashboardDocument =
       document;
 
+    this.applyConfiguredMenuContent();
     this.connectCloseButton();
     this.connectModeButtons();
+    this.connectExtendedMenuButtons();
+    this.connectTaskScrollControls();
     this.connectEndClassControls();
     this.updateModeDisplay();
     this.updateOnlineCountDisplay();
@@ -551,6 +640,100 @@ export class InstructorDashboardSystem extends createSystem({
 
     this.updateLabMonitor();
     socket.emit("requestSavedLabResults");
+  }
+
+  private connectQuizMonitor(entityIndex: number): void {
+    const document = PanelDocument.data.document[
+      entityIndex
+    ] as UIKitDocument;
+    if (!document) return;
+
+    this.quizMonitorDocument = document;
+    this.bindSpatialButton(
+      document,
+      "quiz-monitor-close",
+      () => this.setQuizMonitorVisible(false)
+    );
+    this.renderQuizMonitor();
+  }
+
+  private renderQuizMonitor(finished = false): void {
+    const document = this.quizMonitorDocument;
+    if (!document) return;
+
+    const question = document.getElementById(
+      "quiz-monitor-question"
+    ) as UIKit.Text;
+    const summary = document.getElementById(
+      "quiz-monitor-summary"
+    ) as UIKit.Text;
+    const footer = document.getElementById(
+      "quiz-monitor-footer"
+    ) as UIKit.Text;
+    const answeredCount = this.quizStudents.filter(
+      student => student.answered
+    ).length;
+
+    question?.setProperties({
+      text: this.activeQuiz?.question ?? "Waiting for question"
+    });
+    summary?.setProperties({
+      text: `${answeredCount} of ${this.quizStudents.length} students answered`
+    });
+    footer?.setProperties({
+      text: finished
+        ? "Challenge finished. Final responses are shown."
+        : "The list updates as students submit."
+    });
+
+    for (let row = 1; row <= 10; row += 1) {
+      const student = this.quizStudents[row - 1];
+      const rowElement = document.getElementById(`quiz-monitor-row-${row}`);
+      const name = document.getElementById(
+        `quiz-monitor-name-${row}`
+      ) as UIKit.Text;
+      const answer = document.getElementById(
+        `quiz-monitor-answer-${row}`
+      ) as UIKit.Text;
+      const result = document.getElementById(
+        `quiz-monitor-result-${row}`
+      ) as UIKit.Text;
+
+      if (!student) {
+        rowElement?.classList.add("quiz-row-hidden");
+        continue;
+      }
+
+      rowElement?.classList.remove("quiz-row-hidden");
+      result?.classList.remove("quiz-result-correct", "quiz-result-wrong");
+      name?.setProperties({
+        text: `${student.name}${student.seat ? `  ${student.seat}` : ""}`
+      });
+
+      if (!student.answered) {
+        answer?.setProperties({ text: "Waiting for answer" });
+        result?.setProperties({ text: "UNANSWERED" });
+        continue;
+      }
+
+      const optionPrefix =
+        student.selectedIndex === null || student.selectedIndex === undefined
+          ? ""
+          : `${String.fromCharCode(65 + student.selectedIndex)}. `;
+      answer?.setProperties({
+        text: student.selectedOption
+          ? `${optionPrefix}${student.selectedOption}`
+          : "No answer"
+      });
+      result?.setProperties({
+        text: student.correct ? "CORRECT" : "WRONG"
+      });
+      result?.classList.add(
+        student.correct ? "quiz-result-correct" : "quiz-result-wrong"
+      );
+    }
+
+    this.syncDocument(document);
   }
 
   private bindSpatialButton(
@@ -831,6 +1014,64 @@ export class InstructorDashboardSystem extends createSystem({
     );
   }
 
+  private connectExtendedMenuButtons(): void {
+    INSTRUCTOR_LESSONS.slice(1).flatMap(lesson => lesson.tasks).forEach(task =>
+      this.connectButton(task.buttonId, () => this.activateConfiguredTask(task.action))
+    );
+    this.connectButton(
+      "game-space-quiz-button",
+      () => this.activateTrueFalseChallenge()
+    );
+  }
+
+  private connectTaskScrollControls(): void {
+    this.connectButton("task-scroll-up", () => this.scrollTaskList(-260));
+    this.connectButton("task-scroll-down", () => this.scrollTaskList(260));
+  }
+
+  private scrollTaskList(delta: number): void {
+    const pageIds = INSTRUCTOR_LESSONS.map(lesson => lesson.pageId);
+    const direction = delta < 0 ? -1 : 1;
+    this.activeLessonPage = Math.max(
+      0,
+      Math.min(pageIds.length - 1, this.activeLessonPage + direction)
+    );
+
+    pageIds.forEach((id, index) => {
+      const page = this.dashboardDocument?.getElementById(id);
+      if (index === this.activeLessonPage) {
+        page?.classList.remove("lesson-page-hidden");
+      } else {
+        page?.classList.add("lesson-page-hidden");
+      }
+    });
+
+    this.showStatusMessage(`Lesson ${this.activeLessonPage + 1} tasks`);
+    this.sync();
+  }
+
+  private activateConfiguredTask(action: InstructorTaskAction): void {
+    if (action === "presentation") this.activatePresentationMode();
+    if (action === "challenge") this.activateQuickChallenge();
+    if (action === "briefing") this.activateClassMode();
+  }
+
+  private applyConfiguredMenuContent(): void {
+    const setText = (id: string, value: string): void => {
+      const element = this.dashboardDocument?.getElementById(id) as UIKit.Text;
+      if (element) element.textContent = value;
+    };
+
+    INSTRUCTOR_LESSONS.forEach(lesson => {
+      setText(lesson.labelId, lesson.label);
+      lesson.tasks.forEach(task => {
+        setText(task.typeId, task.type);
+        setText(task.titleId, task.title);
+        setText(task.descriptionId, task.description);
+      });
+    });
+  }
+
   private connectButton(
     elementId: string,
     handler: () => void
@@ -968,7 +1209,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.setCurrentMode(
       "Lab Mode"
     );
-    this.hasLabResults = true;
+    this.hasLabResults = false;
     this.hasObservedActiveLabStudent = false;
 
     this.showStatusMessage(
@@ -976,8 +1217,8 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     this.setDashboardVisible(false);
-    this.setLabMonitorAvailable(true);
-    this.setLabMonitorVisible(true);
+    this.setLabMonitorAvailable(false);
+    this.setLabMonitorVisible(false);
   }
 
   // ======================================================
@@ -1004,6 +1245,21 @@ export class InstructorDashboardSystem extends createSystem({
       "Quick challenge started"
     );
 
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateTrueFalseChallenge(): void {
+    console.log("[InstructorDashboard] Starting True/False game");
+
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 60,
+      challengeType: "true-false"
+    });
+
+    this.setCurrentMode("Quick Challenge");
+    this.showStatusMessage("True or False game started");
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(false);
@@ -1522,6 +1778,11 @@ export class InstructorDashboardSystem extends createSystem({
     if (typeof setter === "function") {
       setter(visible);
     }
+  }
+
+  private setQuizMonitorVisible(visible: boolean): void {
+    const setter = (window as any).setInstructorQuizMonitorOpen;
+    if (typeof setter === "function") setter(visible);
   }
 
   private setLabMonitorAvailable(
