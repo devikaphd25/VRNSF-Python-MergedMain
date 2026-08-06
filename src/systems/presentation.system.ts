@@ -134,7 +134,7 @@ export class PresentationSystem extends createSystem({}) {
     const screenGeo = new PlaneGeometry(11.8, 6.3, 64, 1);
    
     const screenMat = new MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0x05070a,
         side: DoubleSide
     });
 

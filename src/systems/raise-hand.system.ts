@@ -25,6 +25,7 @@ export class RaiseHandSystem extends createSystem({}) {
   private isRTTriggerPressed = false;
   private isMuted = false; // ✅ Track mute state
   private resultCooldown = false;
+  private quickChallengeOpen = false;
 
   init(): void {
     console.log("[RaiseHandSystem] Initializing");
@@ -37,6 +38,10 @@ export class RaiseHandSystem extends createSystem({}) {
     this.isEnabled = Boolean((window as any).isRaiseHandReady);
 
     window.addEventListener("hintFinished", this.onHintFinished);
+    window.addEventListener(
+      "quickChallengeVisibilityChanged",
+      this.onQuickChallengeVisibilityChanged as EventListener
+    );
 
     // ✅ Listen for hand updates from server
     socket.on("raiseHandUpdated", this.onRaiseHandUpdated);
@@ -361,6 +366,13 @@ private onHandToggled = (
     console.log("[RaiseHandSystem] Hint finished — button enabled");
   };
 
+  private onQuickChallengeVisibilityChanged = (
+    event: CustomEvent<{ visible?: boolean }>
+  ): void => {
+    this.quickChallengeOpen = Boolean(event.detail?.visible);
+    this.updateVisibility();
+  };
+
   private updateAppearance(): void {
     if (this.labelElement) {
       this.labelElement.textContent = this.isRaised ? "Lower Hand" : "Raise Hand";
@@ -416,6 +428,7 @@ private onHandToggled = (
       !presentationOpen &&
       !labActive &&
       !resultOpen &&
+      !this.quickChallengeOpen &&
       !this.resultCooldown;
 
     if (object.visible) {
@@ -552,6 +565,10 @@ private onHandToggled = (
     delete (window as any).resetStudentRaiseHandAfterResult;
 
     window.removeEventListener("hintFinished", this.onHintFinished);
+    window.removeEventListener(
+      "quickChallengeVisibilityChanged",
+      this.onQuickChallengeVisibilityChanged as EventListener
+    );
 
     socket.off("raiseHandUpdated", this.onRaiseHandUpdated);
     socket.off("handToggled", this.onHandToggled);

@@ -24,6 +24,14 @@
     vertical-align: center;
   }
 
+  .brand-logo-container {
+    width: 46px;
+    height: 46px;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+
   .brand-title {
     color: white;
     font-size: 24px;
@@ -208,6 +216,7 @@
 
 <Panel id="panel-root" class="panel-root">
   <div class="brand-row">
+    <div id="umes-logo-container" class="brand-logo-container"></div>
     <text class="brand-title">UMES VR Classroom</text>
   </div>
 

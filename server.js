@@ -48,6 +48,7 @@ const io = new Server(httpServer, {
 
 const instructorRoomCloseTimers = new Map();
 const INSTRUCTOR_DISCONNECT_GRACE_MS = 60_000;
+const activeQuickChallenges = new Map();
 
 function cancelScheduledRoomClose(roomId) {
   const timer = instructorRoomCloseTimers.get(roomId);
@@ -182,6 +183,147 @@ app.use(express.json());
 app.use("/api", loginRoutes);
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
+
+  socket.on("instructorQuickChallenge", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("error", {
+        message: "Only a registered classroom instructor can start a quick challenge.",
+      });
+      return;
+    }
+
+    const previous = activeQuickChallenges.get(roomId);
+    if (previous?.timeout) clearTimeout(previous.timeout);
+
+    const durationSeconds = Math.min(
+      300,
+      Math.max(15, Number(data.durationSeconds) || 60)
+    );
+    const isTrueFalse = data.challengeType === "true-false";
+    const challenge = {
+      id: `quick-${roomId}-${Date.now()}`,
+      roomId,
+      question: isTrueFalse
+        ? "True or False: In Python, True is a Boolean value."
+        : "Which of these values is a Python integer?",
+      options: isTrueFalse
+        ? ["True", "False"]
+        : ["3.14", "42", "True", "Hello"],
+      correctIndex: isTrueFalse ? 0 : 1,
+      durationSeconds,
+      startedAt: Date.now(),
+      answers: new Map(),
+      timeout: null,
+    };
+    activeQuickChallenges.set(roomId, challenge);
+
+    const studentPayload = {
+      id: challenge.id,
+      question: challenge.question,
+      options: challenge.options,
+      durationSeconds: challenge.durationSeconds,
+      startedAt: challenge.startedAt,
+    };
+    const roomStudents = [];
+
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      const studentSocket = io.sockets.sockets.get(studentSocketId);
+      if (
+        !studentSocket ||
+        studentSocket.data.roomId !== roomId ||
+        studentSocket.data.role === "instructor" ||
+        studentSocket.data.clientType !== "classroom"
+      ) continue;
+
+      roomStudents.push({
+        studentId: studentSocketId,
+        userId: student.userId,
+        name: student.name,
+        seat: student.seat,
+      });
+      studentSocket.emit("quickChallengeStarted", studentPayload);
+    }
+
+    socket.emit("quickChallengeStartedForInstructor", {
+      ...studentPayload,
+      studentCount: roomStudents.length,
+      students: roomStudents,
+    });
+
+    challenge.timeout = setTimeout(() => {
+      if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
+      for (const client of io.sockets.sockets.values()) {
+        if (client.data.roomId === roomId) {
+          client.emit("quickChallengeEnded", { quizId: challenge.id });
+        }
+      }
+      activeQuickChallenges.delete(roomId);
+    }, durationSeconds * 1000 + 4000);
+  });
+
+  socket.on("quickChallengeAnswer", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const student = students[socket.id];
+    const challenge = activeQuickChallenges.get(roomId);
+
+    if (
+      !student ||
+      socket.data.role === "instructor" ||
+      !challenge ||
+      data.quizId !== challenge.id ||
+      challenge.answers.has(socket.id)
+    ) return;
+
+    const rawIndex = data.selectedIndex;
+    const selectedIndex =
+      Number.isInteger(rawIndex) &&
+      rawIndex >= 0 &&
+      rawIndex < challenge.options.length
+        ? rawIndex
+        : null;
+    const correct = selectedIndex === challenge.correctIndex;
+
+    challenge.answers.set(socket.id, {
+      selectedIndex,
+      correct,
+      answeredAt: Date.now(),
+    });
+
+    socket.emit("quickChallengeResult", {
+      quizId: challenge.id,
+      correct,
+      correctIndex: challenge.correctIndex,
+      selectedIndex,
+      message: correct
+        ? "Correct! 42 is a Python integer."
+        : "Not quite. The correct answer is B. 42.",
+    });
+
+    const answerPayload = {
+      quizId: challenge.id,
+      studentId: socket.id,
+      userId: student.userId,
+      name: student.name,
+      selectedIndex,
+      selectedOption:
+        selectedIndex === null ? null : challenge.options[selectedIndex],
+      correctIndex: challenge.correctIndex,
+      correctOption: challenge.options[challenge.correctIndex],
+      correct,
+      answeredCount: challenge.answers.size,
+    };
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.roomId === roomId &&
+        client.data.role === "instructor" &&
+        client.data.clientType === "classroom"
+      ) {
+        client.emit("quickChallengeStudentAnswered", answerPayload);
+      }
+    }
+  });
 
 
 socket.on("registerClassroomClient", async data => {

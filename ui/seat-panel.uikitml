@@ -90,6 +90,22 @@
     <button id="Seat_R3_05" class="seat seat-available" data-seat="Seat_R3_05">C5</button>
   </div>
 
+  <div class="row">
+    <button id="Seat_R4_01" class="seat seat-available" data-seat="Seat_R4_01">D1</button>
+    <button id="Seat_R4_02" class="seat seat-available" data-seat="Seat_R4_02">D2</button>
+    <button id="Seat_R4_03" class="seat seat-available" data-seat="Seat_R4_03">D3</button>
+    <button id="Seat_R4_04" class="seat seat-available" data-seat="Seat_R4_04">D4</button>
+    <button id="Seat_R4_05" class="seat seat-available" data-seat="Seat_R4_05">D5</button>
+  </div>
+
+  <div class="row">
+    <button id="Seat_R5_01" class="seat seat-available" data-seat="Seat_R5_01">E1</button>
+    <button id="Seat_R5_02" class="seat seat-available" data-seat="Seat_R5_02">E2</button>
+    <button id="Seat_R5_03" class="seat seat-available" data-seat="Seat_R5_03">E3</button>
+    <button id="Seat_R5_04" class="seat seat-available" data-seat="Seat_R5_04">E4</button>
+    <button id="Seat_R5_05" class="seat seat-available" data-seat="Seat_R5_05">E5</button>
+  </div>
+
   <button id="confirm-btn" class="confirm-btn">Confirm Seat</button>
   <text id="status-text" class="status-text">No seat selected</text>
 </Panel>
