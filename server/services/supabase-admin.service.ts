@@ -19,7 +19,7 @@ export const supabaseAdmin = createClient(
       persistSession: false,
     },
     realtime: {
-      transport: WebSocket,
+      transport: WebSocket as any,
     },
   }
 );
