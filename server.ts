@@ -3,6 +3,7 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
+import type { ClassroomSocket, ClassroomStudent, QuickChallenge } from "./server/types.js";
 
 import {
   students,
@@ -46,17 +47,17 @@ const io = new Server(httpServer, {
   },
 });
 
-const instructorRoomCloseTimers = new Map();
+const instructorRoomCloseTimers = new Map<string, NodeJS.Timeout>();
 const INSTRUCTOR_DISCONNECT_GRACE_MS = 60_000;
-const activeQuickChallenges = new Map();
+const activeQuickChallenges = new Map<string, QuickChallenge>();
 
-function cancelScheduledRoomClose(roomId) {
+function cancelScheduledRoomClose(roomId: string): void {
   const timer = instructorRoomCloseTimers.get(roomId);
   if (timer) clearTimeout(timer);
   instructorRoomCloseTimers.delete(roomId);
 }
 
-function scheduleRoomClose(roomId) {
+function scheduleRoomClose(roomId: string): void {
   cancelScheduledRoomClose(roomId);
   const timer = setTimeout(async () => {
     instructorRoomCloseTimers.delete(roomId);
@@ -89,7 +90,7 @@ function scheduleRoomClose(roomId) {
 // ========================================================
 // SEAT ASSIGNMENT MAP - 10 Students
 // ========================================================
-function getUser(username) {
+function getUser(username: string | null | undefined) {
    if (!username) {
     return null;
   }
@@ -99,7 +100,7 @@ function getUser(username) {
 
 
 
-function isInstructorSocket(socket) {
+function isInstructorSocket(socket: ClassroomSocket): boolean {
   const userId = Number(socket.data.userId);
 
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -114,7 +115,7 @@ function isInstructorSocket(socket) {
 // HAND RAISE / MUTE HELPERS
 // ========================================================
 
-function sendHandState(studentId, student, raised, fromInstructor = true) {
+function sendHandState(studentId: string, student: ClassroomStudent, raised: boolean, fromInstructor = true): void {
   const normalizedRaised = Boolean(raised);
   student.handRaised = normalizedRaised;
 
@@ -153,7 +154,7 @@ function sendHandState(studentId, student, raised, fromInstructor = true) {
   console.log(`[Server] ${student.name} hand state: ${normalizedRaised ? "raised" : "lowered"}`);
 }
 
-function sendMuteState(studentId, student, isMuted) {
+function sendMuteState(studentId: string, student: ClassroomStudent, isMuted: boolean): void {
   student.isMuted = isMuted;
 
   if (students[studentId]) {
@@ -181,7 +182,7 @@ function sendMuteState(studentId, student, isMuted) {
 // ========================================================
 app.use(express.json());
 app.use("/api", loginRoutes);
-io.on("connection", (socket) => {
+io.on("connection", (socket: ClassroomSocket) => {
   console.log("Connected:", socket.id);
 
   socket.on("instructorQuickChallenge", (data = {}) => {
@@ -754,12 +755,12 @@ connectedUser.location = "python_lab";
 connectedUser.mode = "Game Mode";
 connectedUser.inLab = true;
 
-  const labSession = new LabSession({
-    studentId: user.id,
-    studentName: user.fullName || user.username,
-    seat: user.seat,
-    socketId: socket.id,
-  });
+  const labSession = new LabSession(
+    user.id,
+    user.fullName || user.username,
+    user.seat
+  );
+  labSession.socketId = socket.id;
 
   labSessions[user.id] = labSession;
 
@@ -1918,7 +1919,7 @@ socket.on(
         return `"${text.replace(/"/g, '""')}"`;
       };
 
-      const rows = [
+      const rows: Array<Array<string | number>> = [
         [
           "Student",
           "Username",
@@ -2088,6 +2089,8 @@ socket.on(
   }
 
   if (destination === "Game 1") {
+    const gameId = "python-type-lab";
+    const mode = "Game Mode";
     student.mode = "Game Mode";
     student.inLab = true;
     student.isDisconnected = false;
@@ -2436,6 +2439,9 @@ socket.on(
 
         wpm:
           connectedUser.wpm,
+
+        durationSeconds:
+          connectedUser.durationSeconds ?? 0,
       };
 
     if (!session?.resultSaved) {
@@ -2599,6 +2605,7 @@ socket.on(
             wpm: 0,
             status: "incomplete",
             returnReason: "instructor_return",
+            durationSeconds: connectedUser.durationSeconds ?? 0,
           };
 
           const finalStatus =
