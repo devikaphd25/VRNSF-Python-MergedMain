@@ -48,6 +48,7 @@ export class RaiseHandNotificationSystem extends createSystem({
   private seatElement: any = null;
   private iconElement: any = null;
   private titleElement: any = null;
+  private notificationRoot: any = null;
   private unmuteButton: any = null;
   private cancelButton: any = null;
 
@@ -130,6 +131,11 @@ export class RaiseHandNotificationSystem extends createSystem({
     this.titleElement =
       document.getElementById(
         "notification-title"
+      );
+
+    this.notificationRoot =
+      document.getElementById(
+        "raise-hand-notification-root"
       );
 
     this.unmuteButton =
@@ -410,6 +416,9 @@ export class RaiseHandNotificationSystem extends createSystem({
     this.currentStudentId = "";
     this.currentStudentName = "";
     this.currentStudentSeat = "";
+    this.notificationRoot?.classList.add(
+      "notification-input-disabled"
+    );
 
     console.log(
       "[RaiseHandNotification] Hidden"
@@ -426,9 +435,21 @@ export class RaiseHandNotificationSystem extends createSystem({
       Boolean((window as any).isInstructorLabMonitorOpen) ||
       Boolean((window as any).isInstructorMistakesOpen);
 
-    this.notificationEntity.object3D.visible =
+    const shouldShow =
       Boolean(this.currentStudentId) &&
       !overlayOpen;
+
+    this.notificationEntity.object3D.visible = shouldShow;
+
+    if (shouldShow) {
+      this.notificationRoot?.classList.remove(
+        "notification-input-disabled"
+      );
+    } else {
+      this.notificationRoot?.classList.add(
+        "notification-input-disabled"
+      );
+    }
 
     this.notificationEntity.object3D
       .updateMatrixWorld(true);
@@ -442,9 +463,6 @@ export class RaiseHandNotificationSystem extends createSystem({
   const studentId = this.currentStudentId;
 
   if (!studentId) {
-    console.warn(
-      "[RaiseHandNotification] No student selected."
-    );
     return;
   }
 
@@ -467,9 +485,6 @@ private onCancelClick = (): void => {
   const studentId = this.currentStudentId;
 
   if (!studentId) {
-    console.warn(
-      "[RaiseHandNotification] No student selected."
-    );
     return;
   }
 

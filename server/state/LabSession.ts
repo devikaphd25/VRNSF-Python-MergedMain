@@ -140,6 +140,11 @@ export class LabSession {
   }
 
   getProgress() {
+    const automaticDurationSeconds =
+      this.status === "working"
+        ? Math.max(0, Math.floor((Date.now() - this.joinedAt.getTime()) / 1000))
+        : 0;
+
     return {
       completed: this.completedExercises.length,
       total: this.totalCards,
@@ -149,7 +154,10 @@ export class LabSession {
       wpm: this.wpm,
       correctAnswers: this.correctAnswers,
       wrongAnswers: this.wrongAnswers,
-      durationSeconds: this.durationSeconds,
+      durationSeconds: Math.max(
+        this.durationSeconds,
+        automaticDurationSeconds
+      ),
       status: this.status,
       returnReason: this.returnReason,
     };

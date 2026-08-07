@@ -637,6 +637,46 @@ socket.emit(
       return;
     }
 
+    // Clear every live student representation before sending clients back to
+    // login. The empty student list removes avatars and seat markers on all
+    // connected classroom views immediately.
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      if (student.role !== "student") continue;
+
+      io.emit("playerDisconnected", { id: studentSocketId });
+      delete students[studentSocketId];
+
+      const userId = Number(student.userId);
+      const session = labSessions[userId];
+      if (session && !session.resultSaved) {
+        const progress = session.getProgress();
+        try {
+          await saveAppGameResult({
+            userId,
+            score: Number(progress.score) || 0,
+            durationSeconds: Number(progress.durationSeconds) || 0,
+            status: progress.status === "completed"
+              ? "completed"
+              : "instructor_return",
+          });
+          session.resultSaved = true;
+        } catch (saveError) {
+          console.error("[Lab] Could not save result while ending class:", saveError);
+        }
+      }
+
+      const connectedUser = connectedUsers[userId];
+      if (connectedUser) {
+        connectedUser.classroomSocketId = null;
+        connectedUser.labSocketId = null;
+        connectedUser.inLab = false;
+        connectedUser.mode = "Classroom Mode";
+        connectedUser.location = "classroom";
+      }
+    }
+
+    broadcastStudentList(io);
+
     acknowledge?.({ success: true });
     io.emit("classEnded", { roomId, message: "The instructor ended the class." });
     console.log(`[Room] Instructor ended classroom ${roomId}.`);
@@ -857,7 +897,11 @@ socket.on(
     let session =
       labSessions[userId];
 
-    if (!session) {
+    if (
+      !session ||
+      session.resultSaved ||
+      session.status !== "working"
+    ) {
       session =
         new LabSession(
           userId,
@@ -1381,10 +1425,14 @@ socket.on(
     }
 
     if (session) {
+      session.durationSeconds = Math.max(
+        session.durationSeconds,
+        connectedUser.durationSeconds
+      );
       session.status =
         data?.reason === "student_completed"
           ? "completed"
-          : session.status;
+          : "instructor_return";
       session.returnReason =
         data?.reason ?? "instructor_return";
     }
@@ -2591,44 +2639,72 @@ socket.on(
          * Integrated lab: the student remains on the original
          * classroom socket while their local scene changes.
          */
+        const activeSession = labSessions[userId];
+        const activeProgress = activeSession?.getProgress() ?? {
+          completed: connectedUser.completedExercises ?? 0,
+          total: 12,
+          score: connectedUser.score ?? 0,
+          streak: 0,
+          accuracy: connectedUser.accuracy ?? 0,
+          wpm: 0,
+          status: "incomplete",
+          returnReason: "instructor_return",
+          durationSeconds: connectedUser.durationSeconds ?? 0,
+        };
+
+        /* Freeze the student's final time before changing scenes. */
+        connectedUser.durationSeconds = Math.max(
+          connectedUser.durationSeconds ?? 0,
+          Number(activeProgress.durationSeconds) || 0
+        );
+        if (activeSession) {
+          activeSession.durationSeconds = connectedUser.durationSeconds;
+          activeSession.status =
+            activeProgress.status === "completed"
+              ? "completed"
+              : "instructor_return";
+          activeSession.returnReason =
+            activeSession.status === "completed"
+              ? "student_completed"
+              : "instructor_return";
+        }
+        if (classroomStudent) {
+          classroomStudent.durationSeconds = connectedUser.durationSeconds;
+        }
+
+        if (wasInLab && !activeSession?.resultSaved) {
+          const finalStatus =
+            activeProgress.status === "completed"
+              ? "completed"
+              : "instructor_return";
+
+          void saveAppGameResult({
+            userId,
+            score: activeProgress.score,
+            durationSeconds: activeProgress.durationSeconds ?? 0,
+            status: finalStatus,
+          }).catch(console.error);
+
+          if (activeSession) {
+            activeSession.resultSaved = true;
+            activeSession.returnReason =
+              finalStatus === "completed"
+                ? "student_completed"
+                : "instructor_return";
+          }
+        }
+
         if (
           wasInLab &&
           connectedUser.classroomSocketId
         ) {
-          const session = labSessions[userId];
-          const progress = session?.getProgress() ?? {
-            completed: connectedUser.completedExercises ?? 0,
-            total: 12,
-            score: connectedUser.score ?? 0,
-            streak: 0,
-            accuracy: connectedUser.accuracy ?? 0,
-            wpm: 0,
-            status: "incomplete",
-            returnReason: "instructor_return",
-            durationSeconds: connectedUser.durationSeconds ?? 0,
-          };
+          const session = activeSession;
+          const progress = activeProgress;
 
           const finalStatus =
             progress.status === "completed"
               ? "completed"
               : "instructor_return";
-
-          if (!session?.resultSaved) {
-            void saveAppGameResult({
-              userId,
-              score: progress.score,
-              durationSeconds: progress.durationSeconds ?? 0,
-              status: finalStatus,
-            }).catch(console.error);
-
-            if (session) {
-              session.resultSaved = true;
-              session.returnReason =
-                finalStatus === "completed"
-                  ? "student_completed"
-                  : "instructor_return";
-            }
-          }
 
           io.to(
             connectedUser.classroomSocketId
@@ -2961,7 +3037,7 @@ socket.on(
   // DISCONNECT
   // ========================================================
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     if (
       socket.data.clientType === "classroom" &&
       socket.data.role === "instructor" &&
@@ -2984,9 +3060,46 @@ if (
       permanentUserId
     ];
 
+  const disconnectedLabSession = labSessions[permanentUserId];
+  const disconnectedWhileInLab =
+    connectedUser.inLab === true ||
+    connectedUser.location === "python_lab" ||
+    disconnectedLabSession?.status === "working";
+
+  if (disconnectedWhileInLab && !disconnectedLabSession?.resultSaved) {
+    const progress = disconnectedLabSession?.getProgress();
+    try {
+      await saveAppGameResult({
+        userId: permanentUserId,
+        score: Number(progress?.score ?? connectedUser.score) || 0,
+        durationSeconds:
+          Number(progress?.durationSeconds ?? connectedUser.durationSeconds) || 0,
+        status: "disconnected",
+      });
+      if (disconnectedLabSession) {
+        disconnectedLabSession.durationSeconds = Math.max(
+          disconnectedLabSession.durationSeconds,
+          Number(progress?.durationSeconds) || 0
+        );
+        disconnectedLabSession.resultSaved = true;
+        disconnectedLabSession.status = "disconnected";
+        disconnectedLabSession.returnReason = "disconnected";
+      }
+      connectedUser.labStatus = "disconnected";
+      io.emit("studentReturnedFromLab", {
+        userId: permanentUserId,
+        studentName: connectedUser.fullName,
+        returnReason: "disconnected",
+        labData: progress,
+      });
+    } catch (error) {
+      console.error("[Lab] Could not persist disconnected result:", error);
+    }
+  }
+
   if (
-    socket.data.clientType ===
-    "classroom"
+    socket.data.clientType === "classroom" &&
+    connectedUser.classroomSocketId === socket.id
   ) {
     connectedUser
       .classroomSocketId =
@@ -2994,8 +3107,8 @@ if (
   }
 
   if (
-    socket.data.clientType ===
-    "lab"
+    socket.data.clientType === "lab" &&
+    connectedUser.labSocketId === socket.id
   ) {
     connectedUser
       .labSocketId =
@@ -3009,30 +3122,15 @@ if (
       (id) => labSessions[id].socketId === socket.id
     );
 
-    // Don't delete lab session on temporary disconnect
-    if (
-      labStudentId &&
-      socket.data.clientType === "lab"
-    ) {
+    if (labStudentId) {
       const session = labSessions[labStudentId];
       session.socketId = null;
-      console.log(`[Server] Lab client disconnected temporarily: ${session.studentName}`);
-      return;
+      console.log(`[Server] Lab client disconnected: ${session.studentName}`);
     }
 
-    // Check if student is in lab - don't remove them
-    const isInLab = student?.inLab === true;
-
-    if (isInLab) {
-      console.log(`[Server] 🧪 ${student?.name} is in lab, keeping in student list`);
-      if (student) {
-        student.isDisconnected = true;
-      }
-      broadcastStudentList(io);
-      return;
-    }
-
-    // Remove if not in lab
+    // A closed classroom session must release the avatar and seat marker even
+    // when the student disconnected while a lab was active. The final lab
+    // result was persisted above before this live representation is removed.
     if (students[socket.id]) {
       delete students[socket.id];
       io.emit("playerDisconnected", { id: socket.id });

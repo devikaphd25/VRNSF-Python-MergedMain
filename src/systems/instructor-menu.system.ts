@@ -180,6 +180,9 @@ export class InstructorDashboardSystem extends createSystem({
   private hasLabResults = false;
   private hasObservedActiveLabStudent = false;
   private activeLessonPage = 0;
+  private labActivityStartedAt: number | null = null;
+  private labActivityTimer?: number;
+  private labActivityFinalElapsedSeconds = 0;
 
   // ======================================================
   // INITIALIZATION
@@ -328,7 +331,8 @@ export class InstructorDashboardSystem extends createSystem({
           "Classroom Mode"
         );
 
-        if (this.hasLabResults) {
+        if (this.hasLabResults || this.hasObservedActiveLabStudent) {
+          this.hasLabResults = true;
           this.setLabMonitorVisible(false);
           this.setLabMonitorAvailable(true);
         }
@@ -374,9 +378,10 @@ export class InstructorDashboardSystem extends createSystem({
           completedAt: result.completedAt,
         }));
         this.hasLabResults = this.savedLabStudents.length > 0 || this.hasLabResults;
-        // Historical rows populate the report but must not reveal the icon at
-        // startup. The current session's return event controls visibility.
-        this.setLabMonitorAvailable(false);
+        // Historical rows populate the report without revealing the launcher
+        // at startup. Once this session has run a lab, saved-result refreshes
+        // must keep the floating Results button available.
+        this.setLabMonitorAvailable(this.hasObservedActiveLabStudent);
         this.updateLabMonitor();
       }
     );
@@ -501,6 +506,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.connectEndClassControls();
     this.updateModeDisplay();
     this.updateOnlineCountDisplay();
+    this.updateLabActivityControl();
 
     socket.emit(
       "requestStudentList"
@@ -567,6 +573,9 @@ export class InstructorDashboardSystem extends createSystem({
     this.bindSpatialButton(document, "end-class-confirm-button", () => {
       if (this.isEndingClass) return;
       this.isEndingClass = true;
+      this.stopLabActivityTimer();
+      this.setLabMonitorVisible(false);
+      this.setLabMonitorAvailable(false);
       this.showStatusMessage("Ending class for everyone...");
 
       socket.emit(
@@ -608,19 +617,9 @@ export class InstructorDashboardSystem extends createSystem({
 
     this.bindSpatialButton(
       document,
-      "lab-monitor-save-button",
+      "lab-monitor-stop-button",
       () => {
-          this.showSaveOverlaySaving();
-          const status =
-            document.getElementById(
-              "lab-monitor-save-status"
-            ) as UIKit.Text;
-
-          status?.setProperties({
-            text: "Saving CSV..."
-          });
-          this.syncDocument(document);
-          socket.emit("saveLabReport");
+        this.activateClassMode();
       }
     );
 
@@ -639,6 +638,7 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     this.updateLabMonitor();
+    this.updateLabActivityControl();
     socket.emit("requestSavedLabResults");
   }
 
@@ -752,7 +752,9 @@ export class InstructorDashboardSystem extends createSystem({
     }
 
     let lastActivation = 0;
-    const activate = (): void => {
+    const activate = (event?: any): void => {
+      event?.stopPropagation?.();
+      event?.stopImmediatePropagation?.();
       const now = performance.now();
       if (now - lastActivation < 250) {
         return;
@@ -1002,7 +1004,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.connectButton(
       "lab-mode-button",
       () => {
-        this.activateLabMode();
+        this.toggleLabActivity();
       }
     );
 
@@ -1025,29 +1027,87 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private connectTaskScrollControls(): void {
-    this.connectButton("task-scroll-up", () => this.scrollTaskList(-260));
-    this.connectButton("task-scroll-down", () => this.scrollTaskList(260));
+    this.connectButton("task-scroll-up", () => this.changeLessonPage(-1));
+    this.connectButton("task-scroll-down", () => this.changeLessonPage(1));
+    this.renderLessonPage();
   }
 
-  private scrollTaskList(delta: number): void {
+  private changeLessonPage(direction: -1 | 1): void {
     const pageIds = INSTRUCTOR_LESSONS.map(lesson => lesson.pageId);
-    const direction = delta < 0 ? -1 : 1;
-    this.activeLessonPage = Math.max(
+    const nextPage = Math.max(
       0,
       Math.min(pageIds.length - 1, this.activeLessonPage + direction)
     );
 
+    if (nextPage === this.activeLessonPage) {
+      this.showStatusMessage(
+        direction < 0
+          ? "Already at Lesson 1"
+          : `Already at Lesson ${pageIds.length}`
+      );
+      this.updateLessonScrollButtons(pageIds.length);
+      this.sync();
+      return;
+    }
+
+    this.activeLessonPage = nextPage;
+    this.renderLessonPage();
+    this.showStatusMessage(`Lesson ${this.activeLessonPage + 1} tasks`);
+  }
+
+  private renderLessonPage(): void {
+    const pageIds = INSTRUCTOR_LESSONS.map(lesson => lesson.pageId);
+
     pageIds.forEach((id, index) => {
       const page = this.dashboardDocument?.getElementById(id);
-      if (index === this.activeLessonPage) {
+      // Keep one stable UIKit tree. Re-showing a page after display:none can
+      // leave its text nodes and pointer targets unrendered in a WebXR panel.
+      if (index === 0) {
         page?.classList.remove("lesson-page-hidden");
       } else {
         page?.classList.add("lesson-page-hidden");
       }
     });
 
-    this.showStatusMessage(`Lesson ${this.activeLessonPage + 1} tasks`);
+    this.applyActiveLessonContent();
+    this.updateLessonScrollButtons(pageIds.length);
     this.sync();
+  }
+
+  private applyActiveLessonContent(): void {
+    const lesson = INSTRUCTOR_LESSONS[this.activeLessonPage];
+    if (!lesson) return;
+
+    const setText = (id: string, value: string): void => {
+      const element = this.dashboardDocument?.getElementById(id) as UIKit.Text;
+      if (!element) return;
+      element.setProperties({ text: value });
+      // UIKit's current Text declaration omits textContent, but assigning it
+      // keeps text visible after a WebXR panel refresh.
+      (element as any).textContent = value;
+    };
+
+    setText("lesson-1-label", lesson.label);
+    lesson.tasks.forEach((task, index) => {
+      const visibleTask = index + 1;
+      setText(`lesson-1-task-${visibleTask}-type`, task.type);
+      setText(`lesson-1-task-${visibleTask}-title`, task.title);
+      setText(`lesson-1-task-${visibleTask}-description`, task.description);
+    });
+  }
+
+  private updateLessonScrollButtons(pageCount: number): void {
+    const upButton = this.dashboardDocument?.getElementById("task-scroll-up");
+    const downButton = this.dashboardDocument?.getElementById("task-scroll-down");
+
+    const setUnavailable = (button: any, unavailable: boolean): void => {
+      if (!button) return;
+      if (unavailable) button.classList.add("scroll-button-unavailable");
+      else button.classList.remove("scroll-button-unavailable");
+    };
+
+    setUnavailable(upButton, this.activeLessonPage === 0);
+    setUnavailable(downButton, this.activeLessonPage >= pageCount - 1);
   }
 
   private activateConfiguredTask(action: InstructorTaskAction): void {
@@ -1059,7 +1119,9 @@ export class InstructorDashboardSystem extends createSystem({
   private applyConfiguredMenuContent(): void {
     const setText = (id: string, value: string): void => {
       const element = this.dashboardDocument?.getElementById(id) as UIKit.Text;
-      if (element) element.textContent = value;
+      if (!element) return;
+      element.setProperties({ text: value });
+      (element as any).textContent = value;
     };
 
     INSTRUCTOR_LESSONS.forEach(lesson => {
@@ -1136,6 +1198,8 @@ export class InstructorDashboardSystem extends createSystem({
     this.setDashboardVisible(false);
 
     if (returningStudentsFromLab) {
+      this.hasLabResults = true;
+      this.hasObservedActiveLabStudent = true;
       /*
        * Preserve the final lab report when the instructor ends
        * the activity. Incoming studentList updates replace each
@@ -1189,7 +1253,18 @@ export class InstructorDashboardSystem extends createSystem({
   // LAB MODE
   // ======================================================
 
+  private toggleLabActivity(): void {
+    if (this.currentMode === "Lab Mode" || this.labActivityStartedAt !== null) {
+      this.activateClassMode();
+      return;
+    }
+
+    this.activateLabMode();
+  }
+
   private activateLabMode(): void {
+    if (this.isEndingClass) return;
+
     console.log(
       "[InstructorDashboard] Activating Lab Mode"
     );
@@ -1218,7 +1293,9 @@ export class InstructorDashboardSystem extends createSystem({
 
     this.setDashboardVisible(false);
     this.setLabMonitorAvailable(false);
-    this.setLabMonitorVisible(false);
+    socket.emit("requestStudentList");
+    this.updateLabMonitor();
+    this.setLabMonitorVisible(true);
   }
 
   // ======================================================
@@ -1467,6 +1544,15 @@ export class InstructorDashboardSystem extends createSystem({
         )
         .slice(0, 5);
 
+    /* UIKit can retain old text when a hidden row is shown again. */
+    const setText = (element: UIKit.Text | undefined, value: string): void => {
+      if (!element) {
+        return;
+      }
+      element.setProperties({ text: value });
+      (element as unknown as { textContent: string }).textContent = value;
+    };
+
     for (let index = 0; index < 5; index += 1) {
       const student = students[index];
       const row = index + 1;
@@ -1529,13 +1615,13 @@ export class InstructorDashboardSystem extends createSystem({
           ) as UIKit.Text;
 
       if (!student) {
-        name?.setProperties({ text: "—" });
-        question?.setProperties({ text: "—" });
-        correct?.setProperties({ text: "OK 0" });
-        mistakes?.setProperties({ text: "X 0" });
-        score?.setProperties({ text: "—" });
-        time?.setProperties({ text: "—" });
-        status?.setProperties({ text: "Waiting" });
+        setText(name, "-");
+        setText(question, "-");
+        setText(correct, "OK 0");
+        setText(mistakes, "X 0");
+        setText(score, "-");
+        setText(time, "-");
+        setText(status, "Waiting");
         continue;
       }
 
@@ -1554,11 +1640,10 @@ export class InstructorDashboardSystem extends createSystem({
             );
 
       const statusLabel =
-        student.labStatus === "completed"
+        student.labStatus === "completed" ||
+        student.labStatus === "returned" ||
+        student.labStatus === "instructor_return"
             ? "Finished"
-          : student.labStatus === "returned" ||
-                student.labStatus === "instructor_return"
-              ? "Returned by instructor"
             : student.isDisconnected
               ? "Offline"
             : student.mode === "Game Mode"
@@ -1567,30 +1652,11 @@ export class InstructorDashboardSystem extends createSystem({
                 ? "Returned"
                 : "Waiting";
 
-      name?.setProperties({
-        text:
-          `${student.name ?? "Student"}  ${student.seat ?? ""}`
-      });
-
-      question?.setProperties({
-        text:
-          `${currentQuestion} / ${total}`
-      });
-
-      score?.setProperties({
-        text:
-          `${student.score ?? 0}`
-      });
-
-      correct?.setProperties({
-        text:
-          `OK ${student.correctAnswers ?? 0}`
-      });
-
-      mistakes?.setProperties({
-        text:
-          `X ${student.wrongAnswers ?? 0}`
-      });
+      setText(name, `${student.name ?? "Student"}  ${student.seat ?? ""}`);
+      setText(question, `${currentQuestion} / ${total}`);
+      setText(score, `${student.score ?? 0}`);
+      setText(correct, `OK ${student.correctAnswers ?? 0}`);
+      setText(mistakes, `X ${student.wrongAnswers ?? 0}`);
 
       const duration =
         Math.max(
@@ -1602,15 +1668,8 @@ export class InstructorDashboardSystem extends createSystem({
       const seconds =
         duration % 60;
 
-      time?.setProperties({
-        text:
-          `${minutes}:${String(seconds).padStart(2, "0")}`
-      });
-
-      status?.setProperties({
-        text:
-          statusLabel
-      });
+      setText(time, `${minutes}:${String(seconds).padStart(2, "0")}`);
+      setText(status, statusLabel);
     }
 
     this.syncDocument(
@@ -1625,11 +1684,100 @@ export class InstructorDashboardSystem extends createSystem({
   private setCurrentMode(
     mode: InstructorMode
   ): void {
+    // The multiplayer server calls the Python lab "Game Mode", while the
+    // instructor UI calls it "Lab Mode". Treat both as the same activity.
+    const normalizedMode =
+      (mode as string) === "Game Mode"
+        ? "Lab Mode"
+        : mode;
+
     this.currentMode =
-      mode;
+      normalizedMode;
+
+    if (normalizedMode === "Lab Mode") {
+      this.startLabActivityTimer();
+    } else {
+      this.stopLabActivityTimer();
+    }
 
     this.updateModeDisplay();
     this.updateActiveButton();
+  }
+
+  private startLabActivityTimer(): void {
+    if (this.labActivityStartedAt !== null) {
+      this.updateLabActivityControl();
+      return;
+    }
+
+    this.labActivityFinalElapsedSeconds = 0;
+    this.labActivityStartedAt = Date.now();
+    this.updateLabActivityControl();
+    this.labActivityTimer = window.setInterval(
+      () => this.updateLabActivityControl(),
+      1000
+    );
+  }
+
+  private stopLabActivityTimer(): void {
+    if (this.labActivityStartedAt !== null) {
+      this.labActivityFinalElapsedSeconds = Math.max(
+        0,
+        Math.floor((Date.now() - this.labActivityStartedAt) / 1000)
+      );
+    }
+
+    if (this.labActivityTimer !== undefined) {
+      window.clearInterval(this.labActivityTimer);
+      this.labActivityTimer = undefined;
+    }
+
+    this.labActivityStartedAt = null;
+    this.updateLabActivityControl();
+  }
+
+  private updateLabActivityControl(): void {
+    if (!this.dashboardDocument) return;
+
+    const active = this.labActivityStartedAt !== null;
+    const elapsedSeconds = active
+      ? Math.max(0, Math.floor((Date.now() - this.labActivityStartedAt!) / 1000))
+      : this.labActivityFinalElapsedSeconds;
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const elapsed = hours > 0
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+      : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+
+    const setText = (id: string, value: string): void => {
+      const element = this.dashboardDocument?.getElementById(id) as UIKit.Text;
+      if (!element) return;
+      element.setProperties({ text: value });
+      (element as any).textContent = value;
+    };
+
+    setText("lab-game-code", active ? `LIVE  ${elapsed}` : "GAME 01");
+    setText("lab-game-name", active ? "Return from Game" : "Variable Sorting");
+    setText(
+      "lab-game-description",
+      active
+        ? "Return all students to the classroom"
+        : "Sort Python values into the correct data-type bins"
+    );
+
+    const button = this.dashboardDocument.getElementById("lab-mode-button");
+    if (active) button?.classList.add("game-card-active");
+    else button?.classList.remove("game-card-active");
+
+    this.syncDocument(this.dashboardDocument);
+
+    const monitorTimer = this.labMonitorDocument?.getElementById(
+      "lab-monitor-timer"
+    ) as UIKit.Text;
+    monitorTimer?.setProperties({ text: elapsed });
+    if (monitorTimer) (monitorTimer as any).textContent = elapsed;
+    this.syncDocument(this.labMonitorDocument);
   }
 
   private updateModeDisplay(): void {
