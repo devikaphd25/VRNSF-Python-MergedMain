@@ -88,7 +88,7 @@ const assets: AssetManifest = {
   nasaSeatSource: {
     url: "./gltf/classroom2/vrclass-nasa-classroom.glb",
     type: AssetType.GLTF,
-    priority: "auto"
+    priority: "background"
   },
 
   instructorAvatar: {
@@ -248,8 +248,8 @@ function logout(): void {
 // ============================================================
 
 let currentUser: VRUser | null = null;
-let isInstructor = currentUser?.role === "instructor";
-let isStudent = currentUser?.role === "student";
+let isInstructor = false;
+let isStudent = false;
 function registerCurrentClassroomUser(): void {
   if (!socket.connected) {
     return;
@@ -322,7 +322,7 @@ socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
 if (socket.connected) {
   registerCurrentClassroomUser();
 }
-console.log("[Login] Saved user:", currentUser?.username ?? "none");
+console.log("[Login] Saved user: none");
 
 
 // ============================================================
@@ -453,7 +453,7 @@ World.create(
       if (!headsetDebugEnabled || !renderer.xr.isPresenting) return;
 
       const playerObject = (player as any)?.object3D ?? (player as any);
-      const xrCamera = renderer.xr.getCamera(camera) as THREE.ArrayCamera;
+      const xrCamera = renderer.xr.getCamera() as THREE.ArrayCamera;
       const eyeCamera = xrCamera.cameras?.[0] ?? xrCamera;
       const eyeWorld = new THREE.Vector3();
       const baseCameraWorld = new THREE.Vector3();
@@ -763,7 +763,7 @@ World.create(
         mesh.frustumCulled = false;
       });
     };
-    applySimpleFloorMaterial(envMesh.getObjectByName("Floor"));
+    applySimpleFloorMaterial(envMesh.getObjectByName("Floor") ?? null);
 
     // Add only the self-contained NASA ceiling assembly. The traditional
     // ceiling remains as a dark backing so the blue scene clear-color cannot
@@ -965,7 +965,7 @@ World.create(
     }
 
     ["Riser_Row2", "Riser_Row3", "Riser_Row4", "Riser_Row5"].forEach(
-      (riserName) => applySimpleFloorMaterial(envMesh.getObjectByName(riserName))
+      (riserName) => applySimpleFloorMaterial(envMesh.getObjectByName(riserName) ?? null)
     );
 
     // Seal both physical ends of every tier. Add the caps in world space so

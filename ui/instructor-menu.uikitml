@@ -109,6 +109,11 @@
     pointer-events: auto;
   }
   .scroll-button:hover { background-color: rgba(8, 145, 178, 0.58); border-color: #67e8f9; }
+  .scroll-button-unavailable {
+    background-color: rgba(30, 41, 59, 0.34);
+    border-color: rgba(100, 116, 139, 0.42);
+    color: #64748b;
+  }
 
   .lesson-label {
     color: #64748b;
@@ -170,6 +175,11 @@
     pointer-events: auto;
   }
   .game-card:hover { background-color: rgba(76, 29, 149, 0.64); border-color: #c4b5fd; }
+  .game-card-active {
+    background-color: rgba(14, 116, 144, 0.62);
+    border-color: #67e8f9;
+  }
+  .game-card-active:hover { background-color: rgba(8, 145, 178, 0.7); border-color: #a5f3fc; }
   .game-code { color: #ddd6fe; font-size: 12; font-weight: 700; font-family: inter; }
   .game-name { color: #ffffff; font-size: 18; font-weight: 700; font-family: inter; }
   .game-description { color: #b7aacd; font-size: 12; font-family: inter; }
@@ -294,7 +304,7 @@
       </div>
       <div class="game-list">
         <button id="lab-mode-button" class="game-card">
-          <span class="game-code">GAME 01</span><span class="game-name">Variable Sorting</span><span class="game-description">Sort Python values into the correct data-type bins</span>
+          <span id="lab-game-code" class="game-code">GAME 01</span><span id="lab-game-name" class="game-name">Variable Sorting</span><span id="lab-game-description" class="game-description">Sort Python values into the correct data-type bins</span>
         </button>
         <button id="game-space-quiz-button" class="game-card">
           <span class="game-code">GAME 02</span><span class="game-name">True or False</span><span class="game-description">Launch a quick true-or-false class challenge</span>

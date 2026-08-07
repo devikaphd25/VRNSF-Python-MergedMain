@@ -238,8 +238,12 @@ export class VRLoginSystem extends createSystem({
     const keypad = document.getElementById("keypad")!;
 
     const syncPanel = (): void => {
-      document.requestUpdate?.();
-      document.update?.();
+      const mutableDocument = document as UIKitDocument & {
+        requestUpdate?: () => void;
+        update?: () => void;
+      };
+      mutableDocument.requestUpdate?.();
+      mutableDocument.update?.();
     };
 
     const setStatus = (message: string, error = false): void => {
@@ -254,7 +258,6 @@ export class VRLoginSystem extends createSystem({
         const digit = document.getElementById(`pin-digit-${index}`) as UIKit.Text;
         const value = this.enteredPin[index] ?? "-";
         digit?.setProperties({ text: value });
-        if (digit) digit.textContent = value;
         setClass(document.getElementById(`pin-slot-${index}`), "pin-slot-filled", index < this.enteredPin.length);
       }
       syncPanel();
@@ -271,7 +274,6 @@ export class VRLoginSystem extends createSystem({
       title.setProperties({ text: "Create or Join a Classroom" });
       (pinLabel as UIKit.Text).setProperties({ text: "Enter the 6-digit Professor PIN" });
       (confirmButton as UIKit.Text).setProperties({ text: "Create Classroom" });
-      confirmButton.textContent = "Create Classroom";
       positionLoginLogo("instructor");
       setStatus("Professor verification is required");
     };
@@ -317,7 +319,6 @@ export class VRLoginSystem extends createSystem({
       setClass(confirmButton, "is-hidden", false);
       title.setProperties({ text: "Join a Classroom" });
       (confirmButton as UIKit.Text).setProperties({ text: "Join Latest Classroom" });
-      confirmButton.textContent = "Join Latest Classroom";
       positionLoginLogo("student");
       setStatus("Finding the latest active classroom...");
       this.stopWaiting();
