@@ -4,6 +4,7 @@ import {
   getAppUserByUsername,
   upsertDeviceAppUser,
 } from "../services/app-data.repository.js";
+import type { UserRole } from "../types.js";
 
 const router = express.Router();
 
@@ -18,7 +19,12 @@ router.post("/device-login", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid device login." });
     }
 
-    const user = await upsertDeviceAppUser({ deviceId, displayName, role, seat });
+    const user = await upsertDeviceAppUser({
+      deviceId,
+      displayName,
+      role: role as UserRole,
+      seat,
+    });
 
     // A participant represents this permanent user inside a particular room.
     // The join-room RPC already stored the same device ID, so all matching

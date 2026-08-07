@@ -1,30 +1,35 @@
+import type { LabExerciseUpdate, LabMistake, LabStatus } from "../types.js";
+
 export class LabSession {
-  constructor(studentId, studentName, seat) {
+  studentId: number;
+  studentName: string;
+  seat: string | null;
+  socketId: string | null;
+  score = 0;
+  streak = 0;
+  wpm = 0;
+  accuracy = 0;
+  completedExercises: number[] = [];
+  currentExercise = 0;
+  totalCards = 12;
+  correctAnswers = 0;
+  wrongAnswers = 0;
+  durationSeconds = 0;
+  status: LabStatus = "working";
+  returnReason: string | null = null;
+  resultSaved = false;
+  mistakes: LabMistake[] = [];
+  gameState: { lessonState: string } = { lessonState: "idle" };
+  joinedAt = new Date();
+
+  constructor(studentId: number, studentName: string, seat: string | null) {
     this.studentId = studentId;
     this.studentName = studentName;
     this.seat = seat;
     this.socketId = null;
-    this.score = 0;
-    this.streak = 0;
-    this.wpm = 0;
-    this.accuracy = 0;
-    this.completedExercises = [];
-    this.currentExercise = 0;
-    this.totalCards = 12;
-    this.correctAnswers = 0;
-    this.wrongAnswers = 0;
-    this.durationSeconds = 0;
-    this.status = "working";
-    this.returnReason = null;
-    this.resultSaved = false;
-    this.mistakes = [];
-    this.gameState = {
-      lessonState: "idle",
-    };
-    this.joinedAt = new Date();
   }
 
-  completeExercise(exerciseId, data = {}) {
+  completeExercise(exerciseId: number, data: LabExerciseUpdate = {}) {
     const normalizedExerciseId = Number(exerciseId);
 
     if (

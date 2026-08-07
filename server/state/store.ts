@@ -9,18 +9,25 @@
  * We will improve this later, but for now we keep the
  * existing structure so nothing else breaks.
  */
-export const students = {};
+import type {
+  ClassroomStudent,
+  ConnectedUser,
+  ReturningStudent
+} from "../types.js";
+import type { LabSession } from "./LabSession.js";
+
+export const students: Record<string, ClassroomStudent> = {};
 
 /*
  * Lab sessions are indexed by permanent database user ID.
  */
-export const labSessions = {};
+export const labSessions: Record<string, LabSession> = {};
 
 /*
  * Stores students who are moving from the lab back to
  * the classroom.
  */
-export const returningStudents = {};
+export const returningStudents: Record<string, ReturningStudent> = {};
 
 /*
  * Cross-application connection records.
@@ -37,4 +44,4 @@ export const returningStudents = {};
  *   location: "python_lab"
  * };
  */
-export const connectedUsers = {};
+export const connectedUsers: Record<string, ConnectedUser> = {};
