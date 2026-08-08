@@ -20,6 +20,8 @@ export class StudentResultSystem extends createSystem({
   }
 }) {
   private document?: UIKitDocument;
+  private lastCloseActivation = 0;
+  private connectedCloseButton?: object;
 
   init(): void {
     this.queries.resultPanel.subscribe(
@@ -30,14 +32,7 @@ export class StudentResultSystem extends createSystem({
             entity.index
           ] as UIKitDocument;
 
-        this.document
-          ?.getElementById(
-            "student-result-close"
-          )
-          ?.addEventListener(
-            "click",
-            this.closeResult
-          );
+        this.connectCloseButton();
       }
     );
 
@@ -51,6 +46,9 @@ export class StudentResultSystem extends createSystem({
     event: CustomEvent
   ): void => {
     const result = event.detail ?? {};
+
+    /* Reconnect after UIKit has rebuilt a previously hidden panel. */
+    this.connectCloseButton();
 
     this.setText(
       "student-result-status",
@@ -81,7 +79,21 @@ export class StudentResultSystem extends createSystem({
 
     this.setVisible(true);
     this.sync();
+    window.setTimeout(() => this.connectCloseButton(), 0);
   };
+
+  private connectCloseButton(): void {
+    const closeButton = this.document
+      ?.getElementById("student-result-close");
+
+    if (!closeButton || closeButton === this.connectedCloseButton) {
+      return;
+    }
+
+    this.connectedCloseButton = closeButton;
+    closeButton.addEventListener("pointerdown", this.activateClose);
+    closeButton.addEventListener("click", this.activateClose);
+  }
 
   private setText(
     id: string,
@@ -110,6 +122,19 @@ export class StudentResultSystem extends createSystem({
     this.setVisible(false);
     (window as any)
       .resetStudentRaiseHandAfterResult?.();
+  };
+
+  private activateClose = (event?: any): void => {
+    event?.stopPropagation?.();
+    event?.stopImmediatePropagation?.();
+
+    const now = performance.now();
+    if (now - this.lastCloseActivation < 220) {
+      return;
+    }
+
+    this.lastCloseActivation = now;
+    this.closeResult();
   };
 
   private sync(): void {

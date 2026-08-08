@@ -102,31 +102,58 @@ export async function saveAppGameResult({
   gameName = "Python Type Lab",
   score = 0,
   durationSeconds = 0,
+  correctAnswers = 0,
+  wrongAnswers = 0,
+  completedExercises = 0,
+  totalExercises = 12,
+  accuracy = 0,
   status,
 }: GameResultInput): Promise<void> {
+  const user = getAppUserById(userId);
   const { error } = await supabaseAdmin.from("game_results").insert({
     user_id: Number(userId),
+    student_name: user?.fullName ?? `Student ${userId}`,
     game_name: gameName,
     score: Number(score) || 0,
     duration_seconds: Number(durationSeconds) || 0,
+    correct_answers: Number(correctAnswers) || 0,
+    wrong_answers: Number(wrongAnswers) || 0,
+    completed_exercises: Number(completedExercises) || 0,
+    total_exercises: Math.max(1, Number(totalExercises) || 12),
+    accuracy: Math.max(0, Math.min(100, Number(accuracy) || 0)),
     status,
   });
   if (error) throw new Error(`Could not save game result: ${error.message}`);
 }
 
-export async function getRecentAppGameResults(limit = 50): Promise<Record<string, unknown>[]> {
-  const { data, error } = await supabaseAdmin
+export async function getRecentAppGameResults(
+  limit = 50,
+  completedAfter?: string | null
+): Promise<Record<string, unknown>[]> {
+  let query = supabaseAdmin
     .from("game_results")
     .select(`
       id,
       user_id,
+      student_name,
       game_name,
       score,
       duration_seconds,
+      correct_answers,
+      wrong_answers,
+      completed_exercises,
+      total_exercises,
+      accuracy,
       status,
       completed_at,
       app_users!game_results_user_id_fkey(full_name,seat)
-    `)
+    `);
+
+  if (completedAfter) {
+    query = query.gte("completed_at", completedAfter);
+  }
+
+  const { data, error } = await query
     .order("completed_at", { ascending: false })
     .limit(Math.max(1, Math.min(Number(limit) || 50, 200)));
 
@@ -142,11 +169,16 @@ export async function getRecentAppGameResults(limit = 50): Promise<Record<string
     latestByUser.set(userId, {
       id: Number(row.id),
       userId,
-      name: joinedUser?.full_name ?? `Student ${userId}`,
+      name: row.student_name || joinedUser?.full_name || `Student ${userId}`,
       seat: joinedUser?.seat ?? "Not selected",
       gameName: row.game_name,
       score: Number(row.score) || 0,
       durationSeconds: Number(row.duration_seconds) || 0,
+      correctAnswers: Number(row.correct_answers) || 0,
+      wrongAnswers: Number(row.wrong_answers) || 0,
+      completedExercises: Number(row.completed_exercises) || 0,
+      totalExercises: Number(row.total_exercises) || 12,
+      accuracy: Number(row.accuracy) || 0,
       status: row.status,
       completedAt: row.completed_at,
     });
