@@ -35,6 +35,10 @@ import {
   updateAppUserLocation,
 } from "./server/services/app-data.repository.js";
 
+// Separates saved results from different launches of the same lab. Historical
+// rows remain in Supabase, but the live monitor reads only this run.
+let activeLabRunStartedAt: string | null = null;
+
 await initializeAppDataRepository();
 console.log({ total: getAppUserCount(), database: "Supabase" });
 
@@ -182,10 +186,68 @@ function sendMuteState(studentId: string, student: ClassroomStudent, isMuted: bo
 // ========================================================
 app.use(express.json());
 app.use("/api", loginRoutes);
+
+app.get("/api/instructor-content", async (_request, response) => {
+  const { data: week, error: weekError } = await supabaseAdmin
+    .from("learning_weeks")
+    .select("id, week_number, title")
+    .eq("is_published", true)
+    .order("week_number", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (weekError || !week) {
+    response.status(500).json({ error: weekError?.message ?? "No published week found" });
+    return;
+  }
+
+  const [{ data: lessons, error: lessonsError }, { data: activities, error: activitiesError }] =
+    await Promise.all([
+      supabaseAdmin
+        .from("week_lessons")
+        .select("id, lesson_number, title")
+        .eq("week_id", week.id)
+        .eq("is_enabled", true)
+        .order("lesson_number", { ascending: true }),
+      supabaseAdmin
+        .from("week_activities")
+        .select("id, lesson_id, activity_order, activity_type, title, description, asset_path, environment_path, duration_seconds")
+        .eq("week_id", week.id)
+        .eq("is_enabled", true)
+        .order("activity_order", { ascending: true }),
+    ]);
+
+  if (lessonsError || activitiesError) {
+    response.status(500).json({
+      error: lessonsError?.message ?? activitiesError?.message ?? "Could not load curriculum",
+    });
+    return;
+  }
+
+  response.json({
+    weekNumber: week.week_number,
+    weekTitle: week.title,
+    lessons: (lessons ?? []).map(lesson => ({
+      lessonNumber: lesson.lesson_number,
+      title: lesson.title,
+      activities: (activities ?? [])
+        .filter(activity => activity.lesson_id === lesson.id)
+        .map(activity => ({
+          activityId: activity.id,
+          activityType: activity.activity_type,
+          title: activity.title,
+          description: activity.description,
+          assetPath: activity.asset_path,
+          environmentPath: activity.environment_path,
+          durationSeconds: activity.duration_seconds,
+        })),
+    })),
+  });
+});
 io.on("connection", (socket: ClassroomSocket) => {
   console.log("Connected:", socket.id);
 
-  socket.on("instructorQuickChallenge", (data = {}) => {
+  socket.on("instructorQuickChallenge", async (data = {}) => {
     const roomId = String(socket.data.roomId ?? "").trim();
     if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
       socket.emit("error", {
@@ -202,16 +264,48 @@ io.on("connection", (socket: ClassroomSocket) => {
       Math.max(15, Number(data.durationSeconds) || 60)
     );
     const isTrueFalse = data.challengeType === "true-false";
+    const activityId = Number(data.activityId);
+    let databaseQuestion: {
+      prompt: string;
+      choices: unknown;
+      correct_index: number;
+    } | null = null;
+
+    if (!isTrueFalse && Number.isInteger(activityId) && activityId > 0) {
+      const { data: question, error: questionError } = await supabaseAdmin
+        .from("quiz_questions")
+        .select("prompt, choices, correct_index")
+        .eq("activity_id", activityId)
+        .order("ordinal", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (questionError) {
+        console.error("[Quick Challenge] Could not load Supabase question:", questionError.message);
+      } else if (question) {
+        databaseQuestion = question;
+      }
+    }
+
+    const databaseChoices = Array.isArray(databaseQuestion?.choices)
+      ? databaseQuestion.choices.map(String)
+      : null;
     const challenge = {
       id: `quick-${roomId}-${Date.now()}`,
       roomId,
       question: isTrueFalse
         ? "True or False: In Python, True is a Boolean value."
-        : "Which of these values is a Python integer?",
+        : databaseQuestion?.prompt ?? "Which of these values is a Python integer?",
       options: isTrueFalse
         ? ["True", "False"]
-        : ["3.14", "42", "True", "Hello"],
-      correctIndex: isTrueFalse ? 0 : 1,
+        : databaseChoices?.length === 4
+          ? databaseChoices
+          : ["3.14", "42", "True", "Hello"],
+      correctIndex: isTrueFalse
+        ? 0
+        : databaseChoices?.length === 4
+          ? Number(databaseQuestion?.correct_index) || 0
+          : 1,
       durationSeconds,
       startedAt: Date.now(),
       answers: new Map(),
@@ -254,9 +348,28 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     challenge.timeout = setTimeout(() => {
       if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
+
+      const rankedCorrectAnswers = Array.from(challenge.answers.entries())
+        .filter(([, answer]) => answer.correct)
+        .sort(
+          ([, left], [, right]) =>
+            left.responseTimeSeconds - right.responseTimeSeconds
+        );
+      const winnerEntry = rankedCorrectAnswers[0];
+      const winnerSocketId = winnerEntry?.[0] ?? null;
+      const winnerAnswer = winnerEntry?.[1] ?? null;
+      const winnerStudent = winnerSocketId
+        ? students[winnerSocketId]
+        : null;
+
       for (const client of io.sockets.sockets.values()) {
         if (client.data.roomId === roomId) {
-          client.emit("quickChallengeEnded", { quizId: challenge.id });
+          client.emit("quickChallengeEnded", {
+            quizId: challenge.id,
+            winnerStudentId: winnerSocketId,
+            winnerName: winnerStudent?.name ?? null,
+            winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
+          });
         }
       }
       activeQuickChallenges.delete(roomId);
@@ -283,12 +396,31 @@ io.on("connection", (socket: ClassroomSocket) => {
       rawIndex < challenge.options.length
         ? rawIndex
         : null;
+
+    // A missing selection means the student did not submit an answer. Do not
+    // add it to the answer map or report it as an incorrect response.
+    if (selectedIndex === null) return;
+
     const correct = selectedIndex === challenge.correctIndex;
+    const answeredAt = Date.now();
+    const responseTimeSeconds = Math.max(
+      0,
+      (answeredAt - challenge.startedAt) / 1000
+    );
+
+    console.log("[Quick Challenge] Answer timing", {
+      quizId: challenge.id,
+      student: student.name,
+      startedAt: challenge.startedAt,
+      answeredAt,
+      responseTimeSeconds,
+    });
 
     challenge.answers.set(socket.id, {
       selectedIndex,
       correct,
-      answeredAt: Date.now(),
+      answeredAt,
+      responseTimeSeconds,
     });
 
     socket.emit("quickChallengeResult", {
@@ -296,9 +428,12 @@ io.on("connection", (socket: ClassroomSocket) => {
       correct,
       correctIndex: challenge.correctIndex,
       selectedIndex,
+      responseTimeSeconds,
       message: correct
-        ? "Correct! 42 is a Python integer."
-        : "Not quite. The correct answer is B. 42.",
+        ? "Correct!"
+        : `Not quite. The correct answer is ${String.fromCharCode(
+            65 + challenge.correctIndex
+          )}. ${challenge.options[challenge.correctIndex]}.`,
     });
 
     const answerPayload = {
@@ -312,6 +447,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       correctIndex: challenge.correctIndex,
       correctOption: challenge.options[challenge.correctIndex],
       correct,
+      responseTimeSeconds,
       answeredCount: challenge.answers.size,
     };
 
@@ -655,6 +791,11 @@ socket.emit(
             userId,
             score: Number(progress.score) || 0,
             durationSeconds: Number(progress.durationSeconds) || 0,
+            correctAnswers: Number(progress.correctAnswers) || 0,
+            wrongAnswers: Number(progress.wrongAnswers) || 0,
+            completedExercises: Number(progress.completed) || 0,
+            totalExercises: Number(progress.total) || 12,
+            accuracy: Number(progress.accuracy) || 0,
             status: progress.status === "completed"
               ? "completed"
               : "instructor_return",
@@ -1265,6 +1406,12 @@ socket.on(
           score: Number(result?.score ?? session.score) || 0,
           durationSeconds:
             Number(result?.durationSeconds ?? session.durationSeconds) || 0,
+          correctAnswers: Number(result?.correctAnswers ?? session.correctAnswers) || 0,
+          wrongAnswers: Number(result?.wrongAnswers ?? session.wrongAnswers) || 0,
+          completedExercises:
+            Number(result?.completed ?? result?.completedCards) || 0,
+          totalExercises: Number(result?.total ?? session.totalCards) || 12,
+          accuracy: Number(result?.accuracy ?? session.accuracy) || 0,
           status: "completed",
         });
         session.resultSaved = true;
@@ -1445,10 +1592,35 @@ socket.on(
         userId,
         score: Number(result?.score) || 0,
         durationSeconds: Number(result?.durationSeconds) || 0,
+        correctAnswers: Number(result?.correctAnswers) || 0,
+        wrongAnswers: Number(result?.wrongAnswers) || 0,
+        completedExercises:
+          Number(result?.completed ?? result?.completedCards) || 0,
+        totalExercises: Number(result?.total) || 12,
+        accuracy: Number(result?.accuracy) || 0,
         status: data?.reason === "student_completed"
           ? "completed"
           : "instructor_return",
-      }).catch(console.error);
+      })
+        .then(() => {
+          io.emit("labResultPersisted", {
+            userId,
+            name: connectedUser.fullName,
+            seat: connectedUser.seat,
+            score: Number(result?.score) || 0,
+            durationSeconds: Number(result?.durationSeconds) || 0,
+            correctAnswers: Number(result?.correctAnswers) || 0,
+            wrongAnswers: Number(result?.wrongAnswers) || 0,
+            completedExercises:
+              Number(result?.completed ?? result?.completedCards) || 0,
+            totalExercises: Number(result?.total) || 12,
+            accuracy: Number(result?.accuracy) || 0,
+            status: data?.reason === "student_completed"
+              ? "completed"
+              : "instructor_return",
+          });
+        })
+        .catch(console.error);
 
       session.resultSaved = true;
     }
@@ -1647,7 +1819,19 @@ socket.on("studentLeaveLab", data => {
     if (!isInstructorSocket(socket)) return;
 
     try {
-      const results = await getRecentAppGameResults();
+      const results = activeLabRunStartedAt
+        ? await getRecentAppGameResults(50, activeLabRunStartedAt)
+        : [];
+      console.log("[LabTrace][Server] saved results query", {
+        runStartedAt: activeLabRunStartedAt,
+        rows: results.map((result: any) => ({
+          userId: result.userId,
+          seat: result.seat,
+          durationSeconds: result.durationSeconds,
+          status: result.status,
+          completedAt: result.completedAt,
+        })),
+      });
       socket.emit("savedLabResults", { results });
     } catch (error) {
       console.error("[Lab] Could not load saved results:", error);
@@ -2219,7 +2403,7 @@ socket.on(
 });
 socket.on(
   "instructorSendAllToDestination",
-  ({ destination }) => {
+  ({ destination, assetPath, mediaType }) => {
     if (!isInstructorSocket(socket)) {
       socket.emit("serverError", {
         message:
@@ -2282,6 +2466,17 @@ socket.on(
       `[Server] Found ${realStudents.length} real students to send`
     );
 
+    /* Every student timer begins at the same instructor launch moment. */
+    const gameStartedAt = new Date();
+    if (isGame) {
+      activeLabRunStartedAt = gameStartedAt.toISOString();
+      console.log("[LabTrace][Server] new game run", {
+        runStartedAt: activeLabRunStartedAt,
+        gameId,
+        studentCount: realStudents.length,
+      });
+    }
+
     realStudents.forEach(
       (student, index) => {
         student.mode =
@@ -2316,14 +2511,13 @@ socket.on(
 
           void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
-          labSessions[student.userId] =
-            new LabSession(
-              student.userId,
-              student.fullName ??
-                student.username,
-              student.seat ??
-                "Not selected"
-            );
+          const labSession = new LabSession(
+            student.userId,
+            student.fullName ?? student.username,
+            student.seat ?? "Not selected"
+          );
+          labSession.joinedAt = gameStartedAt;
+          labSessions[student.userId] = labSession;
 
           console.log(
             `[Server] 🎮 Notifying ${student.fullName} (${student.classroomSocketId}) to enter ${gameId}`
@@ -2380,10 +2574,23 @@ socket.on(
           {
             mode,
             destination,
+            assetPath: destination === "Presentation" ? assetPath : undefined,
+            mediaType: destination === "Presentation" ? mediaType : undefined,
             fromInstructor:
               true,
           }
         );
+
+        if (destination === "Presentation" && assetPath) {
+          io.to(student.classroomSocketId).emit(
+            "presentationContentChanged",
+            {
+              assetPath,
+              mediaType: mediaType === "image" ? "image" : "video",
+              sentAt: Date.now(),
+            }
+          );
+        }
       }
     );
 
@@ -2394,6 +2601,8 @@ socket.on(
       {
         mode,
         destination,
+        assetPath: destination === "Presentation" ? assetPath : undefined,
+        mediaType: destination === "Presentation" ? mediaType : undefined,
 
         message:
           `All students sent to ${destination}`,
@@ -2421,6 +2630,34 @@ socket.on(
     );
   }
 );
+
+socket.on("instructorVideoPlayback", data => {
+  if (!isInstructorSocket(socket)) return;
+  const command = data?.command === "pause" ? "pause" : "play";
+  const currentTime = Number.isFinite(Number(data?.currentTime))
+    ? Math.max(0, Number(data.currentTime))
+    : 0;
+  let recipientCount = 0;
+
+  // Use the registered classroom student sockets. Some clients do not carry
+  // roomId on socket.data, which previously caused valid students to be
+  // silently excluded from video synchronization.
+  for (const user of Object.values(connectedUsers)) {
+    if (user.role !== "student" || !user.classroomSocketId) continue;
+    io.to(user.classroomSocketId).emit("videoPlaybackCommand", {
+      command,
+      currentTime,
+      sentAt: Date.now(),
+    });
+    recipientCount += 1;
+  }
+
+  console.log("[Server] Video playback synchronized", {
+    command,
+    currentTime,
+    recipientCount,
+  });
+});
 
   socket.on(
   "instructorReturnStudentFromLab",
@@ -2479,6 +2716,12 @@ socket.on(
         score:
           connectedUser.score,
 
+        correctAnswers:
+          connectedUser.correctAnswers ?? 0,
+
+        wrongAnswers:
+          connectedUser.wrongAnswers ?? 0,
+
         streak:
           0,
 
@@ -2497,6 +2740,11 @@ socket.on(
         userId,
         score: progress.score,
         durationSeconds: progress.durationSeconds ?? 0,
+        correctAnswers: Number(progress.correctAnswers) || 0,
+        wrongAnswers: Number(progress.wrongAnswers) || 0,
+        completedExercises: Number(progress.completed) || 0,
+        totalExercises: Number(progress.total) || 12,
+        accuracy: Number(progress.accuracy) || 0,
         status: "instructor_return",
       }).catch(console.error);
 
@@ -2576,6 +2824,7 @@ socket.on(
     );
 
     let returnedCount = 0;
+    const resultSavePromises: Promise<void>[] = [];
 
     Object.values(
       connectedUsers
@@ -2644,6 +2893,8 @@ socket.on(
           completed: connectedUser.completedExercises ?? 0,
           total: 12,
           score: connectedUser.score ?? 0,
+          correctAnswers: connectedUser.correctAnswers ?? 0,
+          wrongAnswers: connectedUser.wrongAnswers ?? 0,
           streak: 0,
           accuracy: connectedUser.accuracy ?? 0,
           wpm: 0,
@@ -2678,12 +2929,56 @@ socket.on(
               ? "completed"
               : "instructor_return";
 
-          void saveAppGameResult({
+          console.log("[LabTrace][Server] Stop Game snapshot", {
+            runStartedAt: activeLabRunStartedAt,
+            userId,
+            name: connectedUser.fullName,
+            seat: connectedUser.seat,
+            connectedDuration: connectedUser.durationSeconds,
+            progressDuration: activeProgress.durationSeconds,
+            completed: activeProgress.completed,
+            status: finalStatus,
+          });
+
+          const resultSavePromise = saveAppGameResult({
             userId,
             score: activeProgress.score,
             durationSeconds: activeProgress.durationSeconds ?? 0,
+            correctAnswers: Number(activeProgress.correctAnswers) || 0,
+            wrongAnswers: Number(activeProgress.wrongAnswers) || 0,
+            completedExercises: Number(activeProgress.completed) || 0,
+            totalExercises: Number(activeProgress.total) || 12,
+            accuracy: Number(activeProgress.accuracy) || 0,
             status: finalStatus,
-          }).catch(console.error);
+          })
+            .then(() => {
+              console.log("[LabTrace][Server] result persisted", {
+                runStartedAt: activeLabRunStartedAt,
+                userId,
+                seat: connectedUser.seat,
+                durationSeconds: activeProgress.durationSeconds,
+                status: finalStatus,
+              });
+              io.emit("labResultPersisted", {
+                userId,
+                name: connectedUser.fullName,
+                seat: connectedUser.seat,
+                score: Number(activeProgress.score) || 0,
+                durationSeconds:
+                  Number(activeProgress.durationSeconds) || 0,
+                correctAnswers:
+                  Number(activeProgress.correctAnswers) || 0,
+                wrongAnswers:
+                  Number(activeProgress.wrongAnswers) || 0,
+                completedExercises:
+                  Number(activeProgress.completed) || 0,
+                totalExercises: Number(activeProgress.total) || 12,
+                accuracy: Number(activeProgress.accuracy) || 0,
+                status: finalStatus,
+              });
+            })
+            .catch(console.error);
+          resultSavePromises.push(resultSavePromise);
 
           if (activeSession) {
             activeSession.resultSaved = true;
@@ -2882,22 +3177,21 @@ socket.on(
       }
     });
 
-    broadcastStudentList(io);
+    void Promise.allSettled(resultSavePromises).then(() => {
+      broadcastStudentList(io);
 
-    io.emit(
-      "allStudentsReturnedToClass",
-      {
-        count:
-          returnedCount,
+      io.emit(
+        "allStudentsReturnedToClass",
+        {
+          count: returnedCount,
+          message: "All students returned to Class mode",
+        }
+      );
 
-        message:
-          "All students returned to Class mode",
-      }
-    );
-
-    console.log(
-      `[Server] All ${returnedCount} students returned to Class mode`
-    );
+      console.log(
+        `[Server] All ${returnedCount} students returned to Class mode and results persisted`
+      );
+    });
   }
 );
 
@@ -3074,6 +3368,11 @@ if (
         score: Number(progress?.score ?? connectedUser.score) || 0,
         durationSeconds:
           Number(progress?.durationSeconds ?? connectedUser.durationSeconds) || 0,
+        correctAnswers: Number(progress?.correctAnswers ?? connectedUser.correctAnswers) || 0,
+        wrongAnswers: Number(progress?.wrongAnswers ?? connectedUser.wrongAnswers) || 0,
+        completedExercises: Number(progress?.completed ?? connectedUser.completedExercises) || 0,
+        totalExercises: Number(progress?.total) || 12,
+        accuracy: Number(progress?.accuracy ?? connectedUser.accuracy) || 0,
         status: "disconnected",
       });
       if (disconnectedLabSession) {

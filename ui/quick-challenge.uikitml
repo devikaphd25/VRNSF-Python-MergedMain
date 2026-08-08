@@ -9,7 +9,7 @@
     border-color: rgba(96, 165, 250, 0.75);
     border-radius: 4;
     pointer-events: auto;
-    pointer-events-order: 15000;
+    pointer-events-order: 50000;
   }
 
   .quiz-header {
@@ -80,7 +80,7 @@
     border-radius: 2.2;
     cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 15001;
+    pointer-events-order: 50001;
   }
 
   .answer-selected {
@@ -117,7 +117,7 @@
     border-radius: 2.2;
     cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 15001;
+    pointer-events-order: 50001;
   }
 
   .clear-button {
@@ -134,7 +134,7 @@
     border-radius: 2.2;
     cursor: pointer;
     pointer-events: auto;
-    pointer-events-order: 15001;
+    pointer-events-order: 50001;
   }
 
   .quiz-feedback {
@@ -152,13 +152,83 @@
   .feedback-incorrect {
     color: #fca5a5;
   }
+
+  .quiz-result-card {
+    width: 100%;
+    padding: 5;
+    flex-direction: column;
+    align-items: center;
+    gap: 3;
+    background-color: rgba(15, 23, 42, 0.92);
+    border-width: 0.25;
+    border-color: #64748b;
+    border-radius: 3;
+  }
+
+  .quiz-result-status {
+    color: white;
+    font-size: 4.4;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .quiz-result-answer {
+    color: #cbd5e1;
+    font-size: 2.5;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .quiz-result-time {
+    color: #67e8f9;
+    font-size: 2.8;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .quiz-result-winner {
+    color: #fde68a;
+    font-size: 2.35;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .quiz-result-close {
+    width: 16;
+    height: 5;
+    align-self: center;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    background-color: rgba(30, 64, 175, 0.9);
+    border-width: 0.25;
+    border-color: #60a5fa;
+    border-radius: 1.2;
+    font-size: 2;
+    font-weight: bold;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .quiz-result-correct {
+    color: #6ee7b7;
+    border-color: #34d399;
+  }
+
+  .quiz-result-wrong {
+    color: #fca5a5;
+    border-color: #fb7185;
+  }
+
+  .quiz-content-hidden { display: none; }
+  .quiz-result-hidden { display: none; }
 </style>
 
 <Panel class="quiz-root">
   <Panel class="quiz-header">
     <Panel>
       <Text class="quiz-title">QUICK CHALLENGE</Text>
-      <Text class="quiz-progress">Question 1 of 1</Text>
     </Panel>
     <Text id="quiz-timer" class="quiz-timer">01:00</Text>
   </Panel>
@@ -177,12 +247,20 @@
     <Button id="quiz-answer-3" class="answer-button">D. Hello</Button>
   </Panel>
 
-  <Text class="quiz-instruction">Select one answer</Text>
+  <Text id="quiz-instruction" class="quiz-instruction">Select one answer</Text>
 
-  <Panel class="quiz-actions">
+  <Panel id="quiz-actions" class="quiz-actions">
     <Button id="quiz-submit" class="submit-button">SUBMIT ANSWER</Button>
     <Button id="quiz-clear" class="clear-button">CLEAR SELECTION</Button>
   </Panel>
 
   <Text id="quiz-feedback" class="quiz-feedback"></Text>
+
+  <Panel id="quiz-result-card" class="quiz-result-card quiz-result-hidden">
+    <Text id="quiz-result-status" class="quiz-result-status">CORRECT</Text>
+    <Text id="quiz-result-answer" class="quiz-result-answer">Your answer: B. 42</Text>
+    <Text id="quiz-result-time" class="quiz-result-time">Time taken: 0.0 seconds</Text>
+    <Text id="quiz-result-winner" class="quiz-result-winner">Waiting for the final ranking...</Text>
+    <Button id="quiz-result-close" class="quiz-result-close">RETURN TO CLASS</Button>
+  </Panel>
 </Panel>

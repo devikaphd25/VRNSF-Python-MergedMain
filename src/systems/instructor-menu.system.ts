@@ -12,6 +12,7 @@ import {
 } from "../network/socket";
 import {
   INSTRUCTOR_LESSONS,
+  replaceInstructorLessons,
   InstructorTaskAction
 } from "../config/instructor-menu-content";
 
@@ -52,14 +53,19 @@ interface QuizMonitorStudent {
   selectedOption?: string | null;
   correct?: boolean;
   answered?: boolean;
+  responseTimeSeconds?: number;
 }
 
 interface InstructorQuizPayload {
   id: string;
   question: string;
   options: string[];
+  durationSeconds: number;
+  startedAt: number;
   students?: QuizMonitorStudent[];
 }
+
+type InstructorResultType = "game" | "quick-challenge";
 
 export class InstructorDashboardSystem extends createSystem({
   saveOverlay: {
@@ -170,19 +176,25 @@ export class InstructorDashboardSystem extends createSystem({
   private quizMonitorDocument?: UIKitDocument;
   private activeQuiz?: InstructorQuizPayload;
   private quizStudents: QuizMonitorStudent[] = [];
+  private quizCountdownTimer?: number;
+  private resultsButtonDocument?: UIKitDocument;
+  private latestResultType: InstructorResultType = "game";
 
   private currentMode: InstructorMode =
     "Classroom Mode";
+  private lastPresentationActivationAt = 0;
 
   private onlineStudents = 0;
   private latestStudents: DashboardStudent[] = [];
   private savedLabStudents: DashboardStudent[] = [];
   private hasLabResults = false;
   private hasObservedActiveLabStudent = false;
+  private openLabMonitorAfterSavedResults = false;
   private activeLessonPage = 0;
   private labActivityStartedAt: number | null = null;
   private labActivityTimer?: number;
   private labActivityFinalElapsedSeconds = 0;
+  private lastLabMonitorTraceSignature = "";
 
   // ======================================================
   // INITIALIZATION
@@ -332,8 +344,15 @@ export class InstructorDashboardSystem extends createSystem({
         );
 
         if (this.hasLabResults || this.hasObservedActiveLabStudent) {
+          this.setLatestResultType("game");
           this.hasLabResults = true;
-          this.setLabMonitorVisible(false);
+          // The server emits this event only after all Stop Game result writes
+          // have settled. Reload those authoritative rows before repainting.
+          socket.emit("requestSavedLabResults");
+          // Stop Game keeps the final report visible. At this point the
+          // server has awaited all result writes, so the displayed rows are
+          // the persisted snapshots rather than unfinished live rows.
+          this.setLabMonitorVisible(true);
           this.setLabMonitorAvailable(true);
         }
       }
@@ -353,16 +372,76 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "studentReturnedFromLab",
       () => {
+        this.setLatestResultType("game");
         this.hasLabResults = true;
         this.hasObservedActiveLabStudent = true;
         this.setLabMonitorAvailable(true);
         socket.emit("requestStudentList");
+        socket.emit("requestSavedLabResults");
+      }
+    );
+
+    // The server sends this only after Supabase has accepted the final row.
+    // Refreshing here prevents an instructor-returned student's frozen time
+    // from being replaced by a stale live value such as 0:00.
+    socket.on(
+      "labResultPersisted",
+      (result: any) => {
+        console.log("[LabTrace][Client] persisted event received", {
+          userId: result?.userId,
+          seat: result?.seat,
+          durationSeconds: result?.durationSeconds,
+          status: result?.status,
+        });
+        if (result?.userId) {
+          const persistedStudent: DashboardStudent = {
+            id: `persisted-${result.userId}`,
+            userId: Number(result.userId),
+            name: result.name ?? `Student ${result.userId}`,
+            seat: result.seat ?? "Not selected",
+            score: Number(result.score) || 0,
+            durationSeconds: Number(result.durationSeconds) || 0,
+            correctAnswers: Number(result.correctAnswers) || 0,
+            wrongAnswers: Number(result.wrongAnswers) || 0,
+            accuracy: Number(result.accuracy) || 0,
+            labStatus: result.status ?? "instructor_return",
+            completedExercises: Number(result.completedExercises) || 0,
+            totalExercises: Number(result.totalExercises) || 12,
+            isDisconnected: result.status === "disconnected",
+            savedResult: true,
+          };
+
+          this.savedLabStudents = [
+            persistedStudent,
+            ...this.savedLabStudents.filter(student =>
+              (persistedStudent.seat !== "Not selected" && student.seat)
+                ? student.seat !== persistedStudent.seat
+                : Number(student.userId) !== persistedStudent.userId
+            ),
+          ];
+          this.hasLabResults = true;
+          this.updateLabMonitor();
+        }
+
+        // Reconcile with the authoritative database row after applying the
+        // final snapshot immediately to the visible monitor.
+        socket.emit("requestSavedLabResults");
       }
     );
 
     socket.on(
       "savedLabResults",
       (data: { results?: any[]; error?: string }) => {
+        console.log("[LabTrace][Client] Supabase rows received", {
+          error: data?.error,
+          rows: (data?.results ?? []).map(result => ({
+            userId: result.userId,
+            seat: result.seat,
+            durationSeconds: result.durationSeconds,
+            status: result.status,
+            completedAt: result.completedAt,
+          })),
+        });
         this.savedLabStudents = (data?.results ?? []).map(result => ({
           id: `saved-${result.id}`,
           userId: Number(result.userId),
@@ -370,10 +449,13 @@ export class InstructorDashboardSystem extends createSystem({
           seat: result.seat,
           score: Number(result.score) || 0,
           durationSeconds: Number(result.durationSeconds) || 0,
+          correctAnswers: Number(result.correctAnswers) || 0,
+          wrongAnswers: Number(result.wrongAnswers) || 0,
+          accuracy: Number(result.accuracy) || 0,
           labStatus: result.status,
-          completedExercises: result.status === "completed" ? 12 : 0,
-          totalExercises: 12,
-          isDisconnected: true,
+          completedExercises: Number(result.completedExercises) || 0,
+          totalExercises: Number(result.totalExercises) || 12,
+          isDisconnected: result.status === "disconnected",
           savedResult: true,
           completedAt: result.completedAt,
         }));
@@ -383,6 +465,10 @@ export class InstructorDashboardSystem extends createSystem({
         // must keep the floating Results button available.
         this.setLabMonitorAvailable(this.hasObservedActiveLabStudent);
         this.updateLabMonitor();
+        if (this.openLabMonitorAfterSavedResults) {
+          this.openLabMonitorAfterSavedResults = false;
+          this.setLabMonitorVisible(true);
+        }
       }
     );
 
@@ -396,6 +482,7 @@ export class InstructorDashboardSystem extends createSystem({
           selectedIndex: null,
           selectedOption: null
         }));
+        this.startQuizCountdown();
         this.renderQuizMonitor();
         this.setQuizMonitorVisible(true);
       }
@@ -405,6 +492,9 @@ export class InstructorDashboardSystem extends createSystem({
       "quickChallengeStudentAnswered",
       data => {
         if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
+        if (data.selectedIndex === null || data.selectedIndex === undefined) {
+          return;
+        }
         const student = this.quizStudents.find(
           item => item.studentId === data.studentId
         );
@@ -414,6 +504,23 @@ export class InstructorDashboardSystem extends createSystem({
         student.selectedIndex = data.selectedIndex ?? null;
         student.selectedOption = data.selectedOption ?? null;
         student.correct = Boolean(data.correct);
+        const serverResponseTime = Number(data.responseTimeSeconds);
+        const fallbackResponseTime = Math.max(
+          0.1,
+          (Date.now() - this.activeQuiz.startedAt) / 1000
+        );
+        student.responseTimeSeconds =
+          Number.isFinite(serverResponseTime) && serverResponseTime > 0
+            ? serverResponseTime
+            : fallbackResponseTime;
+        console.log("[Quick Challenge] Student response time", {
+          student: student.name,
+          seconds: student.responseTimeSeconds,
+          source:
+            Number.isFinite(serverResponseTime) && serverResponseTime > 0
+              ? "server"
+              : "instructor fallback",
+        });
         this.renderQuizMonitor();
       }
     );
@@ -421,9 +528,12 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "quickChallengeEnded",
       () => {
+        this.stopQuizCountdown();
         this.setCurrentMode("Classroom Mode");
         this.showStatusMessage("Quick challenge finished");
         this.renderQuizMonitor(true);
+        this.setLatestResultType("quick-challenge");
+        this.setLabMonitorAvailable(true);
       }
     );
   }
@@ -499,6 +609,7 @@ export class InstructorDashboardSystem extends createSystem({
       document;
 
     this.applyConfiguredMenuContent();
+    void this.loadInstructorMenuContent();
     this.connectCloseButton();
     this.connectModeButtons();
     this.connectExtendedMenuButtons();
@@ -515,6 +626,28 @@ export class InstructorDashboardSystem extends createSystem({
     console.log(
       "[InstructorDashboard] Dashboard connected"
     );
+  }
+
+  private async loadInstructorMenuContent(): Promise<void> {
+    try {
+      const response = await fetch("/api/instructor-content");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      replaceInstructorLessons(await response.json());
+      this.activeLessonPage = Math.min(
+        this.activeLessonPage,
+        Math.max(0, INSTRUCTOR_LESSONS.length - 1)
+      );
+      this.renderLessonPage();
+      console.log(
+        `[InstructorDashboard] Loaded ${INSTRUCTOR_LESSONS.length} lessons from Supabase`
+      );
+    } catch (error) {
+      console.error(
+        "[InstructorDashboard] Supabase content unavailable; using local fallback",
+        error
+      );
+    }
   }
 
   // ======================================================
@@ -551,12 +684,12 @@ export class InstructorDashboardSystem extends createSystem({
     const showConfirmation = (visible: boolean): void => {
       if (!endButton || !confirmRow) return;
       if (visible) {
-        endButton.classList.add("is-hidden");
-        confirmRow.classList.remove("is-hidden");
+        this.addClass(endButton, "is-hidden");
+        this.removeClass(confirmRow, "is-hidden");
         this.showStatusMessage("Confirm that you want to end the class");
       } else {
-        endButton.classList.remove("is-hidden");
-        confirmRow.classList.add("is-hidden");
+        this.removeClass(endButton, "is-hidden");
+        this.addClass(confirmRow, "is-hidden");
         this.showStatusMessage("Class remains active");
       }
       this.syncDocument(document);
@@ -652,7 +785,11 @@ export class InstructorDashboardSystem extends createSystem({
     this.bindSpatialButton(
       document,
       "quiz-monitor-close",
-      () => this.setQuizMonitorVisible(false)
+      () => {
+        this.setQuizMonitorVisible(false);
+        this.setLatestResultType("quick-challenge");
+        this.setLabMonitorAvailable(true);
+      }
     );
     this.renderQuizMonitor();
   }
@@ -670,9 +807,25 @@ export class InstructorDashboardSystem extends createSystem({
     const footer = document.getElementById(
       "quiz-monitor-footer"
     ) as UIKit.Text;
+    const timer = document.getElementById(
+      "quiz-monitor-timer"
+    ) as UIKit.Text;
     const answeredCount = this.quizStudents.filter(
       student => student.answered
     ).length;
+    const rankedStudents = [...this.quizStudents].sort((left, right) => {
+      const leftGroup = !left.answered ? 2 : left.correct ? 0 : 1;
+      const rightGroup = !right.answered ? 2 : right.correct ? 0 : 1;
+      if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+      if (left.answered && right.answered) {
+        return (left.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+          (right.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER);
+      }
+      return 0;
+    });
+    const winnerId = rankedStudents.find(
+      student => student.answered && student.correct
+    )?.studentId;
 
     question?.setProperties({
       text: this.activeQuiz?.question ?? "Waiting for question"
@@ -685,9 +838,12 @@ export class InstructorDashboardSystem extends createSystem({
         ? "Challenge finished. Final responses are shown."
         : "The list updates as students submit."
     });
+    timer?.setProperties({
+      text: finished ? "00:00" : this.getQuizCountdownText()
+    });
 
     for (let row = 1; row <= 10; row += 1) {
-      const student = this.quizStudents[row - 1];
+      const student = rankedStudents[row - 1];
       const rowElement = document.getElementById(`quiz-monitor-row-${row}`);
       const name = document.getElementById(
         `quiz-monitor-name-${row}`
@@ -698,20 +854,24 @@ export class InstructorDashboardSystem extends createSystem({
       const result = document.getElementById(
         `quiz-monitor-result-${row}`
       ) as UIKit.Text;
+      const responseTime = document.getElementById(
+        `quiz-monitor-time-${row}`
+      ) as UIKit.Text;
 
       if (!student) {
-        rowElement?.classList.add("quiz-row-hidden");
+        this.addClass(rowElement, "quiz-row-hidden");
         continue;
       }
 
-      rowElement?.classList.remove("quiz-row-hidden");
-      result?.classList.remove("quiz-result-correct", "quiz-result-wrong");
+      this.removeClass(rowElement, "quiz-row-hidden");
+      this.removeClass(result, "quiz-result-correct", "quiz-result-wrong");
       name?.setProperties({
         text: `${student.name}${student.seat ? `  ${student.seat}` : ""}`
       });
 
       if (!student.answered) {
         answer?.setProperties({ text: "Waiting for answer" });
+        responseTime?.setProperties({ text: "—" });
         result?.setProperties({ text: "UNANSWERED" });
         continue;
       }
@@ -725,15 +885,57 @@ export class InstructorDashboardSystem extends createSystem({
           ? `${optionPrefix}${student.selectedOption}`
           : "No answer"
       });
-      result?.setProperties({
-        text: student.correct ? "CORRECT" : "WRONG"
+      responseTime?.setProperties({
+        text: `${(student.responseTimeSeconds ?? 0).toFixed(1)}s`
       });
-      result?.classList.add(
+      result?.setProperties({
+        text:
+          student.studentId === winnerId
+            ? "WINNER"
+            : student.correct
+              ? "CORRECT"
+              : "WRONG"
+      });
+      this.addClass(
+        result,
         student.correct ? "quiz-result-correct" : "quiz-result-wrong"
       );
     }
 
     this.syncDocument(document);
+  }
+
+  private startQuizCountdown(): void {
+    this.stopQuizCountdown();
+    this.updateQuizCountdown();
+    this.quizCountdownTimer = window.setInterval(
+      () => this.updateQuizCountdown(),
+      250
+    );
+  }
+
+  private stopQuizCountdown(): void {
+    if (this.quizCountdownTimer !== undefined) {
+      window.clearInterval(this.quizCountdownTimer);
+      this.quizCountdownTimer = undefined;
+    }
+  }
+
+  private updateQuizCountdown(): void {
+    const timer = this.quizMonitorDocument?.getElementById(
+      "quiz-monitor-timer"
+    ) as UIKit.Text;
+    timer?.setProperties({ text: this.getQuizCountdownText() });
+    this.syncDocument(this.quizMonitorDocument);
+  }
+
+  private getQuizCountdownText(): string {
+    if (!this.activeQuiz) return "00:00";
+    const elapsed = Math.floor((Date.now() - this.activeQuiz.startedAt) / 1000);
+    const remaining = Math.max(0, this.activeQuiz.durationSeconds - elapsed);
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
   private bindSpatialButton(
@@ -855,6 +1057,9 @@ export class InstructorDashboardSystem extends createSystem({
         entityIndex
       ] as UIKitDocument;
 
+    this.resultsButtonDocument = document;
+    this.updateResultsButtonLabel();
+
     document
       ?.getElementById(
         "lab-results-open-button"
@@ -863,10 +1068,55 @@ export class InstructorDashboardSystem extends createSystem({
         "click",
         (event: any) => {
           event?.stopPropagation?.();
+          if (this.latestResultType === "quick-challenge") {
+            this.setLabMonitorAvailable(false);
+            this.renderQuizMonitor(true);
+            this.setQuizMonitorVisible(true);
+            return;
+          }
+
+          if (this.currentMode === "Lab Mode") {
+            // During an active game, the live socket rows are authoritative.
+            this.setLabMonitorVisible(true);
+            return;
+          }
+
+          // After Stop Game, never reveal cached live rows. Wait for the
+          // authoritative Supabase response, then open the monitor.
+          this.openLabMonitorAfterSavedResults = true;
+          this.setLabMonitorVisible(false);
           socket.emit("requestSavedLabResults");
-          this.setLabMonitorVisible(true);
         }
       );
+  }
+
+  private setLatestResultType(type: InstructorResultType): void {
+    this.latestResultType = type;
+    this.updateResultsButtonLabel();
+  }
+
+  private updateResultsButtonLabel(): void {
+    const icon = this.resultsButtonDocument?.getElementById(
+      "activity-results-icon"
+    ) as UIKit.Text | undefined;
+    const label = this.resultsButtonDocument?.getElementById(
+      "activity-results-label"
+    ) as UIKit.Text | undefined;
+
+    if (icon) {
+      icon.setProperties({
+        text: this.latestResultType === "game" ? "GAME" : "QUICK"
+      });
+    }
+    if (label) {
+      label.setProperties({
+        text:
+          this.latestResultType === "game"
+            ? "RESULTS"
+            : "CHALLENGE RESULTS"
+      });
+    }
+    this.syncDocument(this.resultsButtonDocument);
   }
 
   private connectMistakesPanel(
@@ -990,14 +1240,14 @@ export class InstructorDashboardSystem extends createSystem({
     this.connectButton(
       "class-mode-button",
       () => {
-        this.activateClassMode();
+        this.activateConfiguredTask("briefing");
       }
     );
 
     this.connectButton(
       "presentation-mode-button",
       () => {
-        this.activatePresentationMode();
+        this.activateConfiguredTask("presentation");
       }
     );
 
@@ -1011,7 +1261,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.connectButton(
       "quick-challenge-button",
       () => {
-        this.activateQuickChallenge();
+        this.activateConfiguredTask("challenge");
       }
     );
   }
@@ -1063,9 +1313,9 @@ export class InstructorDashboardSystem extends createSystem({
       // Keep one stable UIKit tree. Re-showing a page after display:none can
       // leave its text nodes and pointer targets unrendered in a WebXR panel.
       if (index === 0) {
-        page?.classList.remove("lesson-page-hidden");
+        this.removeClass(page, "lesson-page-hidden");
       } else {
-        page?.classList.add("lesson-page-hidden");
+        this.addClass(page, "lesson-page-hidden");
       }
     });
 
@@ -1102,8 +1352,8 @@ export class InstructorDashboardSystem extends createSystem({
 
     const setUnavailable = (button: any, unavailable: boolean): void => {
       if (!button) return;
-      if (unavailable) button.classList.add("scroll-button-unavailable");
-      else button.classList.remove("scroll-button-unavailable");
+      if (unavailable) this.addClass(button, "scroll-button-unavailable");
+      else this.removeClass(button, "scroll-button-unavailable");
     };
 
     setUnavailable(upButton, this.activeLessonPage === 0);
@@ -1111,9 +1361,24 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private activateConfiguredTask(action: InstructorTaskAction): void {
-    if (action === "presentation") this.activatePresentationMode();
-    if (action === "challenge") this.activateQuickChallenge();
-    if (action === "briefing") this.activateClassMode();
+    if (action === "presentation") {
+      const video = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
+        task => task.action === "presentation"
+      );
+      this.activatePresentationMode(video?.assetPath ?? undefined);
+    }
+    if (action === "challenge") {
+      const challenge = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
+        task => task.action === "challenge"
+      );
+      this.activateQuickChallenge(challenge?.activityId);
+    }
+    if (action === "briefing") {
+      const briefing = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
+        task => task.action === "briefing"
+      );
+      this.activateBriefingMode(briefing?.assetPath ?? undefined);
+    }
   }
 
   private applyConfiguredMenuContent(): void {
@@ -1204,11 +1469,12 @@ export class InstructorDashboardSystem extends createSystem({
        * Preserve the final lab report when the instructor ends
        * the activity. Incoming studentList updates replace each
        * working row with its returned/completed final values.
-       * Keep the report closed so its floating launcher appears
-       * on the instructor's left controller.
+       * Keep the report open while Stop Game returns students and persists
+       * their final snapshots. The floating launcher remains available after
+       * the instructor closes the report manually.
        */
       this.setLabMonitorAvailable(true);
-      this.setLabMonitorVisible(false);
+      this.setLabMonitorVisible(true);
     } else {
       this.setLabMonitorVisible(false);
       this.setLabMonitorAvailable(false);
@@ -1219,22 +1485,43 @@ export class InstructorDashboardSystem extends createSystem({
   // PRESENTATION MODE
   // ======================================================
 
-  private activatePresentationMode(): void {
+  private activatePresentationMode(assetPath?: string): void {
+    // UIKit can deliver the same physical selection as both pointerdown and
+    // click. Ignore the duplicate so entering the room never also presses
+    // Play on the controls that have just appeared.
+    const activationTime = performance.now();
+    if (activationTime - this.lastPresentationActivationAt < 1800) return;
+    this.lastPresentationActivationAt = activationTime;
+
     console.log(
       "[InstructorDashboard] Activating Presentation Mode"
     );
+
+    if (this.currentMode === "Presentation Mode") {
+      const playing = (window as any).presentationSystem?.toggleVideoPlayback?.();
+      socket.emit("instructorVideoPlayback", {
+        command: playing ? "play" : "pause",
+        currentTime:
+          (window as any).presentationSystem?.getVideoCurrentTime?.() ?? 0
+      });
+      this.showStatusMessage(playing ? "Video playing" : "Video paused");
+      this.setDashboardVisible(false);
+      return;
+    }
 
     socket.emit(
       "instructorSendAllToDestination",
       {
         destination:
-          "Presentation"
+          "Presentation",
+        assetPath,
+        mediaType: "video"
       }
     );
 
     (window as any)
       .presentationSystem
-      ?.enterPresentationMode?.();
+      ?.enterVideoPresentation?.(assetPath);
 
     this.setCurrentMode(
       "Presentation Mode"
@@ -1244,6 +1531,25 @@ export class InstructorDashboardSystem extends createSystem({
       "Presentation mode started"
     );
 
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateBriefingMode(assetPath?: string): void {
+    const activationTime = performance.now();
+    if (activationTime - this.lastPresentationActivationAt < 1800) return;
+    this.lastPresentationActivationAt = activationTime;
+
+    socket.emit("instructorSendAllToDestination", {
+      destination: "Presentation",
+      assetPath,
+      mediaType: "image"
+    });
+
+    (window as any).presentationSystem?.enterImagePresentation?.(assetPath);
+    this.setCurrentMode("Presentation Mode");
+    this.showStatusMessage("Briefing image opened");
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(false);
@@ -1284,6 +1590,10 @@ export class InstructorDashboardSystem extends createSystem({
     this.setCurrentMode(
       "Lab Mode"
     );
+    // A new launch is a new result set. Do not merge rows from an earlier
+    // Variable Sorting run while the current students are still working.
+    this.savedLabStudents = [];
+    this.setLatestResultType("game");
     this.hasLabResults = false;
     this.hasObservedActiveLabStudent = false;
 
@@ -1302,7 +1612,7 @@ export class InstructorDashboardSystem extends createSystem({
   // QUICK CHALLENGE
   // ======================================================
 
-  private activateQuickChallenge(): void {
+  private activateQuickChallenge(activityId?: number): void {
     console.log(
       "[InstructorDashboard] Starting Quick Challenge"
     );
@@ -1310,13 +1620,15 @@ export class InstructorDashboardSystem extends createSystem({
     socket.emit(
       "instructorQuickChallenge",
       {
-        durationSeconds: 60
+        durationSeconds: 60,
+        activityId
       }
     );
 
     this.setCurrentMode(
       "Quick Challenge"
     );
+    this.setLatestResultType("quick-challenge");
 
     this.showStatusMessage(
       "Quick challenge started"
@@ -1336,6 +1648,7 @@ export class InstructorDashboardSystem extends createSystem({
     });
 
     this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
     this.showStatusMessage("True or False game started");
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
@@ -1462,13 +1775,22 @@ export class InstructorDashboardSystem extends createSystem({
     const studentsByUser = new Map<number | string, DashboardStudent>();
 
     for (const student of this.savedLabStudents) {
-      studentsByUser.set(student.userId ?? student.id, student);
+      studentsByUser.set(student.seat ?? student.userId ?? student.id, student);
     }
 
-    // Prefer current live data for connected students. If a student logs out,
-    // their saved Supabase result remains available in savedLabStudents.
+    // Live progress is authoritative only while the student is actively in the
+    // game. After return/completion, keep the final Supabase snapshot.
     for (const student of this.latestStudents) {
-      studentsByUser.set(student.userId ?? student.id, student);
+      const key = student.seat ?? student.userId ?? student.id;
+      const saved = studentsByUser.get(key);
+      const activelyWorking =
+        student.mode === "Game Mode" &&
+        student.labStatus !== "completed" &&
+        student.labStatus !== "returned" &&
+        student.labStatus !== "instructor_return";
+      if (!saved || activelyWorking || !saved.savedResult) {
+        studentsByUser.set(key, student);
+      }
     }
 
     const students =
@@ -1524,10 +1846,19 @@ export class InstructorDashboardSystem extends createSystem({
 
     const studentsByUser = new Map<number | string, DashboardStudent>();
     for (const student of this.savedLabStudents) {
-      studentsByUser.set(student.userId ?? student.id, student);
+      studentsByUser.set(student.seat ?? student.userId ?? student.id, student);
     }
     for (const student of this.latestStudents) {
-      studentsByUser.set(student.userId ?? student.id, student);
+      const key = student.seat ?? student.userId ?? student.id;
+      const saved = studentsByUser.get(key);
+      const activelyWorking =
+        student.mode === "Game Mode" &&
+        student.labStatus !== "completed" &&
+        student.labStatus !== "returned" &&
+        student.labStatus !== "instructor_return";
+      if (!saved || activelyWorking || !saved.savedResult) {
+        studentsByUser.set(key, student);
+      }
     }
 
     const students =
@@ -1544,13 +1875,26 @@ export class InstructorDashboardSystem extends createSystem({
         )
         .slice(0, 5);
 
+    const traceRows = students.map(student => ({
+      source: student.savedResult ? "saved" : "live",
+      userId: student.userId,
+      seat: student.seat,
+      mode: student.mode,
+      durationSeconds: student.durationSeconds ?? 0,
+      status: student.labStatus,
+    }));
+    const traceSignature = JSON.stringify(traceRows);
+    if (traceSignature !== this.lastLabMonitorTraceSignature) {
+      this.lastLabMonitorTraceSignature = traceSignature;
+      console.log("[LabTrace][Client] monitor merge", traceRows);
+    }
+
     /* UIKit can retain old text when a hidden row is shown again. */
     const setText = (element: UIKit.Text | undefined, value: string): void => {
       if (!element) {
         return;
       }
       element.setProperties({ text: value });
-      (element as unknown as { textContent: string }).textContent = value;
     };
 
     for (let index = 0; index < 5; index += 1) {
@@ -1563,13 +1907,13 @@ export class InstructorDashboardSystem extends createSystem({
           );
 
       if (student) {
-        rowElement?.classList.remove(
-          "student-row-hidden"
-        );
+        if (rowElement?.classList.contains("student-row-hidden")) {
+          this.removeClass(rowElement, "student-row-hidden");
+        }
       } else {
-        rowElement?.classList.add(
-          "student-row-hidden"
-        );
+        if (rowElement && !rowElement.classList.contains("student-row-hidden")) {
+          this.addClass(rowElement, "student-row-hidden");
+        }
       }
 
       const name =
@@ -1640,10 +1984,11 @@ export class InstructorDashboardSystem extends createSystem({
             );
 
       const statusLabel =
-        student.labStatus === "completed" ||
-        student.labStatus === "returned" ||
-        student.labStatus === "instructor_return"
+        student.labStatus === "completed"
             ? "Finished"
+            : student.labStatus === "returned" ||
+              student.labStatus === "instructor_return"
+              ? "Returned"
             : student.isDisconnected
               ? "Offline"
             : student.mode === "Game Mode"
@@ -1658,11 +2003,25 @@ export class InstructorDashboardSystem extends createSystem({
       setText(correct, `OK ${student.correctAnswers ?? 0}`);
       setText(mistakes, `X ${student.wrongAnswers ?? 0}`);
 
-      const duration =
-        Math.max(
-          0,
-          student.durationSeconds ?? 0
-        );
+      const sharedActivityDuration =
+        this.labActivityStartedAt !== null &&
+        student.mode === "Game Mode" &&
+        student.labStatus !== "completed" &&
+        student.labStatus !== "returned" &&
+        student.labStatus !== "instructor_return"
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - this.labActivityStartedAt) / 1000
+              )
+            )
+          : 0;
+
+      const duration = Math.max(
+        0,
+        student.durationSeconds ?? 0,
+        sharedActivityDuration
+      );
       const minutes =
         Math.floor(duration / 60);
       const seconds =
@@ -1670,6 +2029,16 @@ export class InstructorDashboardSystem extends createSystem({
 
       setText(time, `${minutes}:${String(seconds).padStart(2, "0")}`);
       setText(status, statusLabel);
+
+      console.log("[LabTrace][Client] rendered row", {
+        row,
+        userId: student.userId,
+        seat: student.seat,
+        source: student.savedResult ? "saved" : "live",
+        durationSeconds: duration,
+        renderedTime: `${minutes}:${String(seconds).padStart(2, "0")}`,
+        status: statusLabel,
+      });
     }
 
     this.syncDocument(
@@ -1714,7 +2083,10 @@ export class InstructorDashboardSystem extends createSystem({
     this.labActivityStartedAt = Date.now();
     this.updateLabActivityControl();
     this.labActivityTimer = window.setInterval(
-      () => this.updateLabActivityControl(),
+      () => {
+        this.updateLabActivityControl();
+        this.updateLabMonitor();
+      },
       1000
     );
   }
@@ -1767,8 +2139,8 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     const button = this.dashboardDocument.getElementById("lab-mode-button");
-    if (active) button?.classList.add("game-card-active");
-    else button?.classList.remove("game-card-active");
+    if (active) this.addClass(button, "game-card-active");
+    else this.removeClass(button, "game-card-active");
 
     this.syncDocument(this.dashboardDocument);
 
@@ -1819,9 +2191,7 @@ export class InstructorDashboardSystem extends createSystem({
               buttonId
             );
 
-        button?.classList.remove(
-          "mode-button-active"
-        );
+        this.removeClass(button, "mode-button-active");
       }
     );
 
@@ -1848,13 +2218,10 @@ export class InstructorDashboardSystem extends createSystem({
         "quick-challenge-button";
     }
 
-    this.dashboardDocument
-      .getElementById(
-        activeButtonId
-      )
-      ?.classList.add(
-        "mode-button-active"
-      );
+    this.addClass(
+      this.dashboardDocument.getElementById(activeButtonId),
+      "mode-button-active"
+    );
 
     this.sync();
   }
@@ -1967,6 +2334,25 @@ export class InstructorDashboardSystem extends createSystem({
       "function"
     ) {
       document.update();
+    }
+  }
+
+  /** UIKit's classList throws when add/remove is called redundantly. */
+  private addClass(element: any, ...classNames: string[]): void {
+    if (!element?.classList) return;
+    for (const className of classNames) {
+      if (!element.classList.contains(className)) {
+        element.classList.add(className);
+      }
+    }
+  }
+
+  private removeClass(element: any, ...classNames: string[]): void {
+    if (!element?.classList) return;
+    for (const className of classNames) {
+      if (element.classList.contains(className)) {
+        element.classList.remove(className);
+      }
     }
   }
 

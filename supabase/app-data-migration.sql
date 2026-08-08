@@ -21,8 +21,14 @@ create table if not exists public.game_results (
     legacy_result_id bigint unique,
     user_id bigint not null references public.app_users(id) on delete cascade,
     game_name text not null,
+    student_name text not null default '',
     score integer not null default 0,
     duration_seconds integer not null default 0,
+    correct_answers integer not null default 0,
+    wrong_answers integer not null default 0,
+    completed_exercises integer not null default 0,
+    total_exercises integer not null default 12,
+    accuracy numeric(5,2) not null default 0,
     status text not null
         check (status in ('completed', 'instructor_return', 'disconnected')),
     completed_at timestamptz not null default now()
@@ -37,6 +43,14 @@ add column if not exists legacy_user_id bigint unique;
 
 alter table public.game_results
 add column if not exists legacy_result_id bigint unique;
+
+alter table public.game_results
+add column if not exists student_name text not null default '',
+add column if not exists correct_answers integer not null default 0,
+add column if not exists wrong_answers integer not null default 0,
+add column if not exists completed_exercises integer not null default 0,
+add column if not exists total_exercises integer not null default 12,
+add column if not exists accuracy numeric(5,2) not null default 0;
 
 alter table public.participants
 add column if not exists user_id bigint

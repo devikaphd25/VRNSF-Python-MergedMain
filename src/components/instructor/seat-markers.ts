@@ -21,7 +21,28 @@ const markers = new Map<string, Sprite>();
 let playerRef: any = null;
 let isFacingStage = false;
 let markersSuppressed = false;
+let markerTheme: "default" | "astronaut" = "default";
 const FACING_THRESHOLD = 0.5;
+
+const astronautImage = new Image();
+astronautImage.src = "./images/markers/astronaut-seat-marker.png";
+astronautImage.onload = () => {
+  if (markerTheme === "astronaut") refreshAllMarkerTextures();
+};
+
+function roundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, width, height, radius);
+  else ctx.rect(x, y, width, height);
+  ctx.fill();
+}
 
 function createTexture(name: string, mode: string) {
   const canvas = document.createElement("canvas");
@@ -37,35 +58,47 @@ function createTexture(name: string, mode: string) {
       ? "#22c55e"
       : "#2196f3";
 
-  // circle
-  ctx.beginPath();
-  ctx.arc(256, 150, 90, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
+  if (markerTheme === "astronaut") {
+    if (astronautImage.complete && astronautImage.naturalWidth > 0) {
+      ctx.drawImage(astronautImage, 126, 10, 260, 260);
+    }
 
-  ctx.lineWidth = 12;
-  ctx.strokeStyle = color;
-  ctx.stroke();
-
-  // avatar
-  ctx.fillStyle = "#555";
-  ctx.beginPath();
-  ctx.arc(256, 140, 38, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(256, 205, 55, Math.PI, 0);
-  ctx.fill();
+    // A simple holographic base provides position without adding geometry.
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.9)";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.ellipse(256, 275, 102, 25, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(103, 232, 249, 0.45)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(256, 275, 72, 16, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    // Original lightweight classroom avatar.
+    ctx.beginPath();
+    ctx.arc(256, 150, 90, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    ctx.fillStyle = "#555";
+    ctx.beginPath();
+    ctx.arc(256, 140, 38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(256, 205, 55, Math.PI, 0);
+    ctx.fill();
+  }
 
   // name box
   ctx.fillStyle = "#111827";
-  // @ts-ignore
-  if (ctx.roundRect) {
-    // @ts-ignore
-    ctx.roundRect(120, 300, 272, 70, 20);
-    ctx.fill();
-  } else {
-    ctx.fillRect(120, 300, 272, 70);
+  roundedRect(ctx, 100, 315, 312, 76, 20);
+  if (markerTheme === "astronaut") {
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#22d3ee";
+    ctx.stroke();
   }
 
   ctx.fillStyle = "white";
@@ -74,9 +107,28 @@ function createTexture(name: string, mode: string) {
 
   // ✅ Show actual name (not ID)
   const displayName = name.length > 8 ? name.substring(0, 8) + "..." : name;
-  ctx.fillText(displayName, 256, 345);
+  ctx.fillText(displayName, 256, 363);
 
   return new CanvasTexture(canvas);
+}
+
+function refreshAllMarkerTextures(): void {
+  markers.forEach(marker => {
+    const material = marker.material as SpriteMaterial;
+    material.map?.dispose();
+    material.map = createTexture(
+      String(marker.userData.displayName ?? "Student"),
+      String(marker.userData.mode ?? "Classroom Mode")
+    );
+    material.needsUpdate = true;
+  });
+}
+
+export function setSeatMarkerTheme(theme: "default" | "astronaut"): void {
+  if (markerTheme === theme) return;
+  markerTheme = theme;
+  refreshAllMarkerTextures();
+  console.log(`[SeatMarkers] Theme changed to ${theme}`);
 }
 
 // ==========================================
@@ -179,6 +231,8 @@ export function updateSeatMarkers(
       );
 
       marker.scale.set(0.65, 0.65, 0.65);
+      marker.userData.displayName = displayName;
+      marker.userData.mode = student.mode;
 
       // ✅ Start visible by default
       marker.visible = !markersSuppressed;
@@ -188,6 +242,9 @@ export function updateSeatMarkers(
 
       console.log(`[SeatMarkers] ✅ Created marker for ${displayName}`);
     }
+
+    marker.userData.displayName = displayName;
+    marker.userData.mode = student.mode;
 
     marker.position.set(
       pos.x,

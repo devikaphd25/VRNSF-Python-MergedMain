@@ -17,20 +17,20 @@
 
   .results-icon {
     color: #d1fae5;
-    font-size: 3.6;
+    font-size: 2.2;
     font-weight: bold;
     text-align: center;
   }
 
   .results-label {
     color: white;
-    font-size: 1.25;
+    font-size: 0.95;
     font-weight: bold;
     text-align: center;
   }
 </style>
 
 <Button id="lab-results-open-button" class="results-button">
-  <Text class="results-icon">LAB</Text>
-  <Text class="results-label">RESULTS</Text>
+  <Text id="activity-results-icon" class="results-icon">GAME</Text>
+  <Text id="activity-results-label" class="results-label">RESULTS</Text>
 </Button>

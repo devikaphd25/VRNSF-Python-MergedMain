@@ -92,7 +92,10 @@ the table structure.
 | `quiz_questions` | Stores multiple-choice questions and their available answers. |
 | `quiz_responses` | Stores each student's selected answer and correctness result. |
 | `app_users` | Stores permanent application identities, full names, roles, device IDs, fixed seats, and current locations. |
-| `game_results` | Stores Python lab scores, duration, completion status, and completion date. |
+| `game_results` | Stores one result snapshot per student, including name, correct answers, mistakes, completed/total progress, score, accuracy, duration, status, and completion date. |
+| `learning_weeks` | Stores each teaching week, its title, publication state, and description. |
+| `week_lessons` | Stores the three lessons belonging to each teaching week. |
+| `week_activities` | Stores videos, challenges, and briefings for individual lessons, plus week-level games. A week-level game has no `lesson_id`. |
 
 ### Prerequisite core schema
 
@@ -113,6 +116,7 @@ The migrations are located in:
 
 - `supabase/room-code-migration.sql`
 - `supabase/app-data-migration.sql`
+- `supabase/weekly-content-migration.sql`
 
 Run them in the Supabase SQL Editor in this exact order:
 
@@ -126,6 +130,10 @@ Run them in the Supabase SQL Editor in this exact order:
    - creates `game_results` for scores, individual durations, and result status;
    - links classroom participants to permanent application users; and
    - enables Row Level Security for server-managed application data.
+3. `supabase/weekly-content-migration.sql`
+   - creates the weekly curriculum and activity tables;
+   - connects quiz questions and game results to their weekly activity; and
+   - lets each classroom record the week selected by the instructor.
 
 Do not reverse this order. `app-data-migration.sql` references the
 `participants` table prepared by the core schema and room-code migration.
@@ -139,6 +147,10 @@ Do not reverse this order. `app-data-migration.sql` references the
 5. Create another query and copy all of
    `supabase/app-data-migration.sql` into it.
 6. Select **Run** and wait for a successful result.
+7. Create a third query and copy all of
+   `supabase/weekly-content-migration.sql` into it.
+8. Select **Run** and confirm that `learning_weeks`, `week_lessons`, and
+   `week_activities` appear in the Table Editor.
 
 ### Database environment configuration
 

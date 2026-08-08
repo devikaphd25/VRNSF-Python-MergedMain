@@ -49,7 +49,9 @@ if (typeof socket !== 'undefined') {
 import {
   updateSeatMarkers,
   updateMarkerVisibility,
-  hideAllMarkers
+  hideAllMarkers,
+  showAllMarkers,
+  setSeatMarkerTheme
 } from "./components/instructor/seat-markers";
 import { RaiseHandNotificationSystem }
 from "./systems/raise-hand-notification.system";
@@ -968,38 +970,11 @@ World.create(
       (riserName) => applySimpleFloorMaterial(envMesh.getObjectByName(riserName) ?? null)
     );
 
-    // Seal both physical ends of every tier. Add the caps in world space so
-    // their dimensions match the measured riser bounds even when envMesh has
-    // been scaled. This prevents detached or undersized end pieces.
-    envMesh.updateWorldMatrix(true, true);
+    // Keep this named group for presentation/challenge visibility handling,
+    // but do not add outer tier panels. The previous end-cap geometry looked
+    // like detached floating walls when viewed from the side.
     const tierEndCaps = new THREE.Group();
     tierEndCaps.name = "NASA_Sealed_Tier_Ends";
-    ["Riser_Row2", "Riser_Row3", "Riser_Row4", "Riser_Row5"].forEach(
-      (riserName, rowIndex) => {
-        const riser = envMesh.getObjectByName(riserName);
-        if (!riser) return;
-        const bounds = new THREE.Box3().setFromObject(riser);
-        const size = bounds.getSize(new THREE.Vector3());
-        const center = bounds.getCenter(new THREE.Vector3());
-        const geometry = new THREE.BoxGeometry(
-          0.055,
-          Math.max(0.08, size.y),
-          Math.max(0.12, size.z)
-        );
-        [-1, 1].forEach((side) => {
-          const cap = new THREE.Mesh(geometry, simpleFloorMaterial);
-          cap.name = `NASA_Tier_End_${rowIndex + 2}_${side < 0 ? "L" : "R"}`;
-          cap.position.set(
-            side < 0 ? bounds.min.x + 0.026 : bounds.max.x - 0.026,
-            center.y,
-            center.z
-          );
-          cap.receiveShadow = true;
-          cap.frustumCulled = false;
-          tierEndCaps.add(cap);
-        });
-      }
-    );
     scene.add(tierEndCaps);
 
     // Follow the real curved front edge of each riser. A straight accent bar
@@ -1192,13 +1167,16 @@ World.create(
     const quickChallengeEnvironment = new THREE.Group();
     quickChallengeEnvironment.name = "QuickChallengeEnvironment";
     quickChallengeEnvironment.visible = false;
+    // Keep this environment anchored to the classroom world so every student
+    // enters the same quiz room while retaining their assigned seat position.
+    quickChallengeEnvironment.position.set(0, 0, 0);
 
     const quizBackdropMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       side: THREE.BackSide
     });
     const quizBackdrop = new THREE.Mesh(
-      new THREE.SphereGeometry(7.5, 64, 40),
+      new THREE.SphereGeometry(30, 64, 40),
       quizBackdropMaterial
     );
     quizBackdrop.rotation.y = Math.PI;
@@ -1269,7 +1247,7 @@ World.create(
     quickChallengeEnvironment.add(ambientParticles);
 
     new THREE.TextureLoader().load(
-      "./textures/quick-challenge-horizon-room.png",
+      "./textures/quiz/quick-challenge-space-360.png",
       texture => {
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -1278,7 +1256,7 @@ World.create(
       },
       undefined,
       error => console.error(
-        "[Quick Challenge] Could not load the room panorama:",
+        "[Quick Challenge] Could not load the space panorama:",
         error
       )
     );
@@ -1301,19 +1279,21 @@ World.create(
     const setQuickChallengeEnvironmentVisible = (visible: boolean): void => {
       if (!isStudent) return;
 
-      if (visible) {
-        camera.getWorldPosition(quickChallengeEnvironment.position);
-        quickChallengeEnvironment.rotation.set(0, camera.rotation.y, 0);
-      }
-
       quickChallengeEnvironment.visible = visible;
       envMesh.visible = !visible;
       instructorMesh.visible = !visible;
-      if (visible) hideAllMarkers();
+      // Tier end caps are attached directly to the scene rather than envMesh,
+      // so they must be hidden explicitly with the rest of the classroom.
+      tierEndCaps.visible = !visible;
+      // Seat markers remain visible in the shared challenge room so each
+      // student keeps the same classroom identity and assigned place.
+      setSeatMarkerTheme(visible ? "astronaut" : "default");
+      if (visible) showAllMarkers();
 
       quickChallengeEnvironment.updateMatrixWorld(true);
       envMesh.updateMatrixWorld(true);
       instructorMesh.updateMatrixWorld(true);
+      tierEndCaps.updateMatrixWorld(true);
     };
 
     window.addEventListener(
@@ -1577,9 +1557,8 @@ World.create(
     function updateMarkersLoop(): void {
       if (player) {
         if (
-          (window as any).isMenuOpen ||
-          (window as any).isPresentationOpen ||
-          (window as any).isQuickChallengeOpen
+          (window as any).isMenuOpen &&
+          !(window as any).isPresentationOpen
         ) {
           hideAllMarkers();
         } else {
@@ -1655,6 +1634,7 @@ World.create(
 
       if (studentResultEntity.object3D) {
         camera.add(studentResultEntity.object3D);
+        studentResultEntity.object3D.pointerEventsOrder = 16000;
         studentResultEntity.object3D.position.set(0, -0.03, -1.45);
         studentResultEntity.object3D.visible = false;
         studentResultEntity.object3D.frustumCulled = false;
@@ -1676,8 +1656,10 @@ World.create(
 
       if (quickChallengeEntity.object3D) {
         camera.add(quickChallengeEntity.object3D);
-        quickChallengeEntity.object3D.pointerEventsOrder = 15000;
-        quickChallengeEntity.object3D.position.set(0, -0.02, -1.65);
+        quickChallengeEntity.object3D.pointerEventsOrder = 50000;
+        // Keep the quiz within a comfortable controller-ray distance in a
+        // physical headset while retaining enough space for all four answers.
+        quickChallengeEntity.object3D.position.set(0, -0.02, -1.35);
         quickChallengeEntity.object3D.visible = false;
         quickChallengeEntity.object3D.frustumCulled = false;
       }
@@ -1741,6 +1723,7 @@ World.create(
         instructorMenuButtonObject.name = "InstructorMenuButton";
         instructorMenuButtonObject.visible = true;
         instructorMenuButtonObject.frustumCulled = false;
+        (window as any).instructorMenuButtonObject = instructorMenuButtonObject;
         console.log("[Instructor Menu] Menu entity created.");
       }
     }
@@ -1753,6 +1736,7 @@ World.create(
           (window as any)
             .isInstructorDashboardOpen
         );
+      const presentationOpen = Boolean((window as any).isPresentationOpen);
       const anotherInstructorPanelOpen =
         Boolean(
           (window as any)
@@ -1769,6 +1753,7 @@ World.create(
       const targetParent =
         renderer.xr.isPresenting &&
         !dashboardOpen &&
+        !presentationOpen &&
         !anotherInstructorPanelOpen
           ? world.player.raySpaces.right
           : camera;
@@ -1800,6 +1785,7 @@ World.create(
 
       instructorMenuButtonObject.visible =
         !dashboardOpen &&
+        !presentationOpen &&
         !anotherInstructorPanelOpen;
       instructorMenuButtonObject.updateMatrix();
       instructorMenuButtonObject.updateMatrixWorld(true);
@@ -1810,6 +1796,8 @@ World.create(
           : "IWSDK right controller ray"
       );
     }
+
+    (window as any).refreshInstructorMenuButton = attachInstructorMenuToCamera;
 
     if (isInstructor) {
       requestAnimationFrame(() => attachInstructorMenuToCamera());
@@ -1907,6 +1895,7 @@ World.create(
     let instructorSaveReportEntity: any = null;
     let instructorQuizMonitorEntity: any = null;
     let instructorQuizMonitorObject: THREE.Object3D | null = null;
+    let instructorVideoControlsEntity: any = null;
     // Place the dashboard from the instructor stage anchor rather than the
     // table model. This keeps it at reachable eye level and a comfortable ray
     // distance even when the classroom model is rescaled or replaced.
@@ -1915,6 +1904,28 @@ World.create(
       .add(new THREE.Vector3(0, 1.48, 1.55));
 
     if (isInstructor) {
+      instructorVideoControlsEntity = world
+        .createTransformEntity()
+        .addComponent(PanelUI, {
+          config: "./ui/instructor-video-controls.json",
+          maxWidth: 1.75,
+          maxHeight: 0.34
+        })
+        .addComponent(RayInteractable);
+
+      if (instructorVideoControlsEntity.object3D) {
+        // Keep video controls fixed in the presentation room. Parenting them
+        // to the camera made the panel move whenever the headset turned.
+        world.scene.add(instructorVideoControlsEntity.object3D);
+        instructorVideoControlsEntity.object3D.position.set(0, -100, 3.35);
+        instructorVideoControlsEntity.object3D.rotation.set(0, Math.PI, 0);
+        instructorVideoControlsEntity.object3D.pointerEventsOrder = 15000;
+        instructorVideoControlsEntity.object3D.visible = false;
+        instructorVideoControlsEntity.object3D.frustumCulled = false;
+        (window as any).instructorVideoControlsObject =
+          instructorVideoControlsEntity.object3D;
+      }
+
       instructorSaveReportEntity = world
         .createTransformEntity()
         .addComponent(PanelUI, {
@@ -2002,6 +2013,13 @@ World.create(
           instructorLabMonitorObject.position.set(0, -100, -2.85);
           instructorLabMonitorObject.updateMatrixWorld(true);
         }
+
+        // Refresh the shared floating Results launcher. It must not sit on
+        // top of the live challenge monitor, but should return after X closes
+        // the monitor.
+        (window as any).setInstructorLabMonitorAvailable?.(
+          Boolean((window as any).isInstructorLabMonitorAvailable)
+        );
 
         attachInstructorMenuToCamera();
         (window as any).refreshInstructorHandNotification?.();
@@ -2146,7 +2164,8 @@ World.create(
             instructorLabMonitorButtonObject.position.set(
               -0.38,
               available &&
-              !(window as any).isInstructorLabMonitorOpen
+              !(window as any).isInstructorLabMonitorOpen &&
+              !(window as any).isInstructorQuizMonitorOpen
                 ? -0.2
                 : -100,
               -0.9
@@ -2155,7 +2174,8 @@ World.create(
             instructorLabMonitorButtonObject.position.set(
               0,
               available &&
-              !(window as any).isInstructorLabMonitorOpen
+              !(window as any).isInstructorLabMonitorOpen &&
+              !(window as any).isInstructorQuizMonitorOpen
                 ? 0.08
                 : -100,
               -0.22
@@ -2174,7 +2194,8 @@ World.create(
           );
           instructorLabMonitorButtonObject.visible =
             available &&
-            !(window as any).isInstructorLabMonitorOpen;
+            !(window as any).isInstructorLabMonitorOpen &&
+            !(window as any).isInstructorQuizMonitorOpen;
           instructorLabMonitorButtonObject.updateMatrixWorld(
             true
           );

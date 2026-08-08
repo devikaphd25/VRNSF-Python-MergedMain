@@ -120,6 +120,11 @@ export interface GameResultInput {
   gameName?: string;
   score?: number;
   durationSeconds?: number;
+  correctAnswers?: number;
+  wrongAnswers?: number;
+  completedExercises?: number;
+  totalExercises?: number;
+  accuracy?: number;
   status: Exclude<LabStatus, "working">;
 }
 
