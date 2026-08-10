@@ -33,6 +33,7 @@ interface QuickChallengeEndedPayload {
   winnerStudentId?: string | null;
   winnerName?: string | null;
   winnerTimeSeconds?: number | null;
+  stoppedByInstructor?: boolean;
 }
 
 export class QuickChallengeSystem extends createSystem({
@@ -392,6 +393,12 @@ export class QuickChallengeSystem extends createSystem({
     }
 
     this.stopTimer();
+    if (payload.stoppedByInstructor) {
+      this.challenge = undefined;
+      this.setResultMode(false);
+      this.setVisible(false);
+      return;
+    }
     const winnerTime = Number(payload.winnerTimeSeconds);
     const winnerMessage = payload.winnerName
       ? `Winner: ${payload.winnerName}${

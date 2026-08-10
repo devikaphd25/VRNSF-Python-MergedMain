@@ -163,11 +163,14 @@ export class RaiseHandNotificationSystem extends createSystem({
           Boolean(this.cancelButton)
       }
     );
-    if (entity.object3D) {
-    this.createNotificationHandIcon(entity.object3D);
-    }
+    // The compact banner uses a lightweight UIKit hand glyph. Avoid adding a
+    // second GLB to the camera HUD during video playback.
     this.unmuteButton?.addEventListener(
       "click",
+      this.onUnmuteClick
+    );
+    this.unmuteButton?.addEventListener(
+      "pointerdown",
       this.onUnmuteClick
     );
 
@@ -365,17 +368,17 @@ export class RaiseHandNotificationSystem extends createSystem({
 
     this.setText(
       this.studentNameElement,
-      this.currentStudentName
+      `✋ ${this.currentStudentName} · ${this.currentStudentSeat} raised their hand`
     );
 
     this.setText(
       this.messageElement,
-      "raised their hand"
+      ""
     );
 
     this.setText(
       this.seatElement,
-      `Seat: ${this.currentStudentSeat}`
+      ""
     );
 
     this.setText(
@@ -385,7 +388,7 @@ export class RaiseHandNotificationSystem extends createSystem({
 
     this.setText(
       this.titleElement,
-      "Raise Hand"
+      ""
     );
 
     this.refreshVisibility();

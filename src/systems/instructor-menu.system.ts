@@ -177,6 +177,9 @@ export class InstructorDashboardSystem extends createSystem({
   private activeQuiz?: InstructorQuizPayload;
   private quizStudents: QuizMonitorStudent[] = [];
   private quizCountdownTimer?: number;
+  private quizMonitorPage = 0;
+  private readonly quizMonitorPageSize = 10;
+  private quizMonitorFinished = false;
   private resultsButtonDocument?: UIKitDocument;
   private latestResultType: InstructorResultType = "game";
 
@@ -189,12 +192,15 @@ export class InstructorDashboardSystem extends createSystem({
   private savedLabStudents: DashboardStudent[] = [];
   private hasLabResults = false;
   private hasObservedActiveLabStudent = false;
+  private labResultsFinalized = false;
   private openLabMonitorAfterSavedResults = false;
   private activeLessonPage = 0;
   private labActivityStartedAt: number | null = null;
   private labActivityTimer?: number;
   private labActivityFinalElapsedSeconds = 0;
   private lastLabMonitorTraceSignature = "";
+  private labMonitorPage = 0;
+  private readonly labMonitorPageSize = 5;
 
   // ======================================================
   // INITIALIZATION
@@ -206,6 +212,14 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     this.connectSocketEvents();
+    (window as any).advancePresentationToChallenge = () => {
+      const challenge = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
+        task => task.action === "challenge"
+      );
+      (window as any).presentationSystem?.exitPresentationMode?.();
+      socket.emit("instructorReturnAllToClass");
+      window.setTimeout(() => this.activateQuickChallenge(challenge?.activityId), 250);
+    };
 
     this.queries.saveOverlay.subscribe(
       "qualify",
@@ -344,6 +358,7 @@ export class InstructorDashboardSystem extends createSystem({
         );
 
         if (this.hasLabResults || this.hasObservedActiveLabStudent) {
+          this.labResultsFinalized = true;
           this.setLatestResultType("game");
           this.hasLabResults = true;
           // The server emits this event only after all Stop Game result writes
@@ -476,6 +491,8 @@ export class InstructorDashboardSystem extends createSystem({
       "quickChallengeStartedForInstructor",
       (data: InstructorQuizPayload) => {
         this.activeQuiz = data;
+        this.quizMonitorPage = 0;
+        this.quizMonitorFinished = false;
         this.quizStudents = (data.students ?? []).map(student => ({
           ...student,
           answered: false,
@@ -529,6 +546,7 @@ export class InstructorDashboardSystem extends createSystem({
       "quickChallengeEnded",
       () => {
         this.stopQuizCountdown();
+        this.quizMonitorFinished = true;
         this.setCurrentMode("Classroom Mode");
         this.showStatusMessage("Quick challenge finished");
         this.renderQuizMonitor(true);
@@ -770,6 +788,20 @@ export class InstructorDashboardSystem extends createSystem({
       }
     );
 
+    this.bindSpatialButton(document, "lab-monitor-up-button", () => {
+      this.labMonitorPage = Math.max(0, this.labMonitorPage - 1);
+      this.updateLabMonitor();
+    });
+
+    this.bindSpatialButton(document, "lab-monitor-down-button", () => {
+      const totalPages = Math.max(
+        1,
+        Math.ceil(this.getRankedLabStudents().length / this.labMonitorPageSize)
+      );
+      this.labMonitorPage = Math.min(totalPages - 1, this.labMonitorPage + 1);
+      this.updateLabMonitor();
+    });
+
     this.updateLabMonitor();
     this.updateLabActivityControl();
     socket.emit("requestSavedLabResults");
@@ -791,10 +823,27 @@ export class InstructorDashboardSystem extends createSystem({
         this.setLabMonitorAvailable(true);
       }
     );
+    this.bindSpatialButton(document, "quiz-monitor-stop", () => {
+      if (!this.activeQuiz || this.quizMonitorFinished) return;
+      socket.emit("stopQuickChallenge", { quizId: this.activeQuiz.id });
+      this.showStatusMessage("Stopping quick challenge...");
+    });
+    this.bindSpatialButton(document, "quiz-monitor-up", () => {
+      this.quizMonitorPage = Math.max(0, this.quizMonitorPage - 1);
+      this.renderQuizMonitor();
+    });
+    this.bindSpatialButton(document, "quiz-monitor-down", () => {
+      const totalPages = Math.max(
+        1,
+        Math.ceil(this.quizStudents.length / this.quizMonitorPageSize)
+      );
+      this.quizMonitorPage = Math.min(totalPages - 1, this.quizMonitorPage + 1);
+      this.renderQuizMonitor();
+    });
     this.renderQuizMonitor();
   }
 
-  private renderQuizMonitor(finished = false): void {
+  private renderQuizMonitor(finished = this.quizMonitorFinished): void {
     const document = this.quizMonitorDocument;
     if (!document) return;
 
@@ -809,6 +858,9 @@ export class InstructorDashboardSystem extends createSystem({
     ) as UIKit.Text;
     const timer = document.getElementById(
       "quiz-monitor-timer"
+    ) as UIKit.Text;
+    const pageLabel = document.getElementById(
+      "quiz-monitor-page"
     ) as UIKit.Text;
     const answeredCount = this.quizStudents.filter(
       student => student.answered
@@ -826,6 +878,21 @@ export class InstructorDashboardSystem extends createSystem({
     const winnerId = rankedStudents.find(
       student => student.answered && student.correct
     )?.studentId;
+    const correctRankByStudent = new Map(
+      rankedStudents
+        .filter(student => student.answered && student.correct)
+        .map((student, index) => [student.studentId, index + 1])
+    );
+    const totalPages = Math.max(
+      1,
+      Math.ceil(rankedStudents.length / this.quizMonitorPageSize)
+    );
+    this.quizMonitorPage = Math.min(this.quizMonitorPage, totalPages - 1);
+    const pageStart = this.quizMonitorPage * this.quizMonitorPageSize;
+    const pageStudents = rankedStudents.slice(
+      pageStart,
+      pageStart + this.quizMonitorPageSize
+    );
 
     question?.setProperties({
       text: this.activeQuiz?.question ?? "Waiting for question"
@@ -841,9 +908,12 @@ export class InstructorDashboardSystem extends createSystem({
     timer?.setProperties({
       text: finished ? "00:00" : this.getQuizCountdownText()
     });
+    pageLabel?.setProperties({
+      text: `PAGE ${this.quizMonitorPage + 1} / ${totalPages}`
+    });
 
     for (let row = 1; row <= 10; row += 1) {
-      const student = rankedStudents[row - 1];
+      const student = pageStudents[row - 1];
       const rowElement = document.getElementById(`quiz-monitor-row-${row}`);
       const name = document.getElementById(
         `quiz-monitor-name-${row}`
@@ -857,6 +927,9 @@ export class InstructorDashboardSystem extends createSystem({
       const responseTime = document.getElementById(
         `quiz-monitor-time-${row}`
       ) as UIKit.Text;
+      const rank = document.getElementById(
+        `quiz-monitor-rank-${row}`
+      ) as UIKit.Text;
 
       if (!student) {
         this.addClass(rowElement, "quiz-row-hidden");
@@ -865,6 +938,13 @@ export class InstructorDashboardSystem extends createSystem({
 
       this.removeClass(rowElement, "quiz-row-hidden");
       this.removeClass(result, "quiz-result-correct", "quiz-result-wrong");
+      const correctRank = correctRankByStudent.get(student.studentId);
+      rank?.setProperties({
+        // Wrong and unanswered submissions do not receive a placement.
+        // Therefore stopping a challenge with no correct answers shows no
+        // rank for every student.
+        text: correctRank ? this.formatOrdinal(correctRank) : "—"
+      });
       name?.setProperties({
         text: `${student.name}${student.seat ? `  ${student.seat}` : ""}`
       });
@@ -903,6 +983,17 @@ export class InstructorDashboardSystem extends createSystem({
     }
 
     this.syncDocument(document);
+  }
+
+  private formatOrdinal(value: number): string {
+    const remainder100 = value % 100;
+    if (remainder100 >= 11 && remainder100 <= 13) return `${value}th`;
+    switch (value % 10) {
+      case 1: return `${value}st`;
+      case 2: return `${value}nd`;
+      case 3: return `${value}rd`;
+      default: return `${value}th`;
+    }
   }
 
   private startQuizCountdown(): void {
@@ -1083,6 +1174,7 @@ export class InstructorDashboardSystem extends createSystem({
 
           // After Stop Game, never reveal cached live rows. Wait for the
           // authoritative Supabase response, then open the monitor.
+          this.labResultsFinalized = true;
           this.openLabMonitorAfterSavedResults = true;
           this.setLabMonitorVisible(false);
           socket.emit("requestSavedLabResults");
@@ -1596,6 +1688,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.setLatestResultType("game");
     this.hasLabResults = false;
     this.hasObservedActiveLabStudent = false;
+    this.labResultsFinalized = false;
 
     this.showStatusMessage(
       "Students sent to the lab"
@@ -1720,6 +1813,9 @@ export class InstructorDashboardSystem extends createSystem({
      * but preserve the final report and its left-controller
      * launcher so the instructor can reopen it at any time.
      */
+    this.labResultsFinalized = true;
+    socket.emit("requestSavedLabResults");
+    this.updateLabMonitor();
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(true);
     this.setCurrentMode("Classroom Mode");
@@ -1844,49 +1940,37 @@ export class InstructorDashboardSystem extends createSystem({
       return;
     }
 
-    const studentsByUser = new Map<number | string, DashboardStudent>();
-    for (const student of this.savedLabStudents) {
-      studentsByUser.set(student.seat ?? student.userId ?? student.id, student);
-    }
-    for (const student of this.latestStudents) {
-      const key = student.seat ?? student.userId ?? student.id;
-      const saved = studentsByUser.get(key);
-      const activelyWorking =
-        student.mode === "Game Mode" &&
-        student.labStatus !== "completed" &&
-        student.labStatus !== "returned" &&
-        student.labStatus !== "instructor_return";
-      if (!saved || activelyWorking || !saved.savedResult) {
-        studentsByUser.set(key, student);
-      }
-    }
-
-    const students =
-      [...studentsByUser.values()]
-        .filter(student =>
-          !student.isDemo &&
-          student.seat &&
-          student.seat !== "Not selected"
-        )
-        .sort((a, b) =>
-          String(a.seat).localeCompare(
-            String(b.seat)
-          )
-        )
-        .slice(0, 5);
+    const rankedStudents = this.getRankedLabStudents();
+    const totalPages = Math.max(
+      1,
+      Math.ceil(rankedStudents.length / this.labMonitorPageSize)
+    );
+    this.labMonitorPage = Math.min(this.labMonitorPage, totalPages - 1);
+    const pageStart = this.labMonitorPage * this.labMonitorPageSize;
+    const students = rankedStudents.slice(
+      pageStart,
+      pageStart + this.labMonitorPageSize
+    );
+    const pageLabel = this.labMonitorDocument.getElementById(
+      "lab-monitor-page-label"
+    ) as UIKit.Text;
+    pageLabel?.setProperties({
+      text: `PAGE ${this.labMonitorPage + 1} / ${totalPages}`
+    });
 
     const traceRows = students.map(student => ({
       source: student.savedResult ? "saved" : "live",
       userId: student.userId,
       seat: student.seat,
       mode: student.mode,
-      durationSeconds: student.durationSeconds ?? 0,
+      durationSeconds: this.getLabStudentDuration(student),
+      accuracy: this.getLabStudentAccuracy(student),
       status: student.labStatus,
     }));
     const traceSignature = JSON.stringify(traceRows);
     if (traceSignature !== this.lastLabMonitorTraceSignature) {
       this.lastLabMonitorTraceSignature = traceSignature;
-      console.log("[LabTrace][Client] monitor merge", traceRows);
+      console.log("[LabTrace][Client] monitor ranking", traceRows);
     }
 
     /* UIKit can retain old text when a hidden row is shown again. */
@@ -1897,8 +1981,9 @@ export class InstructorDashboardSystem extends createSystem({
       element.setProperties({ text: value });
     };
 
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < this.labMonitorPageSize; index += 1) {
       const student = students[index];
+      const globalIndex = pageStart + index;
       const row = index + 1;
       const rowElement =
         this.labMonitorDocument
@@ -1920,6 +2005,12 @@ export class InstructorDashboardSystem extends createSystem({
         this.labMonitorDocument
           .getElementById(
             `lab-name-${row}`
+          ) as UIKit.Text;
+
+      const rank =
+        this.labMonitorDocument
+          .getElementById(
+            `lab-rank-${row}`
           ) as UIKit.Text;
 
       const question =
@@ -1952,6 +2043,12 @@ export class InstructorDashboardSystem extends createSystem({
             `lab-time-${row}`
           ) as UIKit.Text;
 
+      const accuracy =
+        this.labMonitorDocument
+          .getElementById(
+            `lab-accuracy-${row}`
+          ) as UIKit.Text;
+
       const status =
         this.labMonitorDocument
           .getElementById(
@@ -1959,11 +2056,13 @@ export class InstructorDashboardSystem extends createSystem({
           ) as UIKit.Text;
 
       if (!student) {
+        setText(rank, "—");
         setText(name, "-");
         setText(question, "-");
         setText(correct, "OK 0");
         setText(mistakes, "X 0");
         setText(score, "-");
+        setText(accuracy, "-");
         setText(time, "-");
         setText(status, "Waiting");
         continue;
@@ -1976,7 +2075,9 @@ export class InstructorDashboardSystem extends createSystem({
         student.totalExercises ?? 12;
 
       const currentQuestion =
-        student.labStatus === "completed"
+        this.labResultsFinalized && !this.hasLabParticipation(student)
+          ? 0
+          : student.labStatus === "completed"
           ? total
           : Math.min(
               completed + 1,
@@ -1984,7 +2085,9 @@ export class InstructorDashboardSystem extends createSystem({
             );
 
       const statusLabel =
-        student.labStatus === "completed"
+        this.labResultsFinalized && !this.hasLabParticipation(student)
+          ? "No Progress"
+          : student.labStatus === "completed"
             ? "Finished"
             : student.labStatus === "returned" ||
               student.labStatus === "instructor_return"
@@ -1998,30 +2101,19 @@ export class InstructorDashboardSystem extends createSystem({
                 : "Waiting";
 
       setText(name, `${student.name ?? "Student"}  ${student.seat ?? ""}`);
+      setText(
+        rank,
+        this.labResultsFinalized && this.hasLabParticipation(student)
+          ? this.formatOrdinal(globalIndex + 1)
+          : "—"
+      );
       setText(question, `${currentQuestion} / ${total}`);
       setText(score, `${student.score ?? 0}`);
       setText(correct, `OK ${student.correctAnswers ?? 0}`);
       setText(mistakes, `X ${student.wrongAnswers ?? 0}`);
+      setText(accuracy, `${this.getLabStudentAccuracy(student).toFixed(0)}%`);
 
-      const sharedActivityDuration =
-        this.labActivityStartedAt !== null &&
-        student.mode === "Game Mode" &&
-        student.labStatus !== "completed" &&
-        student.labStatus !== "returned" &&
-        student.labStatus !== "instructor_return"
-          ? Math.max(
-              0,
-              Math.floor(
-                (Date.now() - this.labActivityStartedAt) / 1000
-              )
-            )
-          : 0;
-
-      const duration = Math.max(
-        0,
-        student.durationSeconds ?? 0,
-        sharedActivityDuration
-      );
+      const duration = this.getLabStudentDuration(student);
       const minutes =
         Math.floor(duration / 60);
       const seconds =
@@ -2044,6 +2136,103 @@ export class InstructorDashboardSystem extends createSystem({
     this.syncDocument(
       this.labMonitorDocument
     );
+  }
+
+  private getRankedLabStudents(): DashboardStudent[] {
+    const studentsByUser = new Map<number | string, DashboardStudent>();
+    for (const student of this.savedLabStudents) {
+      studentsByUser.set(student.seat ?? student.userId ?? student.id, student);
+    }
+    for (const student of this.latestStudents) {
+      const key = student.seat ?? student.userId ?? student.id;
+      const saved = studentsByUser.get(key);
+      const activelyWorking =
+        student.mode === "Game Mode" &&
+        student.labStatus !== "completed" &&
+        student.labStatus !== "returned" &&
+        student.labStatus !== "instructor_return";
+      if (!saved || activelyWorking || !saved.savedResult) {
+        studentsByUser.set(key, student);
+      }
+    }
+
+    const students = [...studentsByUser.values()]
+      .filter(student =>
+        !student.isDemo &&
+        student.seat &&
+        student.seat !== "Not selected"
+      );
+
+    if (!this.labResultsFinalized) {
+      return students.sort((a, b) =>
+        String(a.seat).localeCompare(String(b.seat), undefined, {
+          numeric: true,
+        })
+      );
+    }
+
+    return students.sort((a, b) => {
+        const participationDifference =
+          Number(this.hasLabParticipation(b)) - Number(this.hasLabParticipation(a));
+        if (participationDifference !== 0) return participationDifference;
+
+        // Final placement policy:
+        // 1. More correct answers
+        // 2. Higher accuracy
+        // 3. More completed exercises
+        // 4. Fewer wrong answers
+        // 5. Faster completion time
+        const correctDifference =
+          (b.correctAnswers ?? 0) - (a.correctAnswers ?? 0);
+        if (correctDifference !== 0) return correctDifference;
+        const accuracyDifference =
+          this.getLabStudentAccuracy(b) - this.getLabStudentAccuracy(a);
+        if (accuracyDifference !== 0) return accuracyDifference;
+        const progressDifference =
+          (b.completedExercises ?? 0) - (a.completedExercises ?? 0);
+        if (progressDifference !== 0) return progressDifference;
+        const wrongDifference =
+          (a.wrongAnswers ?? 0) - (b.wrongAnswers ?? 0);
+        if (wrongDifference !== 0) return wrongDifference;
+        const timeDifference =
+          this.getLabStudentDuration(a) - this.getLabStudentDuration(b);
+        if (timeDifference !== 0) return timeDifference;
+        return String(a.seat).localeCompare(String(b.seat));
+      });
+  }
+
+  private hasLabParticipation(student: DashboardStudent): boolean {
+    // Opening the lab places the student on card 1, so the monitor displays
+    // 1/12 before any work has been submitted. A return/completion status by
+    // itself must not award a placement. Rank only students with recorded
+    // activity.
+    return (student.completedExercises ?? 0) > 0 ||
+      (student.correctAnswers ?? 0) > 0 ||
+      (student.wrongAnswers ?? 0) > 0;
+  }
+
+  private getLabStudentAccuracy(student: DashboardStudent): number {
+    const stored = Number(student.accuracy);
+    if (Number.isFinite(stored) && stored >= 0) return stored;
+    const correct = student.correctAnswers ?? 0;
+    const wrong = student.wrongAnswers ?? 0;
+    const attempts = correct + wrong;
+    return attempts > 0 ? (correct / attempts) * 100 : 0;
+  }
+
+  private getLabStudentDuration(student: DashboardStudent): number {
+    const sharedActivityDuration =
+      this.labActivityStartedAt !== null &&
+      student.mode === "Game Mode" &&
+      student.labStatus !== "completed" &&
+      student.labStatus !== "returned" &&
+      student.labStatus !== "instructor_return"
+        ? Math.max(
+            0,
+            Math.floor((Date.now() - this.labActivityStartedAt) / 1000)
+          )
+        : 0;
+    return Math.max(0, student.durationSeconds ?? 0, sharedActivityDuration);
   }
 
   // ======================================================
@@ -2080,6 +2269,7 @@ export class InstructorDashboardSystem extends createSystem({
     }
 
     this.labActivityFinalElapsedSeconds = 0;
+    this.labMonitorPage = 0;
     this.labActivityStartedAt = Date.now();
     this.updateLabActivityControl();
     this.labActivityTimer = window.setInterval(

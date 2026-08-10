@@ -117,6 +117,9 @@ The migrations are located in:
 - `supabase/room-code-migration.sql`
 - `supabase/app-data-migration.sql`
 - `supabase/weekly-content-migration.sql`
+- `supabase/w1-1-five-parts-content-update.sql`
+- `supabase/w1-1-d2-loading-classification-update.sql`
+- `supabase/w1-1-d3-language-ladder-update.sql`
 
 Run them in the Supabase SQL Editor in this exact order:
 
@@ -134,6 +137,13 @@ Run them in the Supabase SQL Editor in this exact order:
    - creates the weekly curriculum and activity tables;
    - connects quiz questions and game results to their weekly activity; and
    - lets each classroom record the week selected by the instructor.
+4. `supabase/w1-1-five-parts-content-update.sql`
+   - loads the Week 1 Lesson 1 titles, presentation, challenge, debrief image,
+     and multiple-choice question.
+5. `supabase/w1-1-d2-loading-classification-update.sql`
+   - loads the Week 1 Lesson 2 titles, media paths, debrief image, and question.
+6. `supabase/w1-1-d3-language-ladder-update.sql`
+   - loads the Week 1 Lesson 3 titles, media paths, debrief image, and question.
 
 Do not reverse this order. `app-data-migration.sql` references the
 `participants` table prepared by the core schema and room-code migration.
@@ -151,6 +161,46 @@ Do not reverse this order. `app-data-migration.sql` references the
    `supabase/weekly-content-migration.sql` into it.
 8. Select **Run** and confirm that `learning_weeks`, `week_lessons`, and
    `week_activities` appear in the Table Editor.
+9. Run the three Week 1 content-update files in D1, D2, D3 order. These files
+   populate or update the Week 1 lesson, activity, media-path, and quiz content.
+
+The MP4 and PNG assets are stored in the project's `public` directory. Supabase
+stores their public paths, titles, descriptions, activity configuration, quiz
+choices, and correct answers. Editing a local SQL file does not automatically
+change the hosted database; run the updated file in the Supabase SQL Editor.
+
+### Start with a clean first run
+
+Use this only when you want to remove all previous users and classroom activity
+before registering the deployment's headsets. It deletes rows, not tables, and
+preserves `learning_weeks`, `week_lessons`, `week_activities`, and
+`quiz_questions`.
+
+Run the following in the Supabase SQL Editor:
+
+```sql
+begin;
+
+delete from public.quiz_responses;
+delete from public.game_results;
+delete from public.participants;
+delete from public.rooms;
+delete from public.app_users;
+
+commit;
+```
+
+After this cleanup:
+
+- the instructor creates a new active room at the next Professor login;
+- every headset registers a fresh `app_users` identity;
+- students receive new names and seats in joining order;
+- new `participants`, `quiz_responses`, and `game_results` rows are created as
+  the classroom is used; and
+- all Week 1 lessons, activities, media paths, and quiz questions remain.
+
+Do not run this cleanup during a live class. If permanent headset identities
+must be retained, omit `delete from public.app_users;`.
 
 ### Database environment configuration
 
@@ -179,9 +229,11 @@ must never be placed in a `VITE_` variable, committed to Git, or shared publicly
 
 Before running the application, confirm that:
 
-- the six tables `rooms`, `participants`, `quiz_questions`, `quiz_responses`,
-  `app_users`, and `game_results` appear in the `public` schema;
-- both SQL migrations completed without an error;
+- the nine tables `rooms`, `participants`, `quiz_questions`, `quiz_responses`,
+  `app_users`, `game_results`, `learning_weeks`, `week_lessons`, and
+  `week_activities` appear in the `public` schema;
+- all three schema migrations and the required Week 1 content updates completed
+  without an error;
 - `.env.development` contains the project URL, publishable key, and Professor
   PIN;
 - `.env.server` contains the project URL and secret server key; and
