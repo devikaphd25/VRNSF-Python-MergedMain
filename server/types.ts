@@ -79,7 +79,12 @@ export interface QuickChallenge {
   correctIndex: number;
   durationSeconds: number;
   startedAt: number;
-  answers: Map<string, unknown>;
+  answers: Map<string, {
+    selectedIndex: number;
+    correct: boolean;
+    answeredAt: number;
+    responseTimeSeconds: number;
+  }>;
   timeout: NodeJS.Timeout | null;
 }
 

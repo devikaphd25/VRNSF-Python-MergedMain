@@ -7,6 +7,7 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   DoubleSide,
+  SphereGeometry,
   CylinderGeometry,
   BoxGeometry,
   BackSide,
@@ -16,7 +17,7 @@ import {
   UIKit,
   UIKitDocument
 } from "@iwsdk/core";
-import { CanvasTexture, SRGBColorSpace } from "three";
+import { CanvasTexture, Raycaster, SRGBColorSpace, Vector2 } from "three";
 import { socket } from "../network/socket";
 import {
   setSeatMarkerTheme,
@@ -50,6 +51,19 @@ export class PresentationSystem extends createSystem({
   private pendingImagePath?: string;
   private presentationMediaType: "video" | "image" = "video";
   private controlsDocument?: UIKitDocument;
+  private lastVideoTimerText = "";
+  private briefingImage?: HTMLImageElement;
+  private briefingImageRect?: { x: number; y: number; width: number; height: number };
+  private briefingMarkerEnabled = false;
+  private annotationDrawing = false;
+  private lastAnnotationPoint?: { x: number; y: number };
+  private annotationRaycaster = new Raycaster();
+  private annotationPointer = new Vector2();
+  private annotationEnabledAt = 0;
+  private xrAnnotationSession?: XRSession;
+  private xrAnnotationTriggerPressed = false;
+  private markerRayOriginalColors = new Map<any, any>();
+  private annotationLaser?: Mesh;
 
   init(): void {
     console.log("[PresentationSystem] Initializing");
@@ -61,10 +75,15 @@ export class PresentationSystem extends createSystem({
     socket.on("studentModeChanged", this.onStudentModeChanged);
     socket.on("videoPlaybackCommand", this.onVideoPlaybackCommand);
     socket.on("presentationContentChanged", this.onPresentationContentChanged);
+    socket.on("briefingAnnotation", this.onBriefingAnnotation);
     // Quest suspends Web Audio until a user gesture occurs. Create the
     // context early and resume it on any deliberate pointer/controller press.
     this.audioContext = new AudioContext();
     window.addEventListener("pointerdown", this.unlockAudio, true);
+    this.renderer.domElement.addEventListener("pointerdown", this.onAnnotationPointerDown);
+    this.renderer.domElement.addEventListener("pointermove", this.onAnnotationPointerMove);
+    window.addEventListener("pointerup", this.onAnnotationPointerUp);
+    this.renderer.xr.addEventListener("sessionstart", this.bindXrAnnotationSession);
     this.queries.controls.subscribe("qualify", entity => {
       this.controlsDocument = PanelDocument.data.document[entity.index] as UIKitDocument;
       this.bindVideoControls();
@@ -88,6 +107,17 @@ export class PresentationSystem extends createSystem({
       this.videoElement.currentTime !== this.lastDrawnVideoTime
     ) {
       this.drawCurrentVideoFrame();
+    }
+    if (this.isPresentationMode && this.presentationMediaType === "video") {
+      this.updateVideoTimer();
+    }
+    if (this.renderer.xr.isPresenting && this.briefingMarkerEnabled) {
+      // The system can be created after an XR session has already started, in
+      // which case the sessionstart event was missed. Rebinding is idempotent.
+      this.bindXrAnnotationSession();
+      this.updateXrAnnotationTriggerState();
+      this.setMarkerRayColor(true);
+      this.updateXrAnnotationPointer(this.annotationDrawing);
     }
   }
 
@@ -184,9 +214,48 @@ export class PresentationSystem extends createSystem({
     return this.videoElement?.currentTime ?? 0;
   }
 
+  private seekVideo(offsetSeconds: number): number {
+    if (!this.videoElement) return 0;
+    const duration = Number.isFinite(this.videoElement.duration)
+      ? this.videoElement.duration
+      : Number.POSITIVE_INFINITY;
+    this.videoElement.currentTime = Math.min(
+      duration,
+      Math.max(0, this.videoElement.currentTime + offsetSeconds)
+    );
+    this.drawCurrentVideoFrame();
+    return this.videoElement.currentTime;
+  }
+
+  private restartVideo(): void {
+    if (!this.videoElement) return;
+    this.videoElement.pause();
+    this.videoElement.currentTime = 0;
+    this.drawCurrentVideoFrame();
+    void this.playVideo();
+    this.updatePlayPauseLabel(true);
+  }
+
   private bindVideoControls(): void {
     const playPause = this.controlsDocument?.getElementById("video-play-pause");
+    const back10 = this.controlsDocument?.getElementById("video-back-10");
+    const forward10 = this.controlsDocument?.getElementById("video-forward-10");
+    const restart = this.controlsDocument?.getElementById("video-restart");
+    const next = this.controlsDocument?.getElementById("video-next");
     const returnButton = this.controlsDocument?.getElementById("video-return-class");
+    const marker = this.controlsDocument?.getElementById("briefing-highlight");
+    const clearMarker = this.controlsDocument?.getElementById("briefing-highlight-clear");
+
+    const emitPlayback = (command: string, currentTime: number): void => {
+      socket.emit("instructorVideoPlayback", { command, currentTime });
+    };
+
+    back10?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      const wasPlaying = !this.videoElement?.paused;
+      emitPlayback(wasPlaying ? "play" : "pause", this.seekVideo(-10));
+    });
 
     playPause?.addEventListener("click", (event: any) => {
       event?.stopPropagation?.();
@@ -198,19 +267,92 @@ export class PresentationSystem extends createSystem({
       });
     });
 
+    forward10?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      const wasPlaying = !this.videoElement?.paused;
+      emitPlayback(wasPlaying ? "play" : "pause", this.seekVideo(10));
+    });
+
+    restart?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      this.restartVideo();
+      emitPlayback("play", 0);
+    });
+
+    next?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      this.restartVideo();
+      emitPlayback("pause", 0);
+      (window as any).advancePresentationToChallenge?.();
+    });
+
     returnButton?.addEventListener("click", (event: any) => {
       event?.stopPropagation?.();
       if (Date.now() < this.controlsEnabledAt) return;
       socket.emit("instructorReturnAllToClass");
       this.exitPresentationMode();
     });
+
+    marker?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      this.briefingMarkerEnabled = !this.briefingMarkerEnabled;
+      this.annotationDrawing = false;
+      this.lastAnnotationPoint = undefined;
+      this.annotationEnabledAt = Date.now() + 250;
+      this.setMarkerRayColor(this.briefingMarkerEnabled);
+      this.setAnnotationLaserVisible(false);
+      this.updateMarkerLabel();
+    });
+
+    clearMarker?.addEventListener("click", (event: any) => {
+      event?.stopPropagation?.();
+      if (Date.now() < this.controlsEnabledAt) return;
+      this.clearBriefingAnnotations();
+      socket.emit("instructorBriefingAnnotation", { action: "clear" });
+    });
+  }
+
+  private updateMarkerLabel(): void {
+    const marker = this.controlsDocument?.getElementById(
+      "briefing-highlight"
+    ) as UIKit.Text | undefined;
+    marker?.setProperties({
+      text: this.briefingMarkerEnabled ? "MARKER ON" : "MARKER OFF"
+    });
+    (this.controlsDocument as any)?.requestUpdate?.();
   }
 
   private updatePlayPauseLabel(playing: boolean): void {
     const label = this.controlsDocument?.getElementById(
       "video-play-pause"
     ) as UIKit.Text | undefined;
-    label?.setProperties({ text: playing ? "PAUSE VIDEO" : "PLAY VIDEO" });
+    label?.setProperties({ text: playing ? "PAUSE" : "PLAY" });
+    (this.controlsDocument as any)?.requestUpdate?.();
+  }
+
+  private formatVideoTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
+    const totalSeconds = Math.floor(seconds);
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainder = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  }
+
+  private updateVideoTimer(force = false): void {
+    const timer = this.controlsDocument?.getElementById(
+      "video-timer"
+    ) as UIKit.Text | undefined;
+    if (!timer) return;
+    const elapsed = this.videoElement?.currentTime ?? 0;
+    const duration = this.videoElement?.duration ?? Number.NaN;
+    const text = `${this.formatVideoTime(elapsed)} / ${this.formatVideoTime(duration)}`;
+    if (!force && text === this.lastVideoTimerText) return;
+    this.lastVideoTimerText = text;
+    timer.setProperties({ text });
     (this.controlsDocument as any)?.requestUpdate?.();
   }
 
@@ -218,14 +360,23 @@ export class PresentationSystem extends createSystem({
     const object = (window as any).instructorVideoControlsObject;
     if (!object) return;
     object.visible = visible;
-    // World-space placement: below the main video screen and within a
-    // comfortable controller-ray distance from the instructor position.
-    object.position.set(0, visible ? 1.05 : -100, 3.35);
+    // Briefing controls sit directly below the image and slightly in front of
+    // it. Video controls retain their established, comfortable position.
+    const isBriefing = this.presentationMediaType === "image";
+    object.position.set(
+      0,
+      visible ? (isBriefing ? -0.72 : 1.05) : -100,
+      isBriefing ? 5.35 : 3.35
+    );
+    // Debrief actions are intentionally larger for comfortable headset-ray
+    // targeting. Restore the original scale whenever video mode is active.
+    object.scale.setScalar(isBriefing ? 1.55 : 1);
     object.rotation.set(0, Math.PI, 0);
     object.updateMatrixWorld(true);
     if (visible) {
       this.updateControlsForMedia();
       this.updatePlayPauseLabel(!this.videoElement?.paused);
+      this.updateVideoTimer(true);
     }
   }
 
@@ -249,7 +400,7 @@ export class PresentationSystem extends createSystem({
     }
 
     console.log("[PresentationSystem] Playback command received", data);
-    if (data?.command === "pause") {
+    if (data?.command === "pause" || data?.command === "seek" || data?.command === "restart") {
       this.videoElement.pause();
       this.drawCurrentVideoFrame();
     } else {
@@ -263,6 +414,13 @@ export class PresentationSystem extends createSystem({
       (this.pendingVideoPath === assetPath && this.presentationMediaType === "video")
     ) return;
     this.presentationMediaType = "video";
+    if (this.presentationScreen) {
+      this.presentationScreen.position.z = 6.2;
+    }
+    this.briefingMarkerEnabled = false;
+    this.annotationDrawing = false;
+    this.setMarkerRayColor(false);
+    this.setAnnotationLaserVisible(false);
     this.pendingVideoPath = assetPath;
     this.pendingImagePath = undefined;
 
@@ -281,6 +439,9 @@ export class PresentationSystem extends createSystem({
           audioState: this.audioContext?.state
         });
       });
+      this.videoElement.addEventListener("loadedmetadata", () => {
+        this.updateVideoTimer(true);
+      });
       this.videoElement.addEventListener("waiting", () => {
         console.warn("[PresentationSystem] Video waiting for data");
       });
@@ -297,6 +458,8 @@ export class PresentationSystem extends createSystem({
     this.videoElement.pause();
     this.videoElement.src = assetPath;
     this.videoElement.currentTime = 0;
+    this.lastVideoTimerText = "";
+    this.updateVideoTimer(true);
     this.videoElement.load();
     this.videoElement.addEventListener(
       "loadeddata",
@@ -331,6 +494,10 @@ export class PresentationSystem extends createSystem({
       (this.pendingImagePath === assetPath && this.presentationMediaType === "image")
     ) return;
     this.presentationMediaType = "image";
+    // Give the large briefing graphic a little more viewing distance.
+    if (this.presentationScreen) {
+      this.presentationScreen.position.z = 6.75;
+    }
     this.pendingImagePath = assetPath;
     this.pendingVideoPath = undefined;
     this.videoElement?.pause();
@@ -353,13 +520,9 @@ export class PresentationSystem extends createSystem({
       const drawHeight = image.naturalHeight * scale;
       const x = (width - drawWidth) / 2;
       const y = (height - drawHeight) / 2;
-      context.save();
-      context.fillStyle = "#05070a";
-      context.fillRect(0, 0, width, height);
-      context.translate(width, 0);
-      context.scale(-1, 1);
-      context.drawImage(image, x, y, drawWidth, drawHeight);
-      context.restore();
+      this.briefingImage = image;
+      this.briefingImageRect = { x, y, width: drawWidth, height: drawHeight };
+      this.redrawBriefingImage();
 
       this.videoTexture?.dispose();
       this.videoTexture = new CanvasTexture(this.videoCanvas);
@@ -375,11 +538,288 @@ export class PresentationSystem extends createSystem({
   }
 
   private updateControlsForMedia(): void {
-    const playPause = this.controlsDocument?.getElementById("video-play-pause") as any;
-    playPause?.setProperties?.({
-      display: this.presentationMediaType === "video" ? "flex" : "none"
+    const videoOnlyIds = [
+      "video-timer",
+      "video-back-10",
+      "video-play-pause",
+      "video-forward-10",
+      "video-restart"
+    ];
+    const briefingOnlyIds = ["briefing-highlight", "briefing-highlight-clear"];
+    const isBriefing = this.presentationMediaType === "image";
+    const controlsRoot = this.controlsDocument?.getElementById(
+      "presentation-controls-root"
+    );
+    (controlsRoot as any)?.setProperties?.({
+      width: isBriefing ? 1060 : 1180,
+      height: isBriefing ? 150 : 104,
+      gap: isBriefing ? 20 : 12,
+      padding: isBriefing ? 22 : 16
     });
+    for (const id of videoOnlyIds) {
+      (this.controlsDocument?.getElementById(id) as any)?.setProperties?.({
+        display: this.presentationMediaType === "video" ? "flex" : "none"
+      });
+    }
+    for (const id of briefingOnlyIds) {
+      (this.controlsDocument?.getElementById(id) as any)?.setProperties?.({
+        display: isBriefing ? "flex" : "none",
+        width: isBriefing ? 235 : 160,
+        height: isBriefing ? 102 : 70,
+        fontSize: isBriefing ? 42 : 18
+      });
+    }
+    for (const id of ["video-next", "video-return-class"]) {
+      (this.controlsDocument?.getElementById(id) as any)?.setProperties?.({
+        width: isBriefing ? 235 : 160,
+        height: isBriefing ? 102 : 70,
+        fontSize: isBriefing ? 36 : 18
+      });
+    }
+    this.updateMarkerLabel();
     (this.controlsDocument as any)?.requestUpdate?.();
+  }
+
+  private redrawBriefingImage(): void {
+    if (!this.videoCanvas || !this.videoContext || !this.briefingImage || !this.briefingImageRect) return;
+    const { x, y, width: drawWidth, height: drawHeight } = this.briefingImageRect;
+    const width = this.videoCanvas.width;
+    const height = this.videoCanvas.height;
+    const context = this.videoContext;
+    context.save();
+    context.fillStyle = "#05070a";
+    context.fillRect(0, 0, width, height);
+    context.translate(width, 0);
+    context.scale(-1, 1);
+    context.drawImage(this.briefingImage, x, y, drawWidth, drawHeight);
+    context.restore();
+    if (this.videoTexture) this.videoTexture.needsUpdate = true;
+  }
+
+  private clearBriefingAnnotations(): void {
+    this.annotationDrawing = false;
+    this.lastAnnotationPoint = undefined;
+    this.redrawBriefingImage();
+  }
+
+  private drawAnnotationSegment(
+    from: { x: number; y: number },
+    to: { x: number; y: number }
+  ): void {
+    if (!this.videoCanvas || !this.videoContext || this.presentationMediaType !== "image") return;
+    const width = this.videoCanvas.width;
+    const height = this.videoCanvas.height;
+    const context = this.videoContext;
+    context.save();
+    context.strokeStyle = "rgba(250, 204, 21, 0.32)";
+    context.lineWidth = 12;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(from.x * width, from.y * height);
+    context.lineTo(to.x * width, to.y * height);
+    context.stroke();
+    context.restore();
+    if (this.videoTexture) this.videoTexture.needsUpdate = true;
+  }
+
+  private onBriefingAnnotation = (data: {
+    action?: "segment" | "clear";
+    from?: { x: number; y: number };
+    to?: { x: number; y: number };
+  }): void => {
+    if (data?.action === "clear") {
+      this.clearBriefingAnnotations();
+      return;
+    }
+    if (data?.action === "segment" && data.from && data.to) {
+      this.drawAnnotationSegment(data.from, data.to);
+    }
+  };
+
+  private canAnnotate(): boolean {
+    return Boolean(
+      (window as any).isInstructor &&
+      this.isPresentationMode &&
+      this.presentationMediaType === "image" &&
+      this.briefingMarkerEnabled &&
+      Date.now() >= this.annotationEnabledAt
+    );
+  }
+
+  private setMarkerRayColor(active: boolean): void {
+    const raySpace = (this.world as any).player?.raySpaces?.right;
+    if (!raySpace) return;
+    raySpace.traverse((object: any) => {
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : object.material
+          ? [object.material]
+          : [];
+      for (const material of materials) {
+        const color = material?.uniforms?.color?.value;
+        if (!color?.setHex || !color?.copy) continue;
+        if (active) {
+          if (!this.markerRayOriginalColors.has(material)) {
+            this.markerRayOriginalColors.set(material, color.clone());
+          }
+          color.setHex(0xfacc15);
+        } else {
+          const original = this.markerRayOriginalColors.get(material);
+          if (original) color.copy(original);
+        }
+      }
+    });
+    if (!active) this.markerRayOriginalColors.clear();
+  }
+
+  private pointFromScreen(clientX: number, clientY: number): { x: number; y: number } | undefined {
+    if (!this.presentationScreen) return undefined;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.annotationPointer.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.annotationRaycaster.setFromCamera(this.annotationPointer, this.camera);
+    return this.pointFromRaycaster();
+  }
+
+  private pointFromRaycaster(): { x: number; y: number } | undefined {
+    if (!this.presentationScreen) return undefined;
+    const hit = this.annotationRaycaster.intersectObject(this.presentationScreen, false)[0];
+    if (!hit?.uv) {
+      this.setAnnotationLaserVisible(false);
+      return undefined;
+    }
+    this.updateAnnotationLaser(hit.point);
+    return {
+      // The briefing bitmap is already mirrored once when it is painted to
+      // the canvas for the back-facing presentation plane. Mirroring the UV
+      // here again made the marker move in the opposite horizontal direction.
+      x: Math.min(1, Math.max(0, hit.uv.x)),
+      y: Math.min(1, Math.max(0, 1 - hit.uv.y))
+    };
+  }
+
+  private updateAnnotationLaser(point: Vector3): void {
+    if (!this.annotationLaser) {
+      const geometry = new SphereGeometry(0.075, 12, 8);
+      const material = new MeshBasicMaterial({
+        color: 0xfde047,
+        transparent: true,
+        opacity: 0.78,
+        depthTest: false,
+        depthWrite: false
+      });
+      this.annotationLaser = new Mesh(geometry, material);
+      this.annotationLaser.name = "BriefingMarkerLaserPreview";
+      this.annotationLaser.renderOrder = 1000;
+      this.world.scene.add(this.annotationLaser);
+    }
+
+    // Pull the dot slightly toward the instructor so it remains visible over
+    // the image without flickering against the presentation plane.
+    this.annotationLaser.position.copy(point);
+    this.annotationLaser.position.z -= 0.035;
+    this.annotationLaser.visible = this.canAnnotate();
+  }
+
+  private setAnnotationLaserVisible(visible: boolean): void {
+    if (this.annotationLaser) this.annotationLaser.visible = visible;
+  }
+
+  private appendAnnotationPoint(point: { x: number; y: number }): void {
+    const previous = this.lastAnnotationPoint;
+    this.lastAnnotationPoint = point;
+    if (!previous) return;
+    this.drawAnnotationSegment(previous, point);
+    socket.emit("instructorBriefingAnnotation", {
+      action: "segment",
+      from: previous,
+      to: point
+    });
+  }
+
+  private onAnnotationPointerDown = (event: PointerEvent): void => {
+    if (!this.canAnnotate() || this.renderer.xr.isPresenting) return;
+    const point = this.pointFromScreen(event.clientX, event.clientY);
+    if (!point) return;
+    this.annotationDrawing = true;
+    this.lastAnnotationPoint = point;
+    event.preventDefault();
+  };
+
+  private onAnnotationPointerMove = (event: PointerEvent): void => {
+    if (!this.canAnnotate() || this.renderer.xr.isPresenting) {
+      this.setAnnotationLaserVisible(false);
+      return;
+    }
+    const point = this.pointFromScreen(event.clientX, event.clientY);
+    if (point && this.annotationDrawing) this.appendAnnotationPoint(point);
+  };
+
+  private onAnnotationPointerUp = (): void => {
+    if (!this.renderer.xr.isPresenting) {
+      this.annotationDrawing = false;
+      this.lastAnnotationPoint = undefined;
+    }
+  };
+
+  private bindXrAnnotationSession = (): void => {
+    const session = this.renderer.xr.getSession();
+    if (!session || session === this.xrAnnotationSession) return;
+    this.xrAnnotationSession = session;
+    session.addEventListener("selectstart", this.onXrAnnotationSelectStart);
+    session.addEventListener("selectend", this.onXrAnnotationSelectEnd);
+  };
+
+  private onXrAnnotationSelectStart = (event: XRInputSourceEvent): void => {
+    if (!this.canAnnotate() || event.inputSource.handedness !== "right") return;
+    this.xrAnnotationTriggerPressed = true;
+    this.annotationDrawing = true;
+    this.lastAnnotationPoint = undefined;
+    this.updateXrAnnotationPointer(true);
+  };
+
+  private onXrAnnotationSelectEnd = (): void => {
+    this.xrAnnotationTriggerPressed = false;
+    this.annotationDrawing = false;
+    this.lastAnnotationPoint = undefined;
+  };
+
+  private updateXrAnnotationTriggerState(): void {
+    const session = this.renderer.xr.getSession();
+    const rightInput = session
+      ? [...session.inputSources].find(source => source.handedness === "right")
+      : undefined;
+    // The primary trigger is button 0 on standard WebXR gamepads. Polling it
+    // is a fallback for Quest/IWER cases where UIKit consumes selectstart.
+    const pressed = Boolean(rightInput?.gamepad?.buttons?.[0]?.pressed);
+
+    if (pressed && !this.xrAnnotationTriggerPressed && this.canAnnotate()) {
+      this.annotationDrawing = true;
+      this.lastAnnotationPoint = undefined;
+    } else if (!pressed && this.xrAnnotationTriggerPressed) {
+      this.annotationDrawing = false;
+      this.lastAnnotationPoint = undefined;
+    }
+
+    this.xrAnnotationTriggerPressed = pressed;
+  }
+
+  private updateXrAnnotationPointer(draw: boolean): void {
+    if (!this.canAnnotate()) return;
+    const raySpace = (this.world as any).player?.raySpaces?.right;
+    if (!raySpace) return;
+    const origin = new Vector3();
+    const direction = new Vector3(0, 0, -1);
+    const rotation = new Quaternion();
+    raySpace.getWorldPosition(origin);
+    raySpace.getWorldQuaternion(rotation);
+    direction.applyQuaternion(rotation).normalize();
+    this.annotationRaycaster.set(origin, direction);
+    const point = this.pointFromRaycaster();
+    if (point && draw) this.appendAnnotationPoint(point);
   }
 
   private drawCurrentVideoFrame(): void {
@@ -532,6 +972,7 @@ export class PresentationSystem extends createSystem({
       this.player.quaternion.set(0, 1, 0, 0);
 
       this.isPresentationMode = true;
+      (window as any).positionStudentRaiseHand?.(true);
       // Prevent the VIDEO-card click from passing through to the newly
       // displayed Play button in the same pointer gesture.
       this.controlsEnabledAt = Date.now() + 2000;
@@ -559,6 +1000,10 @@ export class PresentationSystem extends createSystem({
       this.renderer.setClearColor(0x87ceeb, 1);
 
       this.isPresentationMode = false;
+      this.briefingMarkerEnabled = false;
+      this.setMarkerRayColor(false);
+      this.setAnnotationLaserVisible(false);
+      (window as any).positionStudentRaiseHand?.(false);
       this.setControlsVisible(false);
       (window as any).refreshInstructorMenuButton?.();
       window.dispatchEvent(
@@ -573,7 +1018,11 @@ export class PresentationSystem extends createSystem({
     const objects = [
       (window as any).menuEntity?.object3D,
       (window as any).hintEntity?.object3D,
-      (window as any).raiseHandEntity?.object3D,
+      // Students keep only Raise Hand while watching. Instructor controls are
+      // provided by the dedicated video panel.
+      (window as any).isInstructor
+        ? (window as any).raiseHandEntity?.object3D
+        : null,
       // These tier caps are created directly under the world scene instead
       // of under classroomMesh, so hide them explicitly in presentation mode.
       this.world.scene.getObjectByName("NASA_Sealed_Tier_Ends"),
@@ -632,6 +1081,14 @@ export class PresentationSystem extends createSystem({
     socket.off("studentModeChanged", this.onStudentModeChanged);
     socket.off("videoPlaybackCommand", this.onVideoPlaybackCommand);
     socket.off("presentationContentChanged", this.onPresentationContentChanged);
+    socket.off("briefingAnnotation", this.onBriefingAnnotation);
+    this.renderer.domElement.removeEventListener("pointerdown", this.onAnnotationPointerDown);
+    this.renderer.domElement.removeEventListener("pointermove", this.onAnnotationPointerMove);
+    window.removeEventListener("pointerup", this.onAnnotationPointerUp);
+    this.renderer.xr.removeEventListener("sessionstart", this.bindXrAnnotationSession);
+    this.xrAnnotationSession?.removeEventListener("selectstart", this.onXrAnnotationSelectStart);
+    this.xrAnnotationSession?.removeEventListener("selectend", this.onXrAnnotationSelectEnd);
+    this.setMarkerRayColor(false);
     this.videoElement?.pause();
     this.videoTexture?.dispose();
     this.setControlsVisible(false);

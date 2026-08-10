@@ -21,6 +21,7 @@ const markers = new Map<string, Sprite>();
 let playerRef: any = null;
 let isFacingStage = false;
 let markersSuppressed = false;
+let markersForcedVisible = false;
 let markerTheme: "default" | "astronaut" = "default";
 const FACING_THRESHOLD = 0.5;
 
@@ -163,7 +164,8 @@ export function updateMarkerVisibility(player: any) {
   isFacingStage = checkPlayerFacingStage();
 
   markers.forEach((marker) => {
-    marker.visible = !markersSuppressed && isFacingStage;
+    marker.visible =
+      !markersSuppressed && (markersForcedVisible || isFacingStage);
   });
 }
 
@@ -235,7 +237,8 @@ export function updateSeatMarkers(
       marker.userData.mode = student.mode;
 
       // ✅ Start visible by default
-      marker.visible = !markersSuppressed;
+      marker.visible =
+        !markersSuppressed && (markersForcedVisible || isFacingStage);
 
       scene.add(marker);
       markers.set(student.id, marker);
@@ -268,6 +271,28 @@ export function showAllMarkers() {
     marker.visible = true;
   });
   console.log("[SeatMarkers] All markers forced visible");
+}
+
+/**
+ * Keep every marker visible across the per-frame classroom visibility loop.
+ * Challenge mode uses this because students are no longer expected to face
+ * the classroom stage while answering the question.
+ */
+export function setSeatMarkersForcedVisible(forced: boolean): void {
+  markersForcedVisible = forced;
+
+  if (forced) {
+    markersSuppressed = false;
+    markers.forEach((marker) => {
+      marker.visible = true;
+    });
+  } else if (playerRef) {
+    updateMarkerVisibility(playerRef);
+  }
+
+  console.log(
+    `[SeatMarkers] Forced visibility: ${forced ? "on" : "off"}`
+  );
 }
 
 export function hideAllMarkers() {

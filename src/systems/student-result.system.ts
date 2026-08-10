@@ -3,6 +3,7 @@ import {
   eq,
   PanelDocument,
   PanelUI,
+  RayInteractable,
   UIKit,
   type UIKitDocument,
 } from "@iwsdk/core";
@@ -114,7 +115,26 @@ export class StudentResultSystem extends createSystem({
 
     if (entity?.object3D) {
       entity.object3D.visible = visible;
+      entity.object3D.pointerEvents = visible ? "auto" : "none";
+      entity.object3D.pointerEventsOrder = 70000;
+      entity.object3D.traverse((object: any) => {
+        object.pointerEvents = visible ? "auto" : "none";
+        object.pointerEventsOrder = 70000;
+      });
       entity.object3D.updateMatrixWorld(true);
+
+      if (visible) {
+        // This panel is constructed while hidden. Refresh the IWSDK
+        // interaction component after UIKit has created the X-button meshes,
+        // otherwise both canvas mouse input and controller rays can miss it.
+        entity.removeComponent(RayInteractable);
+        entity.addComponent(RayInteractable);
+        requestAnimationFrame(() => {
+          entity.object3D?.updateMatrixWorld(true);
+          this.connectCloseButton();
+          this.sync();
+        });
+      }
     }
   }
 

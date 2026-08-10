@@ -279,10 +279,10 @@
       <div class="task-body">
         <div id="task-scroll-container" class="task-scroll">
           <div id="lesson-page-1" class="lesson-page">
-            <span id="lesson-1-label" class="lesson-label">LESSON 1 - PYTHON BASICS</span>
-            <button id="presentation-mode-button" class="menu-card"><span id="lesson-1-task-1-type" class="task-type video-type">VIDEO</span><div class="card-copy"><span id="lesson-1-task-1-title" class="card-title">Watch Python Introduction</span><span id="lesson-1-task-1-description" class="card-description">Play the lesson video for all students</span></div></button>
-            <button id="quick-challenge-button" class="menu-card"><span id="lesson-1-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-1-task-2-title" class="card-title">Python Basics Challenge</span><span id="lesson-1-task-2-description" class="card-description">Start a short interactive class challenge</span></div></button>
-            <button id="class-mode-button" class="menu-card mode-button-active"><span id="lesson-1-task-3-type" class="task-type briefing-type">BRIEFING</span><div class="card-copy"><span id="lesson-1-task-3-title" class="card-title">Review and Briefing</span><span id="lesson-1-task-3-description" class="card-description">Return to class and discuss the results</span></div></button>
+            <span id="lesson-1-label" class="lesson-label">LESSON 1 - LITERAL COMPUTERS AND THE FIVE COMPUTER PARTS</span>
+            <button id="presentation-mode-button" class="menu-card"><span id="lesson-1-task-1-type" class="task-type video-type">PRESENTATION</span><div class="card-copy"><span id="lesson-1-task-1-title" class="card-title">Literal Computers and the Five Computer Parts</span><span id="lesson-1-task-1-description" class="card-description">Present CPU, RAM, storage, input, and output</span></div></button>
+            <button id="quick-challenge-button" class="menu-card"><span id="lesson-1-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-1-task-2-title" class="card-title">Five Parts Challenge</span><span id="lesson-1-task-2-description" class="card-description">Identify the job of each computer component</span></div></button>
+            <button id="class-mode-button" class="menu-card mode-button-active"><span id="lesson-1-task-3-type" class="task-type briefing-type">DEBRIEF</span><div class="card-copy"><span id="lesson-1-task-3-title" class="card-title">Five Parts Debrief</span><span id="lesson-1-task-3-description" class="card-description">Review the five-part computer model</span></div></button>
           </div>
           <div id="lesson-page-2" class="lesson-page lesson-page-hidden">
             <span id="lesson-2-label" class="lesson-label">LESSON 2 - VARIABLES</span>

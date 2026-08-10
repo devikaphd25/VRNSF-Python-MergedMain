@@ -52,7 +52,7 @@ const io = new Server(httpServer, {
 });
 
 const instructorRoomCloseTimers = new Map<string, NodeJS.Timeout>();
-const INSTRUCTOR_DISCONNECT_GRACE_MS = 60_000;
+const INSTRUCTOR_DISCONNECT_GRACE_MS = 1_500;
 const activeQuickChallenges = new Map<string, QuickChallenge>();
 
 function cancelScheduledRoomClose(roomId: string): void {
@@ -82,13 +82,37 @@ function scheduleRoomClose(roomId: string): void {
 
     if (error) {
       console.error(`[Room] Could not close ${roomId}:`, error.message);
-      return;
+      // Do not leave students trapped in the classroom because persistence
+      // failed. Live-session shutdown must still continue below.
     }
+
+    // An instructor owns the live teaching session. When that instructor
+    // disconnects, remove every live student representation and use the same
+    // classEnded event as the End Class button so all clients return to login.
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      if (student.role !== "student") continue;
+      io.emit("playerDisconnected", { id: studentSocketId });
+      delete students[studentSocketId];
+
+      const connectedUser = connectedUsers[Number(student.userId)];
+      if (connectedUser) {
+        connectedUser.classroomSocketId = null;
+        connectedUser.labSocketId = null;
+        connectedUser.inLab = false;
+        connectedUser.mode = "Classroom Mode";
+        connectedUser.location = "classroom";
+      }
+    }
+    broadcastStudentList(io);
+    io.emit("classEnded", {
+      roomId,
+      message: "The instructor disconnected. Please sign in again."
+    });
     console.log(`[Room] Closed ${roomId} after instructor disconnected.`);
   }, INSTRUCTOR_DISCONNECT_GRACE_MS);
 
   instructorRoomCloseTimers.set(roomId, timer);
-  console.log(`[Room] Instructor disconnected; ${roomId} will close in 60 seconds.`);
+  console.log(`[Room] Instructor disconnected; ${roomId} will close shortly.`);
 }
 
 // ========================================================
@@ -290,22 +314,22 @@ io.on("connection", (socket: ClassroomSocket) => {
     const databaseChoices = Array.isArray(databaseQuestion?.choices)
       ? databaseQuestion.choices.map(String)
       : null;
-    const challenge = {
+    const challenge: QuickChallenge = {
       id: `quick-${roomId}-${Date.now()}`,
       roomId,
       question: isTrueFalse
         ? "True or False: In Python, True is a Boolean value."
-        : databaseQuestion?.prompt ?? "Which of these values is a Python integer?",
+        : databaseQuestion?.prompt ?? "Which part of a computer runs the instructions — the “brain”?",
       options: isTrueFalse
         ? ["True", "False"]
         : databaseChoices?.length === 4
           ? databaseChoices
-          : ["3.14", "42", "True", "Hello"],
+          : ["CPU", "Main memory (RAM)", "Secondary storage", "Input devices"],
       correctIndex: isTrueFalse
         ? 0
         : databaseChoices?.length === 4
           ? Number(databaseQuestion?.correct_index) || 0
-          : 1,
+          : 0,
       durationSeconds,
       startedAt: Date.now(),
       answers: new Map(),
@@ -460,6 +484,54 @@ io.on("connection", (socket: ClassroomSocket) => {
         client.emit("quickChallengeStudentAnswered", answerPayload);
       }
     }
+  });
+
+  socket.on("stopQuickChallenge", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const challenge = activeQuickChallenges.get(roomId);
+    if (
+      !roomId ||
+      !isInstructorSocket(socket) ||
+      socket.data.clientType !== "classroom" ||
+      !challenge ||
+      (data.quizId && data.quizId !== challenge.id)
+    ) return;
+
+    if (challenge.timeout) clearTimeout(challenge.timeout);
+    const rankedCorrectAnswers = Array.from(challenge.answers.entries())
+      .filter(([, answer]) => answer.correct)
+      .sort(([, left], [, right]) =>
+        left.responseTimeSeconds - right.responseTimeSeconds
+      );
+    const winnerEntry = rankedCorrectAnswers[0];
+    const winnerSocketId = winnerEntry?.[0] ?? null;
+    const winnerAnswer = winnerEntry?.[1] ?? null;
+    const winnerStudent = winnerSocketId ? students[winnerSocketId] : null;
+
+    for (const client of io.sockets.sockets.values()) {
+      if (client.data.roomId !== roomId) continue;
+      client.emit("quickChallengeEnded", {
+        quizId: challenge.id,
+        winnerStudentId: winnerSocketId,
+        winnerName: winnerStudent?.name ?? null,
+        winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
+        stoppedByInstructor: true,
+      });
+      if (client.data.role !== "instructor") {
+        const connectedStudent = students[client.id];
+        if (connectedStudent) connectedStudent.mode = "Classroom Mode";
+        client.emit("modeChanged", {
+          mode: "Classroom Mode",
+          destination: "Class",
+          fromInstructor: true,
+        });
+        client.emit("returnAllToClassroomNow", {
+          returnReason: "challenge_stopped",
+        });
+      }
+    }
+    activeQuickChallenges.delete(roomId);
+    broadcastStudentList(io);
   });
 
 
@@ -2146,7 +2218,7 @@ socket.on(
       const mistakesFileName =
         `lab-mistakes-${timestamp}.csv`;
 
-      const escapeCsv = value => {
+      const escapeCsv = (value: unknown): string => {
         const text = String(value ?? "");
         return `"${text.replace(/"/g, '""')}"`;
       };
@@ -2346,6 +2418,11 @@ socket.on(
 
     void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
+  if (!student.id) {
+    console.warn(`[Server] ${student.name} has no active socket ID.`);
+    return;
+  }
+
   io.to(student.id).emit(
     "gameChanged",
     {
@@ -2479,6 +2556,14 @@ socket.on(
 
     realStudents.forEach(
       (student, index) => {
+        const classroomSocketId = student.classroomSocketId;
+        if (!classroomSocketId) {
+          console.warn(
+            `[Server] ${student.fullName} has no active classroom socket.`
+          );
+          return;
+        }
+
         student.mode =
           mode;
 
@@ -2524,7 +2609,7 @@ socket.on(
           );
 
           io.to(
-            student.classroomSocketId
+            classroomSocketId
           ).emit(
             "gameChanged",
             {
@@ -2568,7 +2653,7 @@ socket.on(
           "classroom";
 
         io.to(
-          student.classroomSocketId
+          classroomSocketId
         ).emit(
           "modeChanged",
           {
@@ -2582,7 +2667,7 @@ socket.on(
         );
 
         if (destination === "Presentation" && assetPath) {
-          io.to(student.classroomSocketId).emit(
+          io.to(classroomSocketId).emit(
             "presentationContentChanged",
             {
               assetPath,
@@ -2633,7 +2718,10 @@ socket.on(
 
 socket.on("instructorVideoPlayback", data => {
   if (!isInstructorSocket(socket)) return;
-  const command = data?.command === "pause" ? "pause" : "play";
+  const allowedCommands = new Set(["play", "pause", "restart"]);
+  const command = allowedCommands.has(String(data?.command))
+    ? String(data.command)
+    : "pause";
   const currentTime = Number.isFinite(Number(data?.currentTime))
     ? Math.max(0, Number(data.currentTime))
     : 0;
@@ -2657,6 +2745,33 @@ socket.on("instructorVideoPlayback", data => {
     currentTime,
     recipientCount,
   });
+});
+
+socket.on("instructorBriefingAnnotation", data => {
+  if (!isInstructorSocket(socket)) return;
+  const action = data?.action === "clear" ? "clear" : "segment";
+  const normalizePoint = (point: any) => ({
+    x: Math.min(1, Math.max(0, Number(point?.x) || 0)),
+    y: Math.min(1, Math.max(0, Number(point?.y) || 0)),
+  });
+  const payload = action === "clear"
+    ? { action }
+    : {
+        action,
+        from: normalizePoint(data?.from),
+        to: normalizePoint(data?.to),
+      };
+  let recipientCount = 0;
+
+  for (const user of Object.values(connectedUsers)) {
+    if (user.role !== "student" || !user.classroomSocketId) continue;
+    io.to(user.classroomSocketId).emit("briefingAnnotation", payload);
+    recipientCount += 1;
+  }
+
+  if (action === "clear") {
+    console.log("[Server] Briefing annotations cleared", { recipientCount });
+  }
 });
 
   socket.on(
@@ -3202,6 +3317,12 @@ socket.on("instructorVideoPlayback", data => {
   socket.on("modeChanged", (mode) => {
     const student = students[socket.id];
     if (!student) return;
+    if (!isInstructorSocket(socket)) {
+      console.warn(
+        `[Server] Ignored student-initiated mode change from ${student.name}: ${String(mode)}`
+      );
+      return;
+    }
     student.mode = mode;
     console.log(`${student.name} changed mode to ${mode}`);
     broadcastStudentList(io);

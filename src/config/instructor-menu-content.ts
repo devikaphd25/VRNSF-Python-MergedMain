@@ -27,7 +27,7 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
   {
     pageId: "lesson-page-1",
     labelId: "lesson-1-label",
-    label: "LESSON 1 - PYTHON BASICS",
+    label: "LESSON 1 - LITERAL COMPUTERS AND THE FIVE COMPUTER PARTS",
     tasks: [
       {
         buttonId: "presentation-mode-button",
@@ -35,8 +35,8 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
         titleId: "lesson-1-task-1-title",
         descriptionId: "lesson-1-task-1-description",
         type: "VIDEO",
-        title: "Watch Python Introduction",
-        description: "Play the lesson video for all students",
+        title: "Literal Computers and the Five Computer Parts",
+        description: "Present CPU, RAM, storage, input, and output",
         action: "presentation"
       },
       {
@@ -45,8 +45,8 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
         titleId: "lesson-1-task-2-title",
         descriptionId: "lesson-1-task-2-description",
         type: "CHALLENGE",
-        title: "Python Basics Challenge",
-        description: "Start a short interactive class challenge",
+        title: "Five Parts Challenge",
+        description: "Identify the job of each computer component",
         action: "challenge"
       },
       {
@@ -55,25 +55,26 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
         titleId: "lesson-1-task-3-title",
         descriptionId: "lesson-1-task-3-description",
         type: "BRIEFING",
-        title: "Review and Briefing",
-        description: "Return to class and discuss the results",
-        action: "briefing"
+        title: "Five Parts Debrief",
+        description: "Review the five-part computer model",
+        action: "briefing",
+        assetPath: "/images/briefings/week-1/five-parts-of-every-computer-debrief.png"
       }
     ]
   },
   {
     pageId: "lesson-page-2",
     labelId: "lesson-2-label",
-    label: "LESSON 2 - VARIABLES",
+    label: "LESSON 2 - LOADING AND CLASSIFICATION",
     tasks: [
       {
         buttonId: "task-lesson2-video",
         typeId: "lesson-2-task-1-type",
         titleId: "lesson-2-task-1-title",
         descriptionId: "lesson-2-task-1-description",
-        type: "VIDEO",
-        title: "Variables and Data Types",
-        description: "Present the next instructional video",
+        type: "PRESENTATION",
+        title: "Loading and Classification",
+        description: "Present storage, RAM, CPU, hardware, and software",
         action: "presentation"
       },
       {
@@ -82,8 +83,8 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
         titleId: "lesson-2-task-2-title",
         descriptionId: "lesson-2-task-2-description",
         type: "CHALLENGE",
-        title: "Variable Builder",
-        description: "Test variables with an interactive activity",
+        title: "Loading and Classification Challenge",
+        description: "Check how programs load and components are classified",
         action: "challenge"
       },
       {
@@ -91,10 +92,11 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
         typeId: "lesson-2-task-3-type",
         titleId: "lesson-2-task-3-title",
         descriptionId: "lesson-2-task-3-description",
-        type: "BRIEFING",
-        title: "Variables Review",
-        description: "Discuss answers with the class",
-        action: "briefing"
+        type: "DEBRIEF",
+        title: "Loading and Classification Debrief",
+        description: "Review program loading, hardware, and software",
+        action: "briefing",
+        assetPath: "/images/briefings/week-1/loading-and-classification-debrief.png"
       }
     ]
   }
@@ -120,29 +122,119 @@ export type InstructorContentResponse = {
 
 export function replaceInstructorLessons(content: InstructorContentResponse): void {
   const lessons = content.lessons.map((lesson, lessonIndex) => {
+    const isWeekOneLessonOne = content.weekNumber === 1 && lesson.lessonNumber === 1;
+    const isWeekOneLessonTwo = content.weekNumber === 1 && lesson.lessonNumber === 2;
+    const isWeekOneLessonThree = content.weekNumber === 1 && lesson.lessonNumber === 3;
+    const canonicalLessonTitle = isWeekOneLessonOne
+      ? "Literal Computers and the Five Computer Parts"
+      : isWeekOneLessonTwo
+        ? "Loading and Classification"
+      : isWeekOneLessonThree
+        ? "Language Ladder and Translators"
+      : lesson.title;
     const tasks = lesson.activities
       .filter(activity => activity.activityType !== "game")
       .slice(0, 3)
-      .map((activity, taskIndex) => ({
-        activityId: activity.activityId,
-        buttonId:
-          lessonIndex === 0
-            ? ["presentation-mode-button", "quick-challenge-button", "class-mode-button"][taskIndex]
-            : `task-lesson${lessonIndex + 1}-${activity.activityType}`,
-        typeId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-type`,
-        titleId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-title`,
-        descriptionId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-description`,
-        type: activity.activityType.toUpperCase(),
-        title: activity.title,
-        description: activity.description,
-        action: activity.activityType as InstructorTaskAction,
-        assetPath: activity.assetPath
-      }));
+      .map((activity, taskIndex) => {
+        const canonicalCopies: Partial<Record<string, {
+          type: string;
+          title: string;
+          description: string;
+        }>> = {
+              presentation: {
+                type: "PRESENTATION",
+                title: "Literal Computers and the Five Computer Parts",
+                description: "Present CPU, RAM, storage, input, and output"
+              },
+              challenge: {
+                type: "CHALLENGE",
+                title: "Five Parts Challenge",
+                description: "Identify the job of each computer component"
+              },
+              briefing: {
+                type: "DEBRIEF",
+                title: "Five Parts Debrief",
+                description: "Review the five-part computer model"
+              }
+            };
+        const lessonThreeCopies: Partial<Record<string, {
+          type: string;
+          title: string;
+          description: string;
+        }>> = {
+          presentation: {
+            type: "PRESENTATION",
+            title: "Language Ladder and Translators",
+            description: "Explain how source code reaches the CPU"
+          },
+          challenge: {
+            type: "CHALLENGE",
+            title: "Translators Challenge",
+            description: "Check compilers, interpreters, and machine language"
+          },
+          briefing: {
+            type: "DEBRIEF",
+            title: "Language Ladder and Translators Debrief",
+            description: "Review how Python instructions reach the CPU"
+          }
+        };
+        const lessonTwoCopies: Partial<Record<string, {
+          type: string;
+          title: string;
+          description: string;
+        }>> = {
+          presentation: {
+            type: "PRESENTATION",
+            title: "Loading and Classification",
+            description: "Present storage, RAM, CPU, hardware, and software"
+          },
+          challenge: {
+            type: "CHALLENGE",
+            title: "Loading and Classification Challenge",
+            description: "Check how programs load and components are classified"
+          },
+          briefing: {
+            type: "DEBRIEF",
+            title: "Loading and Classification Debrief",
+            description: "Review program loading, hardware, and software"
+          }
+        };
+        const canonicalCopy = isWeekOneLessonOne
+          ? canonicalCopies[activity.activityType]
+          : isWeekOneLessonTwo
+            ? lessonTwoCopies[activity.activityType]
+          : isWeekOneLessonThree
+            ? lessonThreeCopies[activity.activityType]
+            : undefined;
+
+        return {
+          activityId: activity.activityId,
+          buttonId:
+            lessonIndex === 0
+              ? ["presentation-mode-button", "quick-challenge-button", "class-mode-button"][taskIndex]
+              : `task-lesson${lessonIndex + 1}-${activity.activityType}`,
+          typeId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-type`,
+          titleId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-title`,
+          descriptionId: `lesson-${lessonIndex + 1}-task-${taskIndex + 1}-description`,
+          type: canonicalCopy?.type ?? activity.activityType.toUpperCase(),
+          title: canonicalCopy?.title ?? activity.title,
+          description: canonicalCopy?.description ?? activity.description,
+          action: activity.activityType as InstructorTaskAction,
+          assetPath:
+            isWeekOneLessonOne && activity.activityType === "briefing"
+              ? "/images/briefings/week-1/five-parts-of-every-computer-debrief.png"
+              : isWeekOneLessonTwo && activity.activityType === "briefing"
+                ? "/images/briefings/week-1/loading-and-classification-debrief.png"
+              : isWeekOneLessonThree && activity.activityType === "briefing"
+                ? "/images/briefings/week-1/language-ladder-and-translators-debrief.png"
+                : activity.assetPath
+        };
+      });
 
     return {
       pageId: `lesson-page-${lessonIndex + 1}`,
       labelId: `lesson-${lessonIndex + 1}-label`,
-      label: `LESSON ${lesson.lessonNumber} - ${lesson.title.toUpperCase()}`,
+      label: `LESSON ${lesson.lessonNumber} - ${canonicalLessonTitle.toUpperCase()}`,
       tasks
     };
   });

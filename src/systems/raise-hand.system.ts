@@ -13,6 +13,7 @@ type UIKitElement = any;
 
 export class RaiseHandSystem extends createSystem({}) {
   private circleElement: UIKitElement = null;
+  private rootElement: UIKitElement = null;
   private labelElement: UIKitElement = null;
   private statusElement: UIKitElement = null;
 
@@ -26,6 +27,7 @@ export class RaiseHandSystem extends createSystem({}) {
   private isMuted = false; // ✅ Track mute state
   private resultCooldown = false;
   private quickChallengeOpen = false;
+  private lastActivationAt = 0;
 
   init(): void {
     console.log("[RaiseHandSystem] Initializing");
@@ -98,6 +100,7 @@ export class RaiseHandSystem extends createSystem({}) {
       return;
     }
 
+    this.rootElement = root.querySelector?.("#raise-hand-root") ?? root;
     this.circleElement = root.querySelector?.("#raise-hand-circle");
     this.labelElement = root.querySelector?.("#raise-hand-label");
     this.statusElement = root.querySelector?.("#raise-hand-status");
@@ -107,9 +110,15 @@ export class RaiseHandSystem extends createSystem({}) {
       return;
     }
 
-    // ✅ Keep click events for mouse/desktop testing
+    // UIKit controller rays can emit pointerdown followed by click. Listen to
+    // both for headset/browser compatibility and debounce the shared action.
     this.circleElement.addEventListener?.("click", this.onButtonClick);
     this.circleElement.addEventListener?.("pointerdown", this.onButtonClick);
+    // Also accept the transparent panel area around the circle. This makes the
+    // compact HUD forgiving to select with a desktop mouse without changing
+    // the controller-ray target on the circular button itself.
+    this.rootElement?.addEventListener?.("click", this.onButtonClick);
+    this.rootElement?.addEventListener?.("pointerdown", this.onButtonClick);
 
     console.log("[RaiseHandSystem] UI click connected");
   }
@@ -142,10 +151,14 @@ export class RaiseHandSystem extends createSystem({}) {
       console.log("[RaiseHandSystem] Added hand to panel (fallback)");
     }
 
-    // Set position (your working values)
-    this.handModel.position.set(-0.025, 0.01, 0.02);
+    // Keep the hand centered with comfortable padding inside the circular HUD.
+    // The previous offset and scale pushed the fingers above the border.
+    // The GLB origin is slightly left of the visible palm. Compensate for
+    // that baked-in offset so the rendered hand—not only its origin—is
+    // centered inside the circular button.
+    this.handModel.position.set(-0.016, 0.014, 0.02);
     this.handModel.rotation.set(0, Math.PI, 0);
-    this.handModel.scale.set(0.14, 0.14, 0.14);
+    this.handModel.scale.set(0.092, 0.092, 0.092);
 
     // Make materials look good
     this.handModel.traverse((child) => {
@@ -190,6 +203,10 @@ export class RaiseHandSystem extends createSystem({}) {
   }
 
   private onButtonClick = (event?: any): void => {
+    event?.stopPropagation?.();
+    const now = Date.now();
+    if (now - this.lastActivationAt < 350) return;
+    this.lastActivationAt = now;
     console.log("[RaiseHandSystem] Click detected!");
     
     if (!this.isEnabled) {
@@ -390,8 +407,8 @@ private onHandToggled = (
       return;
     }
 
-    const baseScale = 0.14;
-    const scale = this.isRaised ? baseScale * 1.3 : baseScale;
+    const baseScale = 0.092;
+    const scale = this.isRaised ? 0.104 : baseScale;
     this.handModel.scale.set(scale, scale, scale);
 
     this.handModel.traverse((child) => {
@@ -418,14 +435,12 @@ private onHandToggled = (
     }
 
     const menuOpen = Boolean((window as any).isMenuOpen);
-    const presentationOpen = Boolean((window as any).isPresentationOpen);
     const labActive = Boolean((window as any).isLabActive);
     const resultOpen = Boolean((window as any).isStudentResultOpen);
 
     object.visible =
       this.isEnabled &&
       !menuOpen &&
-      !presentationOpen &&
       !labActive &&
       !resultOpen &&
       !this.quickChallengeOpen &&
