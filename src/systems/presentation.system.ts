@@ -1,3 +1,9 @@
+/**
+ * Synchronized presentation, video, briefing, and Mission Review renderer.
+ * Goal: show instructor-controlled media to every participant, maintain video
+ * state/timing, render debrief data screens, and coordinate the door transition.
+ * Data arrives from week_activities and debriefReviewData Socket.IO events.
+ */
 import {
   createSystem,
   Quaternion,
@@ -17,13 +23,45 @@ import {
   UIKit,
   UIKitDocument
 } from "@iwsdk/core";
-import { CanvasTexture, Raycaster, SRGBColorSpace, Vector2 } from "three";
+import { CanvasTexture, Raycaster, SRGBColorSpace, TextureLoader, Vector2 } from "three";
 import { socket } from "../network/socket";
 import {
+  restoreSeatMarkersAfterDebrief,
   setSeatMarkerTheme,
   setSeatMarkersSuppressed,
   showAllMarkers
 } from "../components/instructor/seat-markers";
+import { DebriefDoorTransition } from "./debrief-door-transition";
+
+type DebriefReviewData = {
+  cycleLabel: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  answerCounts: number[];
+  studentCount: number;
+  answeredCount: number;
+  correctCount: number;
+  wrongCount: number;
+  elapsedSeconds: number;
+};
+
+type DebriefView = "classroom" | "immersive360";
+
+// Presentation-only demonstration data for the Mission Review side screens.
+// It is never persisted to Supabase and does not replace live classroom data.
+const DEBRIEF_PRESENTATION_DEMO: DebriefReviewData = {
+  cycleLabel: "W1-1 · Cycle 1 of 3",
+  question: "Which computer component executes instructions and acts as the system brain?",
+  options: ["CPU", "RAM", "SSD", "Keyboard"],
+  correctIndex: 0,
+  answerCounts: [18, 3, 2, 0],
+  studentCount: 23,
+  answeredCount: 23,
+  correctCount: 18,
+  wrongCount: 5,
+  elapsedSeconds: 272,
+};
 
 export class PresentationSystem extends createSystem({
   controls: {
@@ -34,10 +72,10 @@ export class PresentationSystem extends createSystem({
   private isPresentationMode = false;
   private savedSeatPosition = new Vector3();
   private savedSeatQuaternion = new Quaternion();
-  private savedSeatRotationY = 0;
   private presentationScreen?: Mesh;
   private blackRoom?: Mesh;
   private transitionInProgress = false;
+  private pendingClassroomReturn = false;
   private savedClassroomUi = new Map<any, boolean>();
   private videoElement?: HTMLVideoElement;
   private videoTexture?: CanvasTexture;
@@ -50,6 +88,9 @@ export class PresentationSystem extends createSystem({
   private pendingVideoPath?: string;
   private pendingImagePath?: string;
   private presentationMediaType: "video" | "image" = "video";
+  // Classroom is the safe fallback. Entering the 360 environment must always
+  // be an explicit instructor selection carried by the synchronized event.
+  private debriefView: DebriefView = "classroom";
   private controlsDocument?: UIKitDocument;
   private lastVideoTimerText = "";
   private briefingImage?: HTMLImageElement;
@@ -64,9 +105,27 @@ export class PresentationSystem extends createSystem({
   private xrAnnotationTriggerPressed = false;
   private markerRayOriginalColors = new Map<any, any>();
   private annotationLaser?: Mesh;
+  private debriefDoorTransition?: DebriefDoorTransition;
+  private debriefLeftScreen?: Mesh;
+  private debriefRightScreen?: Mesh;
+  private debriefCenterFrame?: Mesh;
+  private debriefBoardFrame?: Mesh;
+  private debriefBoardBack?: Mesh;
+  private debriefSpaceSphere?: Mesh;
+  private debriefLeftCanvas?: HTMLCanvasElement;
+  private debriefRightCanvas?: HTMLCanvasElement;
+  private debriefLeftTexture?: CanvasTexture;
+  private debriefRightTexture?: CanvasTexture;
+  private debriefReview?: DebriefReviewData;
+  private savedClassroomLightIntensities = new Map<any, number>();
+  private classroomProjector?: Mesh;
+  private classroomProjectorOriginalMaterial?: any;
+  private classroomProjectorDebriefMaterial?: MeshBasicMaterial;
+  private classroomProjectorTexture?: CanvasTexture;
 
   init(): void {
     console.log("[PresentationSystem] Initializing");
+    this.debriefDoorTransition = new DebriefDoorTransition(this.world.scene);
 
     // ✅ Listen for mode changes from instructor (direct to this student)
     socket.on("modeChanged", this.onModeChanged);
@@ -76,6 +135,7 @@ export class PresentationSystem extends createSystem({
     socket.on("videoPlaybackCommand", this.onVideoPlaybackCommand);
     socket.on("presentationContentChanged", this.onPresentationContentChanged);
     socket.on("briefingAnnotation", this.onBriefingAnnotation);
+    socket.on("debriefReviewData", this.onDebriefReviewData);
     // Quest suspends Web Audio until a user gesture occurs. Create the
     // context early and resume it on any deliberate pointer/controller press.
     this.audioContext = new AudioContext();
@@ -94,6 +154,11 @@ export class PresentationSystem extends createSystem({
     if (this.audioContext?.state === "suspended") {
       void this.audioContext.resume();
     }
+  };
+
+  private onDebriefReviewData = (data: any): void => {
+    this.debriefReview = data;
+    this.redrawDebriefScreens();
   };
 
   update() {
@@ -127,16 +192,24 @@ export class PresentationSystem extends createSystem({
     destination: string;
     assetPath?: string;
     mediaType?: "video" | "image";
+    debriefView?: DebriefView;
   }): void => {
     console.log(`[PresentationSystem] Mode change received: ${data.mode}`);
 
     if (data.mode === "Presentation Mode") {
-      if (data.assetPath) {
-        if (data.mediaType === "image") this.setImageSource(data.assetPath);
-        else this.setVideoSource(data.assetPath);
+      // Content metadata is required before entering. In particular, the
+      // debrief doorway is selected from mediaType=image. Entering early with
+      // the previous/default video type bypasses the transition on Quest.
+      if (!data.assetPath) {
+        console.log("[PresentationSystem] Waiting for shared presentation content");
+        return;
       }
+      if (data.mediaType === "image") {
+        this.debriefView = data.debriefView ?? "classroom";
+        this.setImageSource(data.assetPath);
+      } else this.setVideoSource(data.assetPath);
       if (!this.isPresentationMode) {
-        console.log("[PresentationSystem] Entering presentation mode from instructor");
+        console.log("[PresentationSystem] Entering presentation mode with content metadata");
         this.togglePresentationMode();
       }
     } else if (data.mode === "Classroom Mode") {
@@ -150,11 +223,14 @@ export class PresentationSystem extends createSystem({
   private onPresentationContentChanged = (data: {
     assetPath?: string;
     mediaType?: "video" | "image";
+    debriefView?: DebriefView;
   }): void => {
     if (!data.assetPath) return;
     console.log("[PresentationSystem] Shared content received", data);
-    if (data.mediaType === "image") this.setImageSource(data.assetPath);
-    else this.setVideoSource(data.assetPath);
+    if (data.mediaType === "image") {
+      this.debriefView = data.debriefView ?? "classroom";
+      this.setImageSource(data.assetPath);
+    } else this.setVideoSource(data.assetPath);
     this.enterPresentationMode();
   };
 
@@ -168,13 +244,13 @@ export class PresentationSystem extends createSystem({
   }): void => {
     console.log(`[PresentationSystem] Student mode changed: ${data.name} → ${data.mode}`);
     
-    // Check if this is the current student
+    // Check if this is the current student. Presentation entry is handled by
+    // the targeted modeChanged/presentationContentChanged events because this
+    // broadcast intentionally contains no assetPath or mediaType.
     if (data.studentId === socket.id) {
       console.log(`[PresentationSystem] This is me! Updating mode: ${data.mode}`);
-      
-      if (data.mode === "Presentation Mode" && !this.isPresentationMode) {
-        this.togglePresentationMode();
-      } else if (data.mode === "Classroom Mode" && this.isPresentationMode) {
+
+      if (data.mode === "Classroom Mode" && this.isPresentationMode) {
         this.togglePresentationMode();
       }
     }
@@ -193,7 +269,11 @@ export class PresentationSystem extends createSystem({
     this.enterPresentationMode();
   }
 
-  public enterImagePresentation(assetPath?: string): void {
+  public enterImagePresentation(
+    assetPath?: string,
+    debriefView: DebriefView = "classroom"
+  ): void {
+    this.debriefView = debriefView;
     if (assetPath) this.setImageSource(assetPath);
     this.enterPresentationMode();
   }
@@ -363,15 +443,50 @@ export class PresentationSystem extends createSystem({
     // Briefing controls sit directly below the image and slightly in front of
     // it. Video controls retain their established, comfortable position.
     const isBriefing = this.presentationMediaType === "image";
-    object.position.set(
-      0,
-      visible ? (isBriefing ? -0.72 : 1.05) : -100,
-      isBriefing ? 5.35 : 3.35
-    );
+    const isClassroomBriefing = isBriefing && this.debriefView === "classroom";
+    if (visible && isClassroomBriefing) {
+      // Place controls in the open space between the first row and stage. This
+      // avoids XR camera timing differences and keeps them above the floor.
+      const bottomBezel = this.world.scene.getObjectByName(
+        "ScreenBezel_Bottom"
+      ) as Mesh | undefined;
+      const presentationSeat = this.world.scene.getObjectByName("Seat_R1_03");
+      if (bottomBezel) {
+        bottomBezel.updateWorldMatrix(true, false);
+        bottomBezel.geometry.computeBoundingBox();
+        const bounds = bottomBezel.geometry.boundingBox;
+        if (bounds) {
+          const bezelCenter = bounds.getCenter(new Vector3())
+            .applyMatrix4(bottomBezel.matrixWorld);
+          const seatPosition = new Vector3(0, 0, -0.6);
+          presentationSeat?.getWorldPosition(seatPosition);
+          const towardProjector = bezelCenter.clone().sub(seatPosition);
+          towardProjector.y = 0;
+          towardProjector.normalize();
+          object.position
+            .copy(seatPosition)
+            .addScaledVector(towardProjector, 1.65);
+          // Keep the complete 0.39 m-tall scaled panel visibly above the floor.
+          object.position.y = 0.68;
+          object.lookAt(
+            new Vector3(seatPosition.x, object.position.y, seatPosition.z)
+          );
+        }
+      } else {
+        object.position.set(0, 0.68, 0.65);
+        object.rotation.set(0, Math.PI, 0);
+      }
+    } else {
+      object.position.set(
+        0,
+        visible ? (isBriefing ? -0.72 : 1.05) : -100,
+        isBriefing ? 5.35 : 3.35
+      );
+      object.rotation.set(0, Math.PI, 0);
+    }
     // Debrief actions are intentionally larger for comfortable headset-ray
     // targeting. Restore the original scale whenever video mode is active.
-    object.scale.setScalar(isBriefing ? 1.55 : 1);
-    object.rotation.set(0, Math.PI, 0);
+    object.scale.setScalar(isClassroomBriefing ? 1.15 : isBriefing ? 1.55 : 1);
     object.updateMatrixWorld(true);
     if (visible) {
       this.updateControlsForMedia();
@@ -414,6 +529,7 @@ export class PresentationSystem extends createSystem({
       (this.pendingVideoPath === assetPath && this.presentationMediaType === "video")
     ) return;
     this.presentationMediaType = "video";
+    this.setDebriefReviewVisible(false);
     if (this.presentationScreen) {
       this.presentationScreen.position.z = 6.2;
     }
@@ -494,6 +610,7 @@ export class PresentationSystem extends createSystem({
       (this.pendingImagePath === assetPath && this.presentationMediaType === "image")
     ) return;
     this.presentationMediaType = "image";
+    this.redrawDebriefScreens();
     // Give the large briefing graphic a little more viewing distance.
     if (this.presentationScreen) {
       this.presentationScreen.position.z = 6.75;
@@ -529,6 +646,9 @@ export class PresentationSystem extends createSystem({
       this.videoTexture.colorSpace = SRGBColorSpace;
       this.videoTexture.needsUpdate = true;
       this.applyVideoTexture();
+      if (this.isPresentationMode && this.debriefView === "classroom") {
+        this.setClassroomProjectorDebriefVisible(true);
+      }
     };
     image.onerror = error => {
       console.error("[PresentationSystem] Briefing image failed to load", error);
@@ -594,6 +714,9 @@ export class PresentationSystem extends createSystem({
     context.drawImage(this.briefingImage, x, y, drawWidth, drawHeight);
     context.restore();
     if (this.videoTexture) this.videoTexture.needsUpdate = true;
+    if (this.classroomProjectorTexture) {
+      this.classroomProjectorTexture.needsUpdate = true;
+    }
   }
 
   private clearBriefingAnnotations(): void {
@@ -621,6 +744,9 @@ export class PresentationSystem extends createSystem({
     context.stroke();
     context.restore();
     if (this.videoTexture) this.videoTexture.needsUpdate = true;
+    if (this.classroomProjectorTexture) {
+      this.classroomProjectorTexture.needsUpdate = true;
+    }
   }
 
   private onBriefingAnnotation = (data: {
@@ -674,7 +800,7 @@ export class PresentationSystem extends createSystem({
   }
 
   private pointFromScreen(clientX: number, clientY: number): { x: number; y: number } | undefined {
-    if (!this.presentationScreen) return undefined;
+    if (!this.getAnnotationTarget()) return undefined;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.annotationPointer.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -685,20 +811,40 @@ export class PresentationSystem extends createSystem({
   }
 
   private pointFromRaycaster(): { x: number; y: number } | undefined {
-    if (!this.presentationScreen) return undefined;
-    const hit = this.annotationRaycaster.intersectObject(this.presentationScreen, false)[0];
+    const target = this.getAnnotationTarget();
+    if (!target) return undefined;
+    const hit = this.annotationRaycaster.intersectObject(target, false)[0];
     if (!hit?.uv) {
       this.setAnnotationLaserVisible(false);
       return undefined;
     }
     this.updateAnnotationLaser(hit.point);
+    // Convert the geometry UV through the texture itself. This includes the
+    // classroom projector clone's repeat/offset flip and CanvasTexture's
+    // flipY, producing the exact top-left canvas coordinate sampled beneath
+    // the yellow ray-hit dot.
+    const canvasUv = hit.uv.clone();
+    const targetMaterial = Array.isArray(target.material)
+      ? target.material[0]
+      : target.material;
+    const targetTexture = (targetMaterial as MeshBasicMaterial | undefined)?.map;
+    if (targetTexture) {
+      targetTexture.updateMatrix();
+      targetTexture.transformUv(canvasUv);
+    } else {
+      canvasUv.y = 1 - canvasUv.y;
+    }
     return {
-      // The briefing bitmap is already mirrored once when it is painted to
-      // the canvas for the back-facing presentation plane. Mirroring the UV
-      // here again made the marker move in the opposite horizontal direction.
-      x: Math.min(1, Math.max(0, hit.uv.x)),
-      y: Math.min(1, Math.max(0, 1 - hit.uv.y))
+      x: Math.min(1, Math.max(0, canvasUv.x)),
+      y: Math.min(1, Math.max(0, canvasUv.y))
     };
+  }
+
+  private getAnnotationTarget(): Mesh | undefined {
+    if (this.debriefView === "classroom") {
+      return this.world.scene.getObjectByName("ProjectorScreen") as Mesh | undefined;
+    }
+    return this.presentationScreen;
   }
 
   private updateAnnotationLaser(point: Vector3): void {
@@ -866,6 +1012,19 @@ export class PresentationSystem extends createSystem({
 
   // ✅ Public method to exit presentation mode (for external calls)
   public exitPresentationMode(): void {
+    // Close both dashboard surfaces before starting the return. The same
+    // controller select used on EMERGENCY RETURN must not pass through and
+    // reopen the dashboard while the doorway is covering the scene.
+    (window as any).setInstructorDashboardOpen?.(false);
+    const menuButton = (window as any).instructorMenuButtonObject;
+    if (menuButton) menuButton.visible = false;
+    if (this.transitionInProgress) {
+      // Emergency Return can arrive from the instructor while a student's
+      // doorway animation is still finishing. Never discard that request;
+      // complete the doorway frame, then run the normal shared restoration.
+      this.pendingClassroomReturn = true;
+      return;
+    }
     if (this.isPresentationMode) {
       console.log("[PresentationSystem] exitPresentationMode called");
       this.togglePresentationMode();
@@ -916,6 +1075,377 @@ export class PresentationSystem extends createSystem({
     this.presentationScreen.scale.set(1.18, 1, 1);
     this.presentationScreen.visible = false;
     this.world.scene.add(this.presentationScreen);
+
+    const spaceTexture = new TextureLoader().load("./textures/nasa/nasa-space-360-v1.png");
+    spaceTexture.colorSpace = SRGBColorSpace;
+    this.debriefSpaceSphere = new Mesh(
+      new SphereGeometry(24, 32, 20),
+      // Keep the mission-review space environment visible in a headset without
+      // making it as bright as the classroom.
+      new MeshBasicMaterial({ map: spaceTexture, color: 0xa9bad3, side: BackSide })
+    );
+    this.debriefSpaceSphere.visible = false;
+    this.world.scene.add(this.debriefSpaceSphere);
+
+    // Two very shallow boxes visually join the three displays into one
+    // mission-review board. They are cheaper than another large texture.
+    this.debriefBoardFrame = new Mesh(
+      new BoxGeometry(16.2, 5.75, 0.08),
+      new MeshBasicMaterial({ color: 0x42e8ff })
+    );
+    this.debriefBoardFrame.position.set(0, 3.0, 7.56);
+    this.debriefBoardFrame.visible = false;
+    this.world.scene.add(this.debriefBoardFrame);
+    this.debriefBoardBack = new Mesh(
+      new BoxGeometry(15.95, 5.5, 0.09),
+      new MeshBasicMaterial({ color: 0x061326 })
+    );
+    this.debriefBoardBack.position.set(0, 3.0, 7.49);
+    this.debriefBoardBack.visible = false;
+    this.world.scene.add(this.debriefBoardBack);
+
+    // A shallow luminous backplate leaves a cyan edge around the scaled
+    // center image without adding another texture or post-processing pass.
+    this.debriefCenterFrame = new Mesh(
+      new BoxGeometry(8.35, 5.12, 0.08),
+      new MeshBasicMaterial({ color: 0x42e8ff })
+    );
+    this.debriefCenterFrame.position.set(0, 3.0, 7.31);
+    this.debriefCenterFrame.visible = false;
+    this.debriefCenterFrame.renderOrder = 18;
+    this.world.scene.add(this.debriefCenterFrame);
+
+    const makeDataScreen = (side: "left" | "right"): Mesh => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 900;
+      canvas.height = 700;
+      const texture = new CanvasTexture(canvas);
+      texture.colorSpace = SRGBColorSpace;
+      const screen = new Mesh(
+        new PlaneGeometry(3.8, 4.2),
+        new MeshBasicMaterial({ map: texture, color: 0xffffff, side: DoubleSide })
+      );
+      // The center display is the deepest part of the review wall. Pull both
+      // side displays toward the viewer and rotate them inward so the three
+      // screens form a clear, shallow C instead of visually stacking.
+      screen.position.set(side === "left" ? -5.75 : 5.75, 3.0, 6.35);
+      screen.rotation.y = Math.PI + (side === "left" ? -0.44 : 0.44);
+      screen.visible = false;
+      screen.renderOrder = 20;
+      this.world.scene.add(screen);
+      if (side === "left") {
+        this.debriefLeftCanvas = canvas;
+        this.debriefLeftTexture = texture;
+      } else {
+        this.debriefRightCanvas = canvas;
+        this.debriefRightTexture = texture;
+      }
+      return screen;
+    };
+    this.debriefLeftScreen = makeDataScreen("left");
+    this.debriefRightScreen = makeDataScreen("right");
+    this.redrawDebriefScreens();
+  }
+
+  private drawDebriefPanel(
+    canvas: HTMLCanvasElement | undefined,
+    kind: "summary" | "errors"
+  ): void {
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, "#08182f");
+    gradient.addColorStop(1, "#102c4d");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#42e8ff";
+    context.lineWidth = 16;
+    context.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
+    // Side-screen figures are intentionally fixed for presentation/demo mode.
+    // Live Socket.IO data remains available in this.debriefReview for the
+    // working classroom monitors, but is not exposed in this demonstration.
+    const review = DEBRIEF_PRESENTATION_DEMO;
+    const studentCount = Math.max(0, review?.studentCount ?? 0);
+    const correctCount = Math.max(0, review?.correctCount ?? 0);
+    const wrongCount = Math.max(0, review?.wrongCount ?? 0);
+    const unansweredCount = Math.max(0, studentCount - (review?.answeredCount ?? 0));
+    const percent = (value: number) => studentCount > 0
+      ? Math.round(value * 100 / studentCount)
+      : 0;
+    const formatTime = (seconds: number) => {
+      const safe = Math.max(0, Math.round(seconds));
+      return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+    };
+    const wrapText = (text: string, x: number, startY: number, width: number, lineHeight: number) => {
+      let line = "";
+      let y = startY;
+      for (const word of text.split(" ")) {
+        const test = `${line}${word} `;
+        if (line && context.measureText(test).width > width) {
+          context.fillText(line.trim(), x, y);
+          line = `${word} `;
+          y += lineHeight;
+        } else {
+          line = test;
+        }
+      }
+      if (line) context.fillText(line.trim(), x, y);
+      return y;
+    };
+
+    context.fillStyle = "#8af3ff";
+    context.font = "700 42px Arial";
+    context.fillText(kind === "summary" ? "CHALLENGE REVIEW" : "CYCLE SUMMARY", 54, 74);
+
+    if (kind === "summary") {
+      context.fillStyle = "#9db4d0";
+      context.font = "700 25px Arial";
+      context.fillText(review?.cycleLabel?.toUpperCase() ?? "CURRENT LEARNING CYCLE", 54, 122);
+      context.fillStyle = "#ffffff";
+      context.font = "700 35px Arial";
+      let y = wrapText(
+        review?.question ?? "Challenge question will appear when the lesson challenge is completed.",
+        54,
+        177,
+        790,
+        43
+      ) + 62;
+      const options = review?.options?.length
+        ? review.options
+        : ["No response data available"];
+      options.slice(0, 4).forEach((label, index) => {
+        const isCorrect = index === review?.correctIndex;
+        const optionCount = review?.answerCounts?.[index] ?? 0;
+        context.fillStyle = isCorrect ? "rgba(69,184,255,0.92)" : "rgba(255,102,112,0.72)";
+        context.fillRect(50, y - 34, 790, 66);
+        context.fillStyle = "#071426";
+        context.font = "700 29px Arial";
+        context.fillText(`${String.fromCharCode(65 + index)}. ${label}`, 70, y + 9);
+        context.textAlign = "right";
+        context.fillText(`${percent(optionCount)}%`, 815, y + 9);
+        context.textAlign = "left";
+        y += 82;
+      });
+      return;
+    }
+
+    // Mission progress mirrors the conductor sequence without exposing any
+    // individual student's answer or identity on the shared review display.
+    context.fillStyle = "rgba(4, 17, 35, 0.72)";
+    context.fillRect(48, 104, 804, 92);
+    context.strokeStyle = "rgba(66, 232, 255, 0.55)";
+    context.lineWidth = 3;
+    context.strokeRect(48, 104, 804, 92);
+
+    const missionSteps = [
+      ["LECTURE", "✓", "#77efb2"],
+      ["QUESTIONS", "✓", "#77efb2"],
+      ["CHALLENGE", "✓", "#77efb2"],
+      ["DEBRIEF", "ACTIVE", "#ffc85a"],
+    ] as const;
+    missionSteps.forEach(([label, state, color], index) => {
+      const x = 72 + index * 196;
+      context.fillStyle = "#dcecff";
+      context.font = "700 21px Arial";
+      context.fillText(label, x, 140);
+      context.fillStyle = color;
+      context.font = "700 20px Arial";
+      context.fillText(state, x, 174);
+      if (index < missionSteps.length - 1) {
+        context.fillStyle = "#7890ad";
+        context.font = "700 28px Arial";
+        context.fillText("›", x + 162, 160);
+      }
+    });
+
+    context.fillStyle = "#9db4d0";
+    context.font = "700 23px Arial";
+    context.fillText("COMPLETION TIME", 54, 246);
+    context.fillStyle = "#8af3ff";
+    context.font = "700 58px Arial";
+    context.fillText(formatTime(review?.elapsedSeconds ?? 0), 54, 310);
+
+    context.fillStyle = "rgba(69, 184, 255, 0.14)";
+    context.fillRect(48, 350, 804, 126);
+    context.strokeStyle = "rgba(69, 184, 255, 0.72)";
+    context.lineWidth = 4;
+    context.strokeRect(48, 350, 804, 126);
+    context.fillStyle = "#dcecff";
+    context.font = "700 29px Arial";
+    context.fillText("CORRECT ANSWERS", 76, 400);
+    context.fillStyle = "#45b8ff";
+    context.font = "700 58px Arial";
+    context.textAlign = "right";
+    context.fillText(`${percent(correctCount)}%`, 820, 438);
+    context.textAlign = "left";
+
+    context.fillStyle = "rgba(255, 200, 90, 0.12)";
+    context.fillRect(48, 504, 804, 126);
+    context.strokeStyle = "rgba(255, 200, 90, 0.72)";
+    context.lineWidth = 4;
+    context.strokeRect(48, 504, 804, 126);
+    context.fillStyle = "#dcecff";
+    context.font = "700 29px Arial";
+    context.fillText("STUDENTS WITH A MISTAKE", 76, 554);
+    context.fillStyle = "#ffc85a";
+    context.font = "700 48px Arial";
+    context.textAlign = "right";
+    context.fillText(`${wrongCount}`, 820, 596);
+    context.textAlign = "left";
+  }
+
+  private redrawDebriefScreens(): void {
+    this.drawDebriefPanel(this.debriefLeftCanvas, "summary");
+    this.drawDebriefPanel(this.debriefRightCanvas, "errors");
+    if (this.debriefLeftTexture) this.debriefLeftTexture.needsUpdate = true;
+    if (this.debriefRightTexture) this.debriefRightTexture.needsUpdate = true;
+  }
+
+  private positionDebriefSideWindows(): void {
+    if (!this.debriefLeftScreen || !this.debriefRightScreen) return;
+
+    if (this.debriefView === "immersive360") {
+      this.debriefLeftScreen.scale.setScalar(1);
+      this.debriefRightScreen.scale.setScalar(1);
+      this.debriefLeftScreen.position.set(-5.75, 3.0, 6.35);
+      this.debriefLeftScreen.rotation.set(0, Math.PI - 0.44, 0);
+      this.debriefRightScreen.position.set(5.75, 3.0, 6.35);
+      this.debriefRightScreen.rotation.set(0, Math.PI + 0.44, 0);
+      return;
+    }
+
+    const projector = this.world.scene.getObjectByName("ProjectorScreen") as Mesh;
+    const leftBezel = this.world.scene.getObjectByName("ScreenBezel_Left") as Mesh;
+    const rightBezel = this.world.scene.getObjectByName("ScreenBezel_Right") as Mesh;
+    if (!projector || !leftBezel || !rightBezel) return;
+
+    // Anchor to the projector geometry's own visible screen edges. A world
+    // Box3 can absorb surrounding transformed classroom geometry and place the
+    // panels at the wall edges instead of at the projector frame.
+    projector.updateWorldMatrix(true, false);
+    leftBezel.updateWorldMatrix(true, false);
+    rightBezel.updateWorldMatrix(true, false);
+    projector.geometry.computeBoundingBox();
+    leftBezel.geometry.computeBoundingBox();
+    rightBezel.geometry.computeBoundingBox();
+    const bounds = projector.geometry.boundingBox;
+    const leftBounds = leftBezel.geometry.boundingBox;
+    const rightBounds = rightBezel.geometry.boundingBox;
+    if (!bounds || !leftBounds || !rightBounds) return;
+    const localCenter = bounds.getCenter(new Vector3());
+    const leftLocalCenter = leftBounds.getCenter(new Vector3());
+    const rightLocalCenter = rightBounds.getCenter(new Vector3());
+    const edgeA = new Vector3(
+      leftBounds.min.x,
+      leftLocalCenter.y,
+      leftLocalCenter.z
+    ).applyMatrix4(leftBezel.matrixWorld);
+    const edgeB = new Vector3(
+      rightBounds.max.x,
+      rightLocalCenter.y,
+      rightLocalCenter.z
+    ).applyMatrix4(rightBezel.matrixWorld);
+    const center = localCenter.clone().applyMatrix4(projector.matrixWorld);
+    const screenRight = edgeB.clone().sub(edgeA).normalize();
+    const viewerPosition = new Vector3();
+    const presentationSeat = this.world.scene.getObjectByName("Seat_R1_03");
+    if (presentationSeat) {
+      presentationSeat.getWorldPosition(viewerPosition);
+    } else {
+      this.player.getWorldPosition(viewerPosition);
+    }
+    // setDebriefReviewVisible runs before the instructor is moved to the
+    // presentation seat. Always use the stable first-row viewing axis here;
+    // using the player's old position turns the panels almost edge-on.
+    const towardViewer = viewerPosition.clone().sub(center);
+    towardViewer.y = 0;
+    towardViewer.normalize();
+    const forwardOffset = towardViewer.clone().multiplyScalar(0.12);
+
+    // Match the classroom projector's 3.4 m height. Full-size 360 panels are
+    // 4.2 m tall and extend all the way onto the classroom side walls.
+    const classroomPanelScale = 0.78;
+    this.debriefLeftScreen.scale.setScalar(classroomPanelScale);
+    this.debriefRightScreen.scale.setScalar(classroomPanelScale);
+
+    // Keep both windows coplanar with the projector face. Angling them like
+    // wings makes them read as objects on the classroom side walls.
+    this.debriefLeftScreen.position
+      .copy(edgeA)
+      .addScaledVector(screenRight, -(3.8 * classroomPanelScale) / 2)
+      .add(forwardOffset);
+    this.debriefRightScreen.position
+      .copy(edgeB)
+      .addScaledVector(screenRight, (3.8 * classroomPanelScale) / 2)
+      .add(forwardOffset);
+    const leftFacingTarget = this.debriefLeftScreen.position
+      .clone()
+      .add(towardViewer);
+    const rightFacingTarget = this.debriefRightScreen.position
+      .clone()
+      .add(towardViewer);
+    this.debriefLeftScreen.lookAt(leftFacingTarget);
+    this.debriefRightScreen.lookAt(rightFacingTarget);
+
+    // Fold the outer edges gently toward the class to form a shallow C/U
+    // shape. Recalculate each center around its inner bezel edge so the fold
+    // behaves like a hinge and never detaches from the projector frame.
+    const classroomWingAngle = 0.68;
+    this.debriefLeftScreen.rotateY(-classroomWingAngle);
+    this.debriefRightScreen.rotateY(classroomWingAngle);
+    const halfPanelWidth = (3.8 * classroomPanelScale) / 2;
+    const leftCandidate = new Vector3(halfPanelWidth, 0, 0)
+      .applyQuaternion(this.debriefLeftScreen.quaternion);
+    const leftInnerOffset = leftCandidate.dot(screenRight) >= 0
+      ? leftCandidate
+      : leftCandidate.multiplyScalar(-1);
+    const rightCandidate = new Vector3(halfPanelWidth, 0, 0)
+      .applyQuaternion(this.debriefRightScreen.quaternion);
+    const rightInnerOffset = rightCandidate.dot(screenRight) <= 0
+      ? rightCandidate
+      : rightCandidate.multiplyScalar(-1);
+    this.debriefLeftScreen.position
+      .copy(edgeA)
+      .add(forwardOffset)
+      .sub(leftInnerOffset);
+    this.debriefRightScreen.position
+      .copy(edgeB)
+      .add(forwardOffset)
+      .sub(rightInnerOffset);
+    this.debriefLeftScreen.updateMatrixWorld(true);
+    this.debriefRightScreen.updateMatrixWorld(true);
+  }
+
+  private setDebriefReviewVisible(visible: boolean): void {
+    const showSideWindows =
+      visible &&
+      this.presentationMediaType === "image";
+    const showImmersiveRoom =
+      showSideWindows && this.debriefView === "immersive360";
+    // The legacy cinema box is an opaque, inward-facing room. Hide it while
+    // the debrief sphere is active or it masks the 360-degree space texture.
+    if (showImmersiveRoom && this.blackRoom) this.blackRoom.visible = false;
+    if (showSideWindows) this.positionDebriefSideWindows();
+    // Summary and mistakes flank the real classroom projector just as they
+    // flank the artificial center screen in the 360-degree review room.
+    if (this.debriefLeftScreen) this.debriefLeftScreen.visible = showSideWindows;
+    if (this.debriefRightScreen) this.debriefRightScreen.visible = showSideWindows;
+    if (this.debriefCenterFrame) this.debriefCenterFrame.visible = showImmersiveRoom;
+    if (this.debriefBoardFrame) this.debriefBoardFrame.visible = showImmersiveRoom;
+    if (this.debriefBoardBack) this.debriefBoardBack.visible = showImmersiveRoom;
+    if (this.debriefSpaceSphere) this.debriefSpaceSphere.visible = showImmersiveRoom;
+    if (this.presentationScreen) {
+      this.presentationScreen.scale.set(
+        showImmersiveRoom ? 0.66 : 1.18,
+        showImmersiveRoom ? 0.76 : 1,
+        1
+      );
+      this.presentationScreen.position.set(
+        0,
+        showImmersiveRoom ? 3.0 : 2.8,
+        showImmersiveRoom ? 7.25 : 6.2
+      );
+    }
   }
 
   private togglePresentationMode() {
@@ -923,9 +1453,16 @@ export class PresentationSystem extends createSystem({
       return;
     }
 
-    const transition =
-      (window as any).performEnvironmentTransition as
-        ((action: () => void) => Promise<void>) | undefined;
+    // Both debrief destinations use the doorway. The selected view only
+    // controls what is revealed after the doorway finishes.
+    const transition = this.presentationMediaType === "image"
+      ? (action: () => void) => {
+          const viewer = this.renderer.xr.isPresenting
+            ? this.renderer.xr.getCamera()
+            : this.camera;
+          return this.debriefDoorTransition!.play(action, viewer);
+        }
+      : undefined;
 
     if (!transition) {
       this.applyPresentationMode();
@@ -933,9 +1470,26 @@ export class PresentationSystem extends createSystem({
     }
 
     this.transitionInProgress = true;
-    void transition(() => {
+    (window as any).isPresentationTransitionInProgress = true;
+    void transition(async () => {
       this.applyPresentationMode();
+      // applyPresentationMode reveals the center image, side displays, frames,
+      // and space background in one frame. Avoid an extra delayed center-image
+      // reveal that makes the final board look assembled in separate pieces.
+    }).finally(() => {
+      // The environment swap happens before the final doorway fade completes.
+      // Keep presentation controls/launchers locked until the entire transfer
+      // has finished, then reveal the classroom launcher at its normal parent.
       this.transitionInProgress = false;
+      (window as any).isPresentationTransitionInProgress = false;
+      if (this.pendingClassroomReturn) {
+        this.pendingClassroomReturn = false;
+        if (this.isPresentationMode) {
+          this.togglePresentationMode();
+          return;
+        }
+      }
+      (window as any).refreshInstructorMenuButton?.();
     });
   }
 
@@ -946,30 +1500,63 @@ export class PresentationSystem extends createSystem({
     this.createCinemaObjects();
 
     if (!this.isPresentationMode) {
+      const useImmersiveRoom =
+        this.presentationMediaType === "video" ||
+        this.debriefView === "immersive360";
       this.savedSeatPosition.copy(this.player.position);
       this.savedSeatQuaternion.copy(this.player.quaternion);
-      this.savedSeatRotationY = this.player.rotation.y;
       (window as any).isPresentationOpen = true;
       (window as any).isPresentationActive = true;
       const menuButton = (window as any).instructorMenuButtonObject;
       if (menuButton) menuButton.visible = false;
-      if (classroomMesh) classroomMesh.visible = false;
-      if (instructorMesh) instructorMesh.visible = false;
-      // Keep lightweight named 2D astronaut avatars visible after the
-      // physical classroom and seats are hidden for presentation mode.
-      setSeatMarkerTheme("astronaut");
-      setSeatMarkersSuppressed(false);
-      showAllMarkers();
+      if (classroomMesh) classroomMesh.visible = !useImmersiveRoom;
+      if (instructorMesh) {
+        // The static stage avatar blocks the classroom projector from the
+        // presentation viewing point, so hide it for students and instructor
+        // throughout either debrief destination.
+        instructorMesh.visible = false;
+      }
+      if (useImmersiveRoom) {
+        // Keep lightweight named 2D astronaut avatars visible after the
+        // physical classroom and seats are hidden for presentation mode.
+        setSeatMarkerTheme("astronaut");
+        setSeatMarkersSuppressed(false);
+        showAllMarkers();
+      }
+      this.setClassroomDebriefDimmed(
+        this.presentationMediaType === "image" &&
+        this.debriefView === "classroom"
+      );
       this.setClassroomUiVisible(false);
-      if (this.blackRoom) this.blackRoom.visible = true;
-      if (this.presentationScreen) this.presentationScreen.visible = true;
+      if (this.blackRoom) this.blackRoom.visible = useImmersiveRoom;
+      if (this.presentationScreen) {
+        this.presentationScreen.visible = useImmersiveRoom;
+      }
+      this.setClassroomProjectorDebriefVisible(!useImmersiveRoom);
+      this.setDebriefReviewVisible(true);
       if (this.videoTexture) this.applyVideoTexture();
       else this.updatePresentationTexture();
 
-      this.renderer.setClearColor(0x000000, 1);
+      this.renderer.setClearColor(useImmersiveRoom ? 0x000000 : 0x87ceeb, 1);
 
-      this.player.position.set(0, 1.0, -1.8);
-      this.player.quaternion.set(0, 1, 0, 0);
+      // Both debrief choices use the established presentation viewing point.
+      // The classroom choice differs only in keeping the dimmed classroom and
+      // targeting its real projector instead of revealing the 360 room.
+      if (!useImmersiveRoom) {
+        // Instructor and students share the same first-row center viewing
+        // position for the in-class debrief.
+        this.positionInstructorAtFirstRowCenter();
+      } else {
+        this.player.position.set(0, 1.0, -1.8);
+      }
+      if (useImmersiveRoom) {
+        this.player.quaternion.set(0, 1, 0, 0);
+      } else {
+        this.facePlayerTowardClassroomProjector();
+      }
+      if ((window as any).isInstructor && instructorMesh) {
+        instructorMesh.visible = false;
+      }
 
       this.isPresentationMode = true;
       (window as any).positionStudentRaiseHand?.(true);
@@ -985,16 +1572,24 @@ export class PresentationSystem extends createSystem({
     } else {
       this.player.position.copy(this.savedSeatPosition);
       this.player.quaternion.copy(this.savedSeatQuaternion);
-      this.player.rotation.y = this.savedSeatRotationY;
+      // Restoring the quaternion is sufficient and preserves the exact saved
+      // classroom orientation. Writing Euler Y afterward can partially
+      // overwrite that orientation on an active XR rig.
       (window as any).isPresentationOpen = false;
       (window as any).isPresentationActive = false;
       if (classroomMesh) classroomMesh.visible = true;
-      if (instructorMesh) instructorMesh.visible = true;
+      this.setClassroomDebriefDimmed(false);
+      if (instructorMesh) {
+        instructorMesh.visible = !(window as any).isInstructor;
+      }
       setSeatMarkersSuppressed(false);
       setSeatMarkerTheme("default");
+      restoreSeatMarkersAfterDebrief();
       this.setClassroomUiVisible(true);
       if (this.blackRoom) this.blackRoom.visible = false;
       if (this.presentationScreen) this.presentationScreen.visible = false;
+      this.setClassroomProjectorDebriefVisible(false);
+      this.setDebriefReviewVisible(false);
       this.videoElement?.pause();
 
       this.renderer.setClearColor(0x87ceeb, 1);
@@ -1005,13 +1600,118 @@ export class PresentationSystem extends createSystem({
       this.setAnnotationLaserVisible(false);
       (window as any).positionStudentRaiseHand?.(false);
       this.setControlsVisible(false);
-      (window as any).refreshInstructorMenuButton?.();
+      // During a debrief return, the doorway is still fading after this scene
+      // swap. Its floating dashboard launcher is restored by the transition's
+      // completion handler so it never appears inside the transfer effect.
+      if (!this.transitionInProgress) {
+        (window as any).refreshInstructorMenuButton?.();
+      }
       window.dispatchEvent(
         new CustomEvent("restoreClassroomSeat")
       );
       console.log("🏫 Returned to Classroom Mode");
       socket.emit("modeChanged", "Classroom Mode");
     }
+  }
+
+  private setClassroomDebriefDimmed(dimmed: boolean): void {
+    const classroomMesh = (window as any).classroomMesh;
+    if (!classroomMesh) return;
+
+    const lights = [
+      classroomMesh.getObjectByName("ClassroomBalancedFill"),
+      classroomMesh.getObjectByName("ClassroomStageKey")
+    ].filter(Boolean) as Array<{ intensity: number }>;
+
+    if (dimmed) {
+      for (const light of lights) {
+        if (!this.savedClassroomLightIntensities.has(light)) {
+          this.savedClassroomLightIntensities.set(light, light.intensity);
+        }
+        light.intensity =
+          (this.savedClassroomLightIntensities.get(light) ?? light.intensity) * 0.52;
+      }
+      return;
+    }
+
+    for (const [light, intensity] of this.savedClassroomLightIntensities) {
+      light.intensity = intensity;
+    }
+    this.savedClassroomLightIntensities.clear();
+  }
+
+  private setClassroomProjectorDebriefVisible(visible: boolean): void {
+    const projector = this.world.scene.getObjectByName("ProjectorScreen") as Mesh;
+    if (!projector) return;
+
+    if (visible) {
+      if (!this.classroomProjectorOriginalMaterial) {
+        this.classroomProjector = projector;
+        this.classroomProjectorOriginalMaterial = projector.material;
+      }
+      this.classroomProjectorDebriefMaterial?.dispose();
+      this.classroomProjectorTexture?.dispose();
+      this.classroomProjectorTexture = this.videoTexture?.clone();
+      if (this.classroomProjectorTexture) {
+        // The GLTF projector UVs are vertically inverted relative to the
+        // canvas texture used by the cinema plane.
+        this.classroomProjectorTexture.repeat.y = -1;
+        this.classroomProjectorTexture.offset.y = 1;
+        this.classroomProjectorTexture.needsUpdate = true;
+      }
+      this.classroomProjectorDebriefMaterial = new MeshBasicMaterial({
+        map: this.classroomProjectorTexture,
+        color: 0xffffff,
+        side: DoubleSide,
+        toneMapped: false
+      });
+      projector.material = this.classroomProjectorDebriefMaterial;
+      projector.visible = true;
+      return;
+    }
+
+    if (this.classroomProjector && this.classroomProjectorOriginalMaterial) {
+      this.classroomProjector.material = this.classroomProjectorOriginalMaterial;
+    }
+    this.classroomProjectorDebriefMaterial?.dispose();
+    this.classroomProjectorTexture?.dispose();
+    this.classroomProjectorDebriefMaterial = undefined;
+    this.classroomProjectorTexture = undefined;
+    this.classroomProjector = undefined;
+    this.classroomProjectorOriginalMaterial = undefined;
+  }
+
+  private facePlayerTowardClassroomProjector(): void {
+    const projector = this.world.scene.getObjectByName("ProjectorScreen") as Mesh;
+    if (!projector) return;
+
+    const projectorPosition = new Vector3();
+    const playerPosition = new Vector3();
+    projector.getWorldPosition(projectorPosition);
+    this.player.getWorldPosition(playerPosition);
+    const directionX = projectorPosition.x - playerPosition.x;
+    const directionZ = projectorPosition.z - playerPosition.z;
+    this.player.rotation.set(
+      0,
+      Math.atan2(-directionX, -directionZ),
+      0
+    );
+    this.player.updateMatrixWorld(true);
+  }
+
+  private positionInstructorAtFirstRowCenter(): void {
+    const centerSeat = this.world.scene.getObjectByName("Seat_R1_03");
+    if (!centerSeat) {
+      // Keep a deterministic fallback if a future classroom model renames the
+      // first-row center anchor.
+      this.player.position.set(0, 1.0, -3.4);
+      return;
+    }
+
+    const seatPosition = new Vector3();
+    centerSeat.getWorldPosition(seatPosition);
+    this.player.position.copy(seatPosition);
+    this.player.updateMatrixWorld(true);
   }
 
   private setClassroomUiVisible(visible: boolean): void {
@@ -1082,6 +1782,7 @@ export class PresentationSystem extends createSystem({
     socket.off("videoPlaybackCommand", this.onVideoPlaybackCommand);
     socket.off("presentationContentChanged", this.onPresentationContentChanged);
     socket.off("briefingAnnotation", this.onBriefingAnnotation);
+    socket.off("debriefReviewData", this.onDebriefReviewData);
     this.renderer.domElement.removeEventListener("pointerdown", this.onAnnotationPointerDown);
     this.renderer.domElement.removeEventListener("pointermove", this.onAnnotationPointerMove);
     window.removeEventListener("pointerup", this.onAnnotationPointerUp);
@@ -1091,6 +1792,7 @@ export class PresentationSystem extends createSystem({
     this.setMarkerRayColor(false);
     this.videoElement?.pause();
     this.videoTexture?.dispose();
+    this.debriefDoorTransition?.dispose();
     this.setControlsVisible(false);
     console.log("[PresentationSystem] Destroyed");
   }

@@ -1,5 +1,12 @@
 /// <reference types="vite/client" />
-// src/index.ts
+/**
+ * Browser/VR application entry point.
+ *
+ * Goal: load IWSDK assets, create the classroom world, register ECS systems,
+ * connect the authenticated user, and coordinate mode/environment changes.
+ * Depends on login identity, Socket.IO events, Supabase session services,
+ * classroom GLBs/textures, UI documents, and the systems under src/systems.
+ */
 
 import {
   ACESFilmicToneMapping,
@@ -1273,7 +1280,7 @@ World.create(
 
       quickChallengeEnvironment.visible = visible;
       envMesh.visible = !visible;
-      instructorMesh.visible = !visible;
+      instructorMesh.visible = !visible && !(window as any).isInstructor;
       // Tier end caps are attached directly to the scene rather than envMesh,
       // so they must be hidden explicitly with the rest of the classroom.
       tierEndCaps.visible = !visible;
@@ -1404,8 +1411,11 @@ World.create(
     instructorMesh.position.y += 1.3;
     instructorMesh.quaternion.copy(instructorStageQuaternion);
     instructorMesh.scale.set(2.5, 2.5, 2.5);
-    instructorMesh.visible = isStudent;
     world.createTransformEntity(instructorMesh);
+    // Students should see the instructor on the stage, but the instructor
+    // must not see their own static GLB avatar. Apply visibility after entity
+    // registration because the SDK may update the object during registration.
+    instructorMesh.visible = !isInstructor;
     console.log("[Instructor] Static avatar visible:", instructorMesh.visible);
 
     // ========================================================
@@ -1711,6 +1721,9 @@ World.create(
             .isInstructorDashboardOpen
         );
       const presentationOpen = Boolean((window as any).isPresentationOpen);
+      const presentationTransitionInProgress = Boolean(
+        (window as any).isPresentationTransitionInProgress
+      );
       const anotherInstructorPanelOpen =
         Boolean(
           (window as any)
@@ -1723,11 +1736,13 @@ World.create(
         Boolean(
           (window as any)
             .isInstructorMistakesOpen
-        );
+        ) ||
+        Boolean((window as any).isInstructorDebriefChoiceOpen);
       const targetParent =
         renderer.xr.isPresenting &&
         !dashboardOpen &&
         !presentationOpen &&
+        !presentationTransitionInProgress &&
         !anotherInstructorPanelOpen
           ? world.player.raySpaces.right
           : camera;
@@ -1760,6 +1775,7 @@ World.create(
       instructorMenuButtonObject.visible =
         !dashboardOpen &&
         !presentationOpen &&
+        !presentationTransitionInProgress &&
         !anotherInstructorPanelOpen;
       instructorMenuButtonObject.updateMatrix();
       instructorMenuButtonObject.updateMatrixWorld(true);
@@ -1860,6 +1876,8 @@ World.create(
 
     let instructorDashboardEntity: any = null;
     let instructorDashboardObject: THREE.Object3D | null = null;
+    let instructorDebriefChoiceEntity: any = null;
+    let instructorDebriefChoiceObject: THREE.Object3D | null = null;
     let instructorLabMonitorEntity: any = null;
     let instructorLabMonitorObject: THREE.Object3D | null = null;
     let instructorLabMonitorButtonEntity: any = null;
@@ -1870,12 +1888,65 @@ World.create(
     let instructorQuizMonitorEntity: any = null;
     let instructorQuizMonitorObject: THREE.Object3D | null = null;
     let instructorVideoControlsEntity: any = null;
-    // Place the dashboard from the instructor stage anchor rather than the
-    // table model. This keeps it at reachable eye level and a comfortable ray
-    // distance even when the classroom model is rescaled or replaced.
-    const instructorDashboardPosition = instructorStagePosition
-      .clone()
-      .add(new THREE.Vector3(0, 1.48, 1.55));
+    // Capture the headset pose when a large instructor panel opens, then keep
+    // the panel under the scene. It opens in front of the instructor but does
+    // not continue following later headset movement or rotation.
+    const positionLargeInstructorPanel = (
+      panel: THREE.Object3D,
+      scale: number,
+      verticalOffset: number,
+      distance: number
+    ): void => {
+      camera.updateMatrixWorld(true);
+      const cameraPosition = new THREE.Vector3();
+      const cameraQuaternion = new THREE.Quaternion();
+      camera.getWorldPosition(cameraPosition);
+      camera.getWorldQuaternion(cameraQuaternion);
+      const cameraRelativeOffset = new THREE.Vector3(
+        0,
+        verticalOffset,
+        -distance
+      ).applyQuaternion(cameraQuaternion);
+
+      if (panel.parent !== world.scene) {
+        world.scene.add(panel);
+      }
+      panel.position.copy(cameraPosition).add(cameraRelativeOffset);
+      panel.quaternion.copy(cameraQuaternion);
+      panel.scale.setScalar(scale);
+      panel.updateMatrixWorld(true);
+    };
+
+    const setLargeInstructorPanelInteractive = (
+      panel: THREE.Object3D,
+      interactive: boolean
+    ): void => {
+      panel.pointerEvents = interactive ? "auto" : "none";
+      panel.traverse((child: any) => {
+        child.pointerEvents = interactive ? "auto" : "none";
+      });
+    };
+
+    const hideLargeInstructorPanel = (panel: THREE.Object3D): void => {
+      setLargeInstructorPanelInteractive(panel, false);
+      panel.visible = false;
+      // IWSDK ray targets can outlive Three.js visibility changes. Moving the
+      // hidden target away guarantees it cannot sit in front of the open panel.
+      panel.position.set(0, -100, 0);
+      panel.updateMatrixWorld(true);
+    };
+
+    const showLargeInstructorPanel = (
+      panel: THREE.Object3D,
+      scale: number,
+      verticalOffset: number,
+      distance: number
+    ): void => {
+      positionLargeInstructorPanel(panel, scale, verticalOffset, distance);
+      panel.visible = true;
+      setLargeInstructorPanelInteractive(panel, true);
+      panel.updateMatrixWorld(true);
+    };
 
     if (isInstructor) {
       instructorVideoControlsEntity = world
@@ -1922,21 +1993,51 @@ World.create(
 
       instructorDashboardObject = instructorDashboardEntity.object3D ?? null;
       if (instructorDashboardObject) {
-        scene.add(instructorDashboardObject);
+        positionLargeInstructorPanel(instructorDashboardObject, 0.92, -0.14, 2.8);
         instructorDashboardObject.pointerEventsOrder = 1000;
         instructorDashboardObject.renderOrder = 10000;
-        instructorDashboardObject.position.set(
-          instructorDashboardPosition.x,
-          -100,
-          instructorDashboardPosition.z
-        );
-        instructorDashboardObject.rotation.set(0, 0, 0);
-        instructorDashboardObject.scale.set(1.15, 1.15, 1.15);
-        instructorDashboardObject.visible = false;
+        hideLargeInstructorPanel(instructorDashboardObject);
         instructorDashboardObject.frustumCulled = false;
         instructorDashboardObject.updateMatrixWorld(true);
         console.log("[Instructor Dashboard] Created and hidden.");
       }
+
+      instructorDebriefChoiceEntity = world
+        .createTransformEntity()
+        .addComponent(PanelUI, {
+          config: "./ui/instructor-debrief-choice.json",
+          maxWidth: 2.35,
+          maxHeight: 1.35
+        })
+        .addComponent(RayInteractable);
+
+      instructorDebriefChoiceObject =
+        instructorDebriefChoiceEntity.object3D ?? null;
+      if (instructorDebriefChoiceObject) {
+        world.scene.add(instructorDebriefChoiceObject);
+        instructorDebriefChoiceObject.position.set(0, -100, 0);
+        instructorDebriefChoiceObject.pointerEvents = "none";
+        instructorDebriefChoiceObject.pointerEventsOrder = 14000;
+        // Keep the static UIKit tree alive offscreen so its text geometry is
+        // fully built before the first time the instructor opens it.
+        instructorDebriefChoiceObject.visible = true;
+        instructorDebriefChoiceObject.frustumCulled = false;
+      }
+
+      (window as any).isInstructorDebriefChoiceOpen = false;
+      (window as any).setInstructorDebriefChoiceOpen = (open: boolean): void => {
+        if (!instructorDebriefChoiceObject) return;
+        (window as any).isInstructorDebriefChoiceOpen = open;
+        if (open) {
+          showLargeInstructorPanel(instructorDebriefChoiceObject, 1, -0.12, 2.25);
+          instructorDebriefChoiceObject.pointerEventsOrder = 14000;
+        } else {
+          setLargeInstructorPanelInteractive(instructorDebriefChoiceObject, false);
+          instructorDebriefChoiceObject.position.set(0, -100, 0);
+          instructorDebriefChoiceObject.updateMatrixWorld(true);
+        }
+        attachInstructorMenuToCamera();
+      };
 
       instructorQuizMonitorEntity = world
         .createTransformEntity()
@@ -1951,10 +2052,9 @@ World.create(
         instructorQuizMonitorEntity.object3D ?? null;
 
       if (instructorQuizMonitorObject) {
-        camera.add(instructorQuizMonitorObject);
+        positionLargeInstructorPanel(instructorQuizMonitorObject, 1, -0.32, 2.85);
         instructorQuizMonitorObject.pointerEventsOrder = 13000;
-        instructorQuizMonitorObject.position.set(0, -100, -2.85);
-        instructorQuizMonitorObject.visible = false;
+        hideLargeInstructorPanel(instructorQuizMonitorObject);
         instructorQuizMonitorObject.frustumCulled = false;
       }
 
@@ -1963,18 +2063,13 @@ World.create(
         if (!instructorQuizMonitorObject) return;
 
         (window as any).isInstructorQuizMonitorOpen = open;
-        instructorQuizMonitorObject.visible = open;
-        instructorQuizMonitorObject.position.set(
-          0,
-          open ? -0.32 : -100,
-          -2.85
-        );
-        instructorQuizMonitorObject.rotation.set(0, 0, 0);
-        instructorQuizMonitorObject.scale.set(1, 1, 1);
-        instructorQuizMonitorObject.pointerEvents = open ? "auto" : "none";
+        if (open) {
+          showLargeInstructorPanel(instructorQuizMonitorObject, 1, -0.32, 2.85);
+        } else {
+          hideLargeInstructorPanel(instructorQuizMonitorObject);
+        }
         instructorQuizMonitorObject.pointerEventsOrder = 13000;
         instructorQuizMonitorObject.traverse((child: any) => {
-          child.pointerEvents = open ? "auto" : "none";
           child.pointerEventsOrder = 13001;
         });
         instructorQuizMonitorObject.updateMatrixWorld(true);
@@ -1992,16 +2087,17 @@ World.create(
         if (open && instructorDashboardObject) {
           isInstructorDashboardOpen = false;
           (window as any).isInstructorDashboardOpen = false;
-          instructorDashboardObject.visible = false;
-          instructorDashboardObject.position.set(0, -100, -2.85);
-          instructorDashboardObject.updateMatrixWorld(true);
+          hideLargeInstructorPanel(instructorDashboardObject);
         }
 
         if (open && instructorLabMonitorObject) {
           (window as any).isInstructorLabMonitorOpen = false;
-          instructorLabMonitorObject.visible = false;
-          instructorLabMonitorObject.position.set(0, -100, -2.85);
-          instructorLabMonitorObject.updateMatrixWorld(true);
+          hideLargeInstructorPanel(instructorLabMonitorObject);
+        }
+
+        if (open && instructorMistakesObject) {
+          (window as any).isInstructorMistakesOpen = false;
+          hideLargeInstructorPanel(instructorMistakesObject);
         }
 
         // Refresh the shared floating Results launcher. It must not sit on
@@ -2030,12 +2126,9 @@ World.create(
         instructorLabMonitorEntity.object3D ?? null;
 
       if (instructorLabMonitorObject) {
-        camera.add(instructorLabMonitorObject);
+        positionLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
         instructorLabMonitorObject.pointerEventsOrder = 11000;
-        instructorLabMonitorObject.position.set(0, -100, -2.85);
-        instructorLabMonitorObject.rotation.set(0, 0, 0);
-        instructorLabMonitorObject.scale.set(1, 1, 1);
-        instructorLabMonitorObject.visible = false;
+        hideLargeInstructorPanel(instructorLabMonitorObject);
         instructorLabMonitorObject.frustumCulled = false;
       }
 
@@ -2072,12 +2165,9 @@ World.create(
         instructorMistakesEntity.object3D ?? null;
 
       if (instructorMistakesObject) {
-        camera.add(instructorMistakesObject);
+        positionLargeInstructorPanel(instructorMistakesObject, 1, -0.32, 2.85);
         instructorMistakesObject.pointerEventsOrder = 12000;
-        instructorMistakesObject.position.set(0, -100, -2.85);
-        instructorMistakesObject.rotation.set(0, 0, 0);
-        instructorMistakesObject.scale.set(1, 1, 1);
-        instructorMistakesObject.visible = false;
+        hideLargeInstructorPanel(instructorMistakesObject);
         instructorMistakesObject.frustumCulled = false;
       }
 
@@ -2086,42 +2176,31 @@ World.create(
           if (!instructorMistakesObject) return;
           (window as any).isInstructorMistakesOpen = open;
           instructorMistakesObject.pointerEventsOrder = 12000;
-          instructorMistakesObject.position.set(
-            0,
-            open ? -0.32 : -100,
-            -2.85
-          );
-          instructorMistakesObject.rotation.set(0, 0, 0);
-          instructorMistakesObject.scale.set(1, 1, 1);
-          instructorMistakesObject.visible = open;
-          instructorMistakesObject.updateMatrixWorld(true);
+          if (open) {
+            showLargeInstructorPanel(instructorMistakesObject, 1, -0.32, 2.85);
+          } else {
+            hideLargeInstructorPanel(instructorMistakesObject);
+          }
 
           if (instructorLabMonitorObject) {
-            instructorLabMonitorObject.visible =
-              !open &&
-              Boolean(
-                (window as any).isInstructorLabMonitorOpen
-              );
-            instructorLabMonitorObject.position.set(
-              0,
-              instructorLabMonitorObject.visible
-                ? -0.32
-                : -100,
-              -2.85
-            );
-            instructorLabMonitorObject.updateMatrixWorld(true);
+            const showLabMonitor =
+              !open && Boolean((window as any).isInstructorLabMonitorOpen);
+            if (showLabMonitor) {
+              showLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
+            } else {
+              hideLargeInstructorPanel(instructorLabMonitorObject);
+            }
           }
 
           if (open && instructorDashboardObject) {
             isInstructorDashboardOpen = false;
             (window as any).isInstructorDashboardOpen = false;
-            instructorDashboardObject.visible = false;
-            instructorDashboardObject.position.set(
-              0,
-              -100,
-              -2.85
-            );
-            instructorDashboardObject.updateMatrixWorld(true);
+            hideLargeInstructorPanel(instructorDashboardObject);
+          }
+
+          if (open && instructorQuizMonitorObject) {
+            (window as any).isInstructorQuizMonitorOpen = false;
+            hideLargeInstructorPanel(instructorQuizMonitorObject);
           }
 
           attachInstructorMenuToCamera();
@@ -2197,37 +2276,26 @@ World.create(
 
           (window as any).isInstructorLabMonitorOpen = open;
           instructorLabMonitorObject.pointerEventsOrder = 11000;
-          instructorLabMonitorObject.visible = open;
-          instructorLabMonitorObject.position.set(
-            0,
-            open ? -0.32 : -100,
-            -2.85
-          );
-          instructorLabMonitorObject.rotation.set(0, 0, 0);
-          instructorLabMonitorObject.scale.set(1, 1, 1);
-          instructorLabMonitorObject.updateMatrixWorld(true);
+          if (open) {
+            showLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
+          } else {
+            hideLargeInstructorPanel(instructorLabMonitorObject);
+          }
 
           if (open && instructorDashboardObject) {
             isInstructorDashboardOpen = false;
             (window as any).isInstructorDashboardOpen = false;
-            instructorDashboardObject.visible = false;
-            instructorDashboardObject.position.set(
-              0,
-              -100,
-              -2.85
-            );
-            instructorDashboardObject.updateMatrixWorld(true);
+            hideLargeInstructorPanel(instructorDashboardObject);
           }
 
           if (open && instructorMistakesObject) {
             (window as any).isInstructorMistakesOpen = false;
-            instructorMistakesObject.visible = false;
-            instructorMistakesObject.position.set(
-              0,
-              -100,
-              -2.85
-            );
-            instructorMistakesObject.updateMatrixWorld(true);
+            hideLargeInstructorPanel(instructorMistakesObject);
+          }
+
+          if (open && instructorQuizMonitorObject) {
+            (window as any).isInstructorQuizMonitorOpen = false;
+            hideLargeInstructorPanel(instructorQuizMonitorObject);
           }
 
           if (instructorMenuButtonObject) {
@@ -2294,54 +2362,45 @@ World.create(
     function setInstructorDashboardOpen(open: boolean): void {
       if (!isInstructor || !instructorDashboardObject) return;
 
+      // A controller trigger can remain active after selecting Emergency
+      // Return. Ignore attempts to open the large dashboard until the entire
+      // doorway transfer—not merely its environment swap—has completed.
+      if (
+        open &&
+        (Boolean((window as any).isPresentationOpen) ||
+          Boolean((window as any).isPresentationTransitionInProgress))
+      ) {
+        hideLargeInstructorPanel(instructorDashboardObject);
+        return;
+      }
+
       isInstructorDashboardOpen = open;
       (window as any).isInstructorDashboardOpen = open;
 
       if (open && instructorLabMonitorObject) {
         (window as any).isInstructorLabMonitorOpen = false;
-        instructorLabMonitorObject.visible = false;
-        instructorLabMonitorObject.position.set(
-          0,
-          -100,
-          -2.85
-        );
-        instructorLabMonitorObject.updateMatrixWorld(true);
+        hideLargeInstructorPanel(instructorLabMonitorObject);
       }
 
       if (open && instructorQuizMonitorObject) {
         (window as any).isInstructorQuizMonitorOpen = false;
-        instructorQuizMonitorObject.visible = false;
-        instructorQuizMonitorObject.position.set(0, -100, -2.85);
-        instructorQuizMonitorObject.updateMatrixWorld(true);
+        hideLargeInstructorPanel(instructorQuizMonitorObject);
       }
 
       if (open && instructorMistakesObject) {
         (window as any).isInstructorMistakesOpen = false;
-        instructorMistakesObject.visible = false;
-        instructorMistakesObject.position.set(
-          0,
-          -100,
-          -2.85
-        );
-        instructorMistakesObject.updateMatrixWorld(true);
+        hideLargeInstructorPanel(instructorMistakesObject);
       }
 
-      // Keep the open dashboard in camera space. This guarantees a stable,
-      // reachable position in both browser XR and the physical headset and
-      // prevents the table or classroom shell from sitting in front of it.
-      if (instructorDashboardObject.parent !== camera) {
-        camera.add(instructorDashboardObject);
+      // Capture a world-space pose directly in front of the current headset.
+      // Because the panel remains a scene child, it stays there after opening.
+      if (open) {
+        showLargeInstructorPanel(instructorDashboardObject, 0.92, -0.14, 2.8);
+      } else {
+        hideLargeInstructorPanel(instructorDashboardObject);
       }
       instructorDashboardObject.pointerEventsOrder = 10000;
       instructorDashboardObject.renderOrder = 10000;
-      instructorDashboardObject.position.set(
-        0,
-        open ? -0.14 : -100,
-        -2.8
-      );
-      instructorDashboardObject.rotation.set(0, 0, 0);
-      instructorDashboardObject.scale.set(0.92, 0.92, 0.92);
-      instructorDashboardObject.visible = open;
       instructorDashboardObject.frustumCulled = false;
       instructorDashboardObject.traverse((object) => {
         const mesh = object as THREE.Mesh;
@@ -2446,14 +2505,9 @@ World.create(
           (window as any).currentMode = data.mode;
         }
 
-        if ((window as any).presentationSystem) {
-          console.log(`[Student] 🎬 Calling presentation system for mode: ${data.mode}`);
-          if (data.mode === "Presentation Mode") {
-            (window as any).presentationSystem.enterPresentationMode();
-          } else if (data.mode === "Classroom Mode") {
-            (window as any).presentationSystem.exitPresentationMode();
-          }
-        }
+        // PresentationSystem owns this transition because it also receives
+        // assetPath/mediaType. Entering here can race that metadata and cause
+        // an image debrief to be treated as an ordinary video on Quest.
       });
 
       socket.on("studentModeChanged", (data: { studentId: string; mode: string; destination: string; name: string; seat: string }) => {
@@ -2494,6 +2548,8 @@ World.create(
     (window as any).prepareInstructorView = prepareInstructorView;
     (window as any).instructorDashboardEntity = instructorDashboardEntity;
     (window as any).instructorDashboardObject = instructorDashboardObject;
+    (window as any).instructorDebriefChoiceEntity = instructorDebriefChoiceEntity;
+    (window as any).instructorDebriefChoiceObject = instructorDebriefChoiceObject;
     (window as any).instructorLabMonitorEntity = instructorLabMonitorEntity;
     (window as any).instructorLabMonitorObject = instructorLabMonitorObject;
     (window as any).instructorLabMonitorButtonEntity = instructorLabMonitorButtonEntity;

@@ -1,3 +1,10 @@
+/**
+ * Instructor dashboard and live-monitor system.
+ * Goal: render paged lesson activities, launch synchronized presentation,
+ * challenge, briefing, and game modes, display results, and end the class.
+ * Depends on week content from instructor-menu-content.ts and live Socket.IO
+ * events from server.ts.
+ */
 import {
   createSystem,
   eq,
@@ -96,6 +103,11 @@ export class InstructorDashboardSystem extends createSystem({
     ]
   },
 
+  debriefChoice: {
+    required: [PanelUI, PanelDocument],
+    where: [eq(PanelUI, "config", "./ui/instructor-debrief-choice.json")]
+  },
+
   menuButton: {
     required: [
       PanelUI,
@@ -186,6 +198,8 @@ export class InstructorDashboardSystem extends createSystem({
   private currentMode: InstructorMode =
     "Classroom Mode";
   private lastPresentationActivationAt = 0;
+  private pendingBriefingAssetPath?: string;
+  private debriefViewChoiceVisible = false;
 
   private onlineStudents = 0;
   private latestStudents: DashboardStudent[] = [];
@@ -248,6 +262,11 @@ export class InstructorDashboardSystem extends createSystem({
           entity.index
         );
       }
+    );
+
+    this.queries.debriefChoice.subscribe(
+      "qualify",
+      entity => this.connectDebriefViewChoice(entity.index)
     );
 
     this.queries.labMonitor.subscribe(
@@ -1358,6 +1377,29 @@ export class InstructorDashboardSystem extends createSystem({
     );
   }
 
+  private connectDebriefViewChoice(entityIndex: number): void {
+    const document = PanelDocument.data.document[entityIndex] as UIKitDocument;
+    if (!document) return;
+
+    this.bindSpatialButton(document, "debrief-choice-classroom", () => {
+      this.launchBriefingMode("classroom");
+    });
+    this.bindSpatialButton(document, "debrief-choice-360", () => {
+      this.launchBriefingMode("immersive360");
+    });
+    this.bindSpatialButton(document, "debrief-choice-cancel", () => {
+      this.setDebriefViewChoiceVisible(false);
+      this.setDashboardVisible(true);
+      this.showStatusMessage("Debrief launch cancelled");
+    });
+  }
+
+  private setDebriefViewChoiceVisible(visible: boolean): void {
+    this.debriefViewChoiceVisible = visible;
+    (window as any).setInstructorDebriefChoiceOpen?.(visible);
+    if (!visible) this.pendingBriefingAssetPath = undefined;
+  }
+
   private connectExtendedMenuButtons(): void {
     INSTRUCTOR_LESSONS.slice(1).flatMap(lesson => lesson.tasks).forEach(task =>
       this.connectButton(task.buttonId, () => this.activateConfiguredTask(task.action))
@@ -1469,7 +1511,10 @@ export class InstructorDashboardSystem extends createSystem({
       const briefing = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
         task => task.action === "briefing"
       );
-      this.activateBriefingMode(briefing?.assetPath ?? undefined);
+      this.pendingBriefingAssetPath = briefing?.assetPath ?? undefined;
+      this.setDashboardVisible(false);
+      this.setDebriefViewChoiceVisible(true);
+      this.showStatusMessage("Choose classroom or 360 room");
     }
   }
 
@@ -1628,7 +1673,10 @@ export class InstructorDashboardSystem extends createSystem({
     this.setLabMonitorAvailable(false);
   }
 
-  private activateBriefingMode(assetPath?: string): void {
+  private launchBriefingMode(
+    debriefView: "classroom" | "immersive360"
+  ): void {
+    const assetPath = this.pendingBriefingAssetPath;
     const activationTime = performance.now();
     if (activationTime - this.lastPresentationActivationAt < 1800) return;
     this.lastPresentationActivationAt = activationTime;
@@ -1636,12 +1684,21 @@ export class InstructorDashboardSystem extends createSystem({
     socket.emit("instructorSendAllToDestination", {
       destination: "Presentation",
       assetPath,
-      mediaType: "image"
+      mediaType: "image",
+      debriefView
     });
 
-    (window as any).presentationSystem?.enterImagePresentation?.(assetPath);
+    (window as any).presentationSystem?.enterImagePresentation?.(
+      assetPath,
+      debriefView
+    );
     this.setCurrentMode("Presentation Mode");
-    this.showStatusMessage("Briefing image opened");
+    this.showStatusMessage(
+      debriefView === "classroom"
+        ? "Debrief opened in classroom"
+        : "360 debrief room opened"
+    );
+    this.setDebriefViewChoiceVisible(false);
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(false);
