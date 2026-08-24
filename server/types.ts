@@ -1,3 +1,11 @@
+/**
+ * Shared server data contracts.
+ *
+ * Goal: describe users, rooms, sockets, challenges, lab progress, and saved
+ * results so server modules exchange predictable objects. These declarations
+ * do not execute logic or store records; Supabase and the in-memory store do.
+ * Used by: server.ts, repositories, services, socket handlers, and LabSession.
+ */
 import type { Socket } from "socket.io";
 
 export type UserRole = "instructor" | "student";
@@ -79,6 +87,7 @@ export interface QuickChallenge {
   correctIndex: number;
   durationSeconds: number;
   startedAt: number;
+  cycleLabel?: string;
   answers: Map<string, {
     selectedIndex: number;
     correct: boolean;
@@ -86,6 +95,20 @@ export interface QuickChallenge {
     responseTimeSeconds: number;
   }>;
   timeout: NodeJS.Timeout | null;
+}
+
+export interface QuickChallengeReview {
+  quizId: string;
+  cycleLabel: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  answerCounts: number[];
+  studentCount: number;
+  answeredCount: number;
+  correctCount: number;
+  wrongCount: number;
+  elapsedSeconds: number;
 }
 
 export type ClassroomSocket = Socket & {

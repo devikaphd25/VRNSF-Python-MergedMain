@@ -1,9 +1,19 @@
+/**
+ * Main multiplayer server.
+ *
+ * Goal: coordinate classroom, video, challenge, hand-raise, and Python-lab
+ * events over Socket.IO while persisting identities/results through Supabase.
+ * Data dependencies: app_users, game_results, rooms, participants,
+ * week_activities, quiz_questions, and quiz_responses.
+ * Called by: `npm run dev:server`; browser clients connect through
+ * `src/network/socket.ts`.
+ */
 import express from "express";
 import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import type { ClassroomSocket, ClassroomStudent, QuickChallenge } from "./server/types.js";
+import type { ClassroomSocket, ClassroomStudent, QuickChallenge, QuickChallengeReview } from "./server/types.js";
 
 import {
   students,
@@ -54,6 +64,41 @@ const io = new Server(httpServer, {
 const instructorRoomCloseTimers = new Map<string, NodeJS.Timeout>();
 const INSTRUCTOR_DISCONNECT_GRACE_MS = 1_500;
 const activeQuickChallenges = new Map<string, QuickChallenge>();
+const lastQuickChallengeReviews = new Map<string, QuickChallengeReview>();
+
+function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeReview {
+  const roomStudents = Object.entries(students).filter(([socketId, student]) => {
+    const client = io.sockets.sockets.get(socketId);
+    return student.role === "student" && client?.data.roomId === challenge.roomId;
+  });
+  const answers = Array.from(challenge.answers.values());
+  const answerCounts = challenge.options.map((_, index) =>
+    answers.filter(answer => answer.selectedIndex === index).length
+  );
+  return {
+    quizId: challenge.id,
+    cycleLabel: challenge.cycleLabel ?? "Current Learning Cycle",
+    question: challenge.question,
+    options: challenge.options,
+    correctIndex: challenge.correctIndex,
+    answerCounts,
+    studentCount: roomStudents.length,
+    answeredCount: answers.length,
+    correctCount: answers.filter(answer => answer.correct).length,
+    wrongCount: answers.filter(answer => !answer.correct).length,
+    elapsedSeconds: Math.max(0, Math.round((Date.now() - challenge.startedAt) / 1000)),
+  };
+}
+
+function publishQuickChallengeReview(challenge: QuickChallenge): void {
+  const review = buildQuickChallengeReview(challenge);
+  lastQuickChallengeReviews.set(challenge.roomId, review);
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data.roomId === challenge.roomId) {
+      client.emit("debriefReviewData", review);
+    }
+  }
+}
 
 function cancelScheduledRoomClose(roomId: string): void {
   const timer = instructorRoomCloseTimers.get(roomId);
@@ -294,6 +339,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       choices: unknown;
       correct_index: number;
     } | null = null;
+    let cycleLabel = isTrueFalse ? "True or False Cycle" : "Current Learning Cycle";
 
     if (!isTrueFalse && Number.isInteger(activityId) && activityId > 0) {
       const { data: question, error: questionError } = await supabaseAdmin
@@ -308,6 +354,15 @@ io.on("connection", (socket: ClassroomSocket) => {
         console.error("[Quick Challenge] Could not load Supabase question:", questionError.message);
       } else if (question) {
         databaseQuestion = question;
+      }
+
+      const { data: activity } = await supabaseAdmin
+        .from("week_activities")
+        .select("lesson_number, title")
+        .eq("id", activityId)
+        .maybeSingle();
+      if (activity) {
+        cycleLabel = `Lesson ${activity.lesson_number} · ${activity.title}`;
       }
     }
 
@@ -332,10 +387,12 @@ io.on("connection", (socket: ClassroomSocket) => {
           : 0,
       durationSeconds,
       startedAt: Date.now(),
+      cycleLabel,
       answers: new Map(),
       timeout: null,
     };
     activeQuickChallenges.set(roomId, challenge);
+    lastQuickChallengeReviews.delete(roomId);
 
     const studentPayload = {
       id: challenge.id,
@@ -372,6 +429,8 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     challenge.timeout = setTimeout(() => {
       if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
+
+      publishQuickChallengeReview(challenge);
 
       const rankedCorrectAnswers = Array.from(challenge.answers.entries())
         .filter(([, answer]) => answer.correct)
@@ -446,6 +505,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       answeredAt,
       responseTimeSeconds,
     });
+    publishQuickChallengeReview(challenge);
 
     socket.emit("quickChallengeResult", {
       quizId: challenge.id,
@@ -498,6 +558,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     ) return;
 
     if (challenge.timeout) clearTimeout(challenge.timeout);
+    publishQuickChallengeReview(challenge);
     const rankedCorrectAnswers = Array.from(challenge.answers.entries())
       .filter(([, answer]) => answer.correct)
       .sort(([, left], [, right]) =>
@@ -2480,7 +2541,7 @@ socket.on(
 });
 socket.on(
   "instructorSendAllToDestination",
-  ({ destination, assetPath, mediaType }) => {
+  ({ destination, assetPath, mediaType, debriefView }) => {
     if (!isInstructorSocket(socket)) {
       socket.emit("serverError", {
         message:
@@ -2493,6 +2554,19 @@ socket.on(
     console.log(
       `[Server] 🚀 Sending ALL students to ${destination}`
     );
+
+    // A debrief can be opened after the challenge monitor was closed. Replay
+    // the retained review payload so every connected display uses the latest
+    // completed challenge statistics instead of placeholder values.
+    if (destination === "Presentation" && mediaType === "image") {
+      const roomId = socket.data.roomId as string | undefined;
+      const review = roomId ? lastQuickChallengeReviews.get(roomId) : undefined;
+      if (review) {
+        for (const client of io.sockets.sockets.values()) {
+          if (client.data.roomId === roomId) client.emit("debriefReviewData", review);
+        }
+      }
+    }
 
     let mode =
       "Classroom Mode";
@@ -2661,6 +2735,10 @@ socket.on(
             destination,
             assetPath: destination === "Presentation" ? assetPath : undefined,
             mediaType: destination === "Presentation" ? mediaType : undefined,
+            debriefView:
+              destination === "Presentation" && mediaType === "image"
+                ? debriefView ?? "classroom"
+                : undefined,
             fromInstructor:
               true,
           }
@@ -2672,6 +2750,10 @@ socket.on(
             {
               assetPath,
               mediaType: mediaType === "image" ? "image" : "video",
+              debriefView:
+                mediaType === "image"
+                  ? debriefView ?? "classroom"
+                  : undefined,
               sentAt: Date.now(),
             }
           );
@@ -2688,6 +2770,10 @@ socket.on(
         destination,
         assetPath: destination === "Presentation" ? assetPath : undefined,
         mediaType: destination === "Presentation" ? mediaType : undefined,
+        debriefView:
+          destination === "Presentation" && mediaType === "image"
+            ? debriefView ?? "classroom"
+            : undefined,
 
         message:
           `All students sent to ${destination}`,

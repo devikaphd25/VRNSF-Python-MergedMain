@@ -1,5 +1,6 @@
 <style>
   .dashboard-root {
+    overflow: hidden;
     width: 920;
     height: 620;
     flex-direction: column;
@@ -270,7 +271,7 @@
     </div>
   </div>
 
-  <div class="content-row">
+  <div id="dashboard-main-content" class="content-row">
     <div class="section-card tasks-section">
       <div class="section-header">
         <span class="section-title task-title">TASKS</span>

@@ -1,4 +1,4 @@
-// components/instructor/seat-markers.ts
+/** Creates lightweight 3D labels that show occupied seat names to instructors. */
 
 import {
   Sprite,
@@ -271,6 +271,64 @@ export function showAllMarkers() {
     marker.visible = true;
   });
   console.log("[SeatMarkers] All markers forced visible");
+}
+
+/**
+ * Lightweight Mission Review arrival animation. The existing 2D sprites are
+ * offset briefly and glide back to their assigned seats; no new models or
+ * textures are loaded.
+ */
+export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
+  const arrivals = Array.from(markers.values()).map((marker, index) => {
+    if (!marker.userData.classroomMarkerPosition) {
+      marker.userData.classroomMarkerPosition = marker.position.clone();
+      marker.userData.classroomMarkerScale = marker.scale.clone();
+    }
+    const side = index % 2 === 0 ? -1 : 1;
+    const row = Math.floor(index / 2) % 8;
+    return {
+      marker,
+      start: new Vector3(side * (0.55 + row * 0.08), 1.25 + (row % 3) * 0.18, 4.9),
+      destination: new Vector3(side * 6.35, 1.15 + row * 0.5, 5.7),
+      destinationScale: marker.scale.clone()
+    };
+  });
+
+  if (arrivals.length === 0) return Promise.resolve();
+
+  arrivals.forEach(({ marker, start, destinationScale }) => {
+    marker.visible = true;
+    marker.position.copy(start);
+    marker.scale.copy(destinationScale).multiplyScalar(0.72);
+  });
+
+  return new Promise(resolve => {
+    const startedAt = performance.now();
+    const frame = (now: number): void => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      arrivals.forEach(({ marker, start, destination, destinationScale }) => {
+        marker.position.lerpVectors(start, destination, eased);
+        marker.scale.copy(destinationScale).multiplyScalar(0.72 + eased * 0.28);
+      });
+
+      if (progress < 1) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+export function restoreSeatMarkersAfterDebrief(): void {
+  markers.forEach(marker => {
+    const position = marker.userData.classroomMarkerPosition as Vector3 | undefined;
+    const scale = marker.userData.classroomMarkerScale as Vector3 | undefined;
+    if (position) marker.position.copy(position);
+    if (scale) marker.scale.copy(scale);
+    delete marker.userData.classroomMarkerPosition;
+    delete marker.userData.classroomMarkerScale;
+  });
 }
 
 /**
