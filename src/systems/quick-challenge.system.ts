@@ -11,21 +11,42 @@ import { Matrix4, Raycaster, Vector2 } from "three";
 
 import { socket } from "../network/socket";
 
+interface QuickChallengeQuestion {
+  question: string;
+  options: string[];
+}
+
 interface QuickChallengePayload {
   id: string;
   question: string;
   options: string[];
   durationSeconds: number;
   startedAt: number;
+  challengeType?: string;
+  totalQuestions?: number;
+  questions?: QuickChallengeQuestion[];
 }
 
 interface QuickChallengeResult {
   quizId: string;
-  correct: boolean;
-  correctIndex: number;
-  selectedIndex: number | null;
+  correct?: boolean;
+  correctIndex?: number;
+  selectedIndex?: number | null;
   responseTimeSeconds?: number;
-  message: string;
+  message?: string;
+  questionIndex?: number;
+  hasNext?: boolean;
+  nextQuestionIndex?: number | null;
+  correctCount?: number;
+  answeredCount?: number;
+  totalQuestions?: number;
+  completed?: boolean;
+  results?: Array<{
+    questionIndex: number;
+    selectedIndex: number;
+    correctIndex: number;
+    correct: boolean;
+  }>;
 }
 
 interface QuickChallengeEndedPayload {
@@ -50,11 +71,23 @@ export class QuickChallengeSystem extends createSystem({
 }) {
   private document?: UIKitDocument;
   private challenge?: QuickChallengePayload;
+  private questions: QuickChallengeQuestion[] = [];
+  private questionIndex = 0;
+  private selections: Array<number | null> = [];
+  private reviewResults: Array<{
+    selectedIndex: number;
+    correctIndex: number;
+    correct: boolean;
+  }> | null = null;
+  private correctCount = 0;
+  private showingResult = false;
   private selectedIndex: number | null = null;
   private timer?: number;
   private submitted = false;
+  private timeExpired = false;
   private buttonsConnected = false;
   private lastDesktopActivation = 0;
+  private lastNavAt = 0;
   private responseTimeSeconds = 0;
   private disabledRayTargets: Array<{
     entity: any;
@@ -92,7 +125,6 @@ export class QuickChallengeSystem extends createSystem({
     if (
       this.renderer.xr.isPresenting ||
       !(window as any).isQuickChallengeOpen ||
-      !this.challenge ||
       event.button !== 0
     ) {
       return;
@@ -128,10 +160,18 @@ export class QuickChallengeSystem extends createSystem({
     let action: (() => void) | undefined;
     let actionName = "";
 
-    // These regions match the fixed two-column layout in
-    // quick-challenge.uikitml. Keeping the fallback on the canvas avoids an
-    // HTML overlay that would interfere with controller rays in a headset.
-    if (y >= 0.30 && y < 0.49) {
+    if (this.isFivePartsChallenge()) {
+      if (y >= 0.28 && y < 0.52) {
+        const index = x < 0.5 ? 0 : 1;
+        action = () => this.selectAnswer(index);
+        actionName = `answer-${index}`;
+      }
+    } else if (this.showingResult) {
+      if (y >= 0.70 && y <= 0.95) {
+        action = this.closeResult;
+        actionName = "close";
+      }
+    } else if (y >= 0.30 && y < 0.49) {
       const index = x < 0.5 ? 0 : 1;
       action = () => this.selectAnswer(index);
       actionName = `answer-${index}`;
@@ -140,13 +180,8 @@ export class QuickChallengeSystem extends createSystem({
       action = () => this.selectAnswer(index);
       actionName = `answer-${index}`;
     } else if (y >= 0.69 && y <= 0.94) {
-      if (x < 0.70) {
-        action = this.submitAnswer;
-        actionName = "submit";
-      } else {
-        action = this.clearSelection;
-        actionName = "clear";
-      }
+      action = this.submitAnswer;
+      actionName = "submit";
     }
 
     if (!action) return;
@@ -198,7 +233,8 @@ export class QuickChallengeSystem extends createSystem({
       "quiz-answer-2",
       "quiz-answer-3",
       "quiz-submit",
-      "quiz-clear",
+      "quiz-prev",
+      "quiz-next",
       "quiz-result-close",
     ];
     const missingButton = requiredButtonIds.some(
@@ -230,8 +266,14 @@ export class QuickChallengeSystem extends createSystem({
       this.submitAnswer
     );
     this.bindSpatialButton(
-      "quiz-clear",
-      this.clearSelection
+      "quiz-prev",
+      this.goPrevious,
+      ["pointerdown", "click"]
+    );
+    this.bindSpatialButton(
+      "quiz-next",
+      this.goNext,
+      ["pointerdown", "click"]
     );
     this.bindSpatialButton(
       "quiz-result-close",
@@ -245,7 +287,8 @@ export class QuickChallengeSystem extends createSystem({
 
   private bindSpatialButton(
     elementId: string,
-    handler: () => void
+    handler: () => void,
+    eventNames: string[] = ["pointerdown"]
   ): void {
     const element =
       this.document?.getElementById(elementId);
@@ -268,9 +311,9 @@ export class QuickChallengeSystem extends createSystem({
       handler();
     };
 
-    element.addEventListener("pointerdown", activate);
-    element.addEventListener("pointerup", activate);
-    element.addEventListener("click", activate);
+    eventNames.forEach(eventName => {
+      element.addEventListener(eventName, activate);
+    });
   }
 
   private startChallenge = (
@@ -281,14 +324,58 @@ export class QuickChallengeSystem extends createSystem({
     }
 
     this.challenge = payload;
+    this.questions =
+      Array.isArray(payload.questions) && payload.questions.length > 0
+        ? payload.questions
+        : [{ question: payload.question, options: payload.options }];
+    this.questionIndex = 0;
+    this.selections = this.questions.map(() => null);
+    this.reviewResults = null;
+    this.correctCount = 0;
     this.selectedIndex = null;
     this.submitted = false;
+    this.timeExpired = false;
     this.responseTimeSeconds = 0;
+    this.renderCurrentView();
+    this.setVisible(true);
+    this.startTimer();
+    this.sync();
+  };
+
+  private isFivePartsChallenge(): boolean {
+    return this.challenge?.challengeType === "five-parts" && this.questions.length > 1;
+  }
+
+  private isSummaryView(): boolean {
+    return (
+      this.isFivePartsChallenge() &&
+      Boolean(this.reviewResults) &&
+      this.questionIndex >= this.questions.length
+    );
+  }
+
+  private renderCurrentView(): void {
+    if (this.isFivePartsChallenge() && this.isSummaryView()) {
+      this.renderSummaryView();
+      return;
+    }
+    this.renderCurrentQuestion();
+  }
+
+  private renderCurrentQuestion(): void {
+    const payload = this.challenge;
+    const current = this.questions[this.questionIndex];
+    if (!payload || !current) return;
+
+    this.selectedIndex = this.selections[this.questionIndex] ?? null;
     this.setResultMode(false);
-    this.setText("quiz-question", payload.question);
+    this.setText("quiz-question", current.question);
+    this.updateProgressLabel();
+    this.updateNavButtons();
+    this.updateSubmitButton();
 
     for (let index = 0; index < 4; index += 1) {
-      const option = payload.options[index];
+      const option = current.options[index];
       const answer = this.document?.getElementById(`quiz-answer-${index}`);
 
       if (option === undefined) {
@@ -296,54 +383,182 @@ export class QuickChallengeSystem extends createSystem({
         this.setText(`quiz-answer-${index}`, "");
       } else {
         this.removeClass(answer, "answer-hidden");
-        const prefix = String.fromCharCode(65 + index);
-        this.setText(`quiz-answer-${index}`, `${prefix}. ${option}`);
+        const useLetterPrefix = current.options.length > 2;
+        this.setText(
+          `quiz-answer-${index}`,
+          useLetterPrefix
+            ? `${String.fromCharCode(65 + index)}. ${option}`
+            : option
+        );
       }
     }
 
     const secondAnswerRow = this.document?.getElementById(
       "quiz-answer-row-2"
     );
-    if (payload.options.length <= 2) {
+    if (current.options.length <= 2) {
       this.addClass(secondAnswerRow, "answer-hidden");
     } else {
       this.removeClass(secondAnswerRow, "answer-hidden");
     }
 
     this.setFeedback("");
+    this.setText(
+      "quiz-instruction",
+      this.submitted && this.isFivePartsChallenge()
+        ? ""
+        : current.options.length <= 2
+          ? "Select True or False"
+          : "Select one answer"
+    );
     this.updateSelection();
-    this.setVisible(true);
-    this.startTimer();
     this.sync();
+  }
+
+  private renderSummaryView(): void {
+    const total = this.questions.length;
+    this.setResultMode(true);
+    this.updateProgressLabel();
+    this.updateNavButtons();
+    this.updateSubmitButton();
+    this.setText("quiz-result-status", `SCORE ${this.correctCount}/${total}`);
+    this.setText("quiz-result-answer", "");
+    this.setText(
+      "quiz-result-time",
+      `Time taken: ${this.responseTimeSeconds.toFixed(1)} seconds`
+    );
+    this.setText("quiz-result-winner", "");
+    this.setCloseButtonLabel("RETURN TO CLASS");
+    const card = this.document?.getElementById("quiz-result-card");
+    const status = this.document?.getElementById("quiz-result-status");
+    this.removeClass(card, "quiz-result-correct", "quiz-result-wrong");
+    this.removeClass(status, "quiz-result-correct", "quiz-result-wrong");
+    this.addClass(card, "quiz-result-correct");
+    this.addClass(status, "quiz-result-correct");
+    this.sync();
+  }
+
+  private updateProgressLabel(): void {
+    const total = this.questions.length;
+    const progress = this.document?.getElementById("quiz-progress");
+    const nav = this.document?.getElementById("quiz-nav");
+    if (this.isFivePartsChallenge()) {
+      this.removeClass(nav, "answer-hidden");
+      this.removeClass(progress, "answer-hidden");
+      this.setText(
+        "quiz-progress",
+        this.isSummaryView() ? "RESULTS" : `${this.questionIndex + 1} / ${total}`
+      );
+    } else {
+      this.addClass(nav, "answer-hidden");
+      this.addClass(progress, "answer-hidden");
+      this.setText("quiz-progress", "");
+    }
+  }
+
+  private allQuestionsAnswered(): boolean {
+    return (
+      this.selections.length === this.questions.length &&
+      this.selections.every(selection => selection !== null)
+    );
+  }
+
+  private updateSubmitButton(): void {
+    const submit = this.document?.getElementById("quiz-submit");
+    const actions = this.document?.getElementById("quiz-actions");
+    if (this.isFivePartsChallenge() && this.submitted) {
+      this.addClass(actions, "answer-hidden");
+      return;
+    }
+    this.removeClass(actions, "answer-hidden");
+    if (this.isFivePartsChallenge() && !this.allQuestionsAnswered()) {
+      this.addClass(submit, "submit-disabled");
+    } else {
+      this.removeClass(submit, "submit-disabled");
+    }
+  }
+
+  private updateNavButtons(): void {
+    const prev = this.document?.getElementById("quiz-prev");
+    const next = this.document?.getElementById("quiz-next");
+    const maxIndex = this.reviewResults
+      ? this.questions.length
+      : Math.max(0, this.questions.length - 1);
+    if (this.questionIndex <= 0) this.addClass(prev, "nav-disabled");
+    else this.removeClass(prev, "nav-disabled");
+    if (this.questionIndex >= maxIndex) this.addClass(next, "nav-disabled");
+    else this.removeClass(next, "nav-disabled");
+  }
+
+  private goPrevious = (): void => {
+    if (!this.isFivePartsChallenge() || this.questionIndex <= 0) return;
+    if (!this.beginNav()) return;
+    this.questionIndex -= 1;
+    this.renderCurrentView();
+  };
+
+  private goNext = (): void => {
+    if (!this.isFivePartsChallenge()) return;
+    const maxIndex = this.reviewResults
+      ? this.questions.length
+      : Math.max(0, this.questions.length - 1);
+    if (this.questionIndex >= maxIndex) return;
+    if (!this.beginNav()) return;
+    this.questionIndex += 1;
+    this.renderCurrentView();
+  };
+
+  private beginNav(): boolean {
+    const now = performance.now();
+    if (now - this.lastNavAt < 200) return false;
+    this.lastNavAt = now;
+    return true;
   };
 
   private selectAnswer(index: number): void {
-    if (!this.challenge || this.submitted) {
+    if (!this.challenge || this.submitted || this.timeExpired) {
       return;
     }
 
     this.selectedIndex = index;
+    if (this.isFivePartsChallenge()) {
+      this.selections[this.questionIndex] = index;
+    }
     this.setFeedback("");
     this.updateSelection();
+    this.updateSubmitButton();
   }
 
-  private clearSelection = (): void => {
-    if (this.submitted) {
+  private closeResult = (): void => {
+    if (this.timeExpired) {
+      this.setVisible(false);
       return;
     }
-
-    this.selectedIndex = null;
-    this.setFeedback("");
-    this.updateSelection();
-  };
-
-  private closeResult = (): void => {
     if (this.challenge && !this.submitted) return;
     this.setVisible(false);
   };
 
   private submitAnswer = (): void => {
-    if (!this.challenge || this.submitted) {
+    if (!this.challenge || this.submitted || this.timeExpired) {
+      return;
+    }
+
+    if (this.isFivePartsChallenge()) {
+      if (!this.allQuestionsAnswered()) {
+        this.setFeedback("Answer all 5 questions before submitting.");
+        return;
+      }
+      this.submitted = true;
+      this.responseTimeSeconds = Math.max(
+        0,
+        (Date.now() - this.challenge.startedAt) / 1000
+      );
+      this.stopTimer();
+      this.setFeedback("Answer submitted...");
+      socket.emit("quickChallengeAnswer", {
+        quizId: this.challenge.id,
+        answers: this.selections,
+      });
       return;
     }
 
@@ -363,6 +578,7 @@ export class QuickChallengeSystem extends createSystem({
     socket.emit("quickChallengeAnswer", {
       quizId: this.challenge.id,
       selectedIndex: this.selectedIndex,
+      questionIndex: this.questionIndex,
     });
   };
 
@@ -378,6 +594,27 @@ export class QuickChallengeSystem extends createSystem({
     if (Number.isFinite(result.responseTimeSeconds)) {
       this.responseTimeSeconds = Number(result.responseTimeSeconds);
     }
+    if (Number.isInteger(result.correctCount)) {
+      this.correctCount = Number(result.correctCount);
+    }
+
+    if (this.isFivePartsChallenge()) {
+      this.reviewResults = Array.isArray(result.results)
+        ? result.results.map(item => ({
+            selectedIndex: item.selectedIndex,
+            correctIndex: item.correctIndex,
+            correct: item.correct,
+          }))
+        : this.selections.map(selectedIndex => ({
+            selectedIndex: selectedIndex ?? 0,
+            correctIndex: 0,
+            correct: false,
+          }));
+      this.questionIndex = this.questions.length;
+      this.renderSummaryView();
+      return;
+    }
+
     this.showResultCard(result);
   };
 
@@ -399,29 +636,24 @@ export class QuickChallengeSystem extends createSystem({
       this.setVisible(false);
       return;
     }
-    const winnerTime = Number(payload.winnerTimeSeconds);
-    const winnerMessage = payload.winnerName
-      ? `Winner: ${payload.winnerName}${
-          Number.isFinite(winnerTime)
-            ? ` — ${winnerTime.toFixed(1)} seconds`
-            : ""
-        }`
-      : "No winner — no correct answer was submitted";
 
-    if (!this.submitted) {
-      this.setText("quiz-result-status", "TIME'S UP");
-      this.setText("quiz-result-answer", "Your answer: No answer");
-      this.setText("quiz-result-time", "Time taken: —");
-      const card = this.document?.getElementById("quiz-result-card");
-      const status = this.document?.getElementById("quiz-result-status");
-      this.removeClass(card, "quiz-result-correct", "quiz-result-wrong");
-      this.removeClass(status, "quiz-result-correct", "quiz-result-wrong");
-      this.addClass(card, "quiz-result-wrong");
-      this.addClass(status, "quiz-result-wrong");
+    if (this.isFivePartsChallenge() && this.reviewResults) {
+      return;
     }
 
-    this.setText("quiz-result-winner", winnerMessage);
+    this.setText("quiz-result-status", "TIME'S UP");
+    this.setText("quiz-result-answer", "");
+    this.setText("quiz-result-time", "Time taken: —");
+    this.setText("quiz-result-winner", "");
+    const card = this.document?.getElementById("quiz-result-card");
+    const status = this.document?.getElementById("quiz-result-status");
+    this.removeClass(card, "quiz-result-correct", "quiz-result-wrong");
+    this.removeClass(status, "quiz-result-correct", "quiz-result-wrong");
+    this.addClass(card, "quiz-result-wrong");
+    this.addClass(status, "quiz-result-wrong");
+    this.setCloseButtonLabel("RETURN TO CLASS");
     this.setResultMode(true);
+    this.addClass(this.document?.getElementById("quiz-nav"), "answer-hidden");
     this.setVisible(true);
     this.challenge = undefined;
   };
@@ -435,18 +667,20 @@ export class QuickChallengeSystem extends createSystem({
     );
   }
 
+  private getRemainingSeconds(): number {
+    if (!this.challenge) return 0;
+    const elapsedSeconds = Math.floor(
+      (Date.now() - this.challenge.startedAt) / 1000
+    );
+    return Math.max(0, this.challenge.durationSeconds - elapsedSeconds);
+  }
+
   private updateTimer(): void {
     if (!this.challenge) {
       return;
     }
 
-    const elapsedSeconds = Math.floor(
-      (Date.now() - this.challenge.startedAt) / 1000
-    );
-    const remaining = Math.max(
-      0,
-      this.challenge.durationSeconds - elapsedSeconds
-    );
+    const remaining = this.getRemainingSeconds();
     const minutes = Math.floor(remaining / 60);
     const seconds = remaining % 60;
 
@@ -455,27 +689,42 @@ export class QuickChallengeSystem extends createSystem({
       `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
     );
 
-    if (remaining === 0 && !this.submitted) {
-      this.submitted = true;
+    if (remaining === 0) {
       this.stopTimer();
-      this.setFeedback(
-        "Time is up.",
-        "feedback-incorrect"
-      );
-
-      // No event is sent for a timeout. The instructor monitor therefore
-      // keeps this student classified as UNANSWERED instead of WRONG.
+      this.timeExpired = true;
+      if (!this.submitted && !this.isFivePartsChallenge()) {
+        this.submitted = true;
+        this.setFeedback(
+          "Time is up.",
+          "feedback-incorrect"
+        );
+      }
     }
   }
 
   private updateSelection(): void {
+    const review = this.reviewResults?.[this.questionIndex];
     for (let index = 0; index < 4; index += 1) {
       const button =
         this.document?.getElementById(
           `quiz-answer-${index}`
         );
 
-      this.removeClass(button, "answer-selected");
+      this.removeClass(
+        button,
+        "answer-selected",
+        "answer-correct",
+        "answer-wrong"
+      );
+
+      if (this.submitted && this.isFivePartsChallenge() && review) {
+        if (index === review.correctIndex) {
+          this.addClass(button, "answer-correct");
+        } else if (index === review.selectedIndex && !review.correct) {
+          this.addClass(button, "answer-wrong");
+        }
+        continue;
+      }
 
       if (index === this.selectedIndex) {
         this.addClass(button, "answer-selected");
@@ -486,13 +735,15 @@ export class QuickChallengeSystem extends createSystem({
   }
 
   private showResultCard(result: QuickChallengeResult): void {
-    const selectedIndex = result.selectedIndex;
+    const selectedIndex = result.selectedIndex ?? this.selectedIndex;
     const selectedOption =
-      selectedIndex === null
+      selectedIndex === null || selectedIndex === undefined
         ? "No answer"
-        : `${String.fromCharCode(65 + selectedIndex)}. ${
-            this.challenge?.options[selectedIndex] ?? ""
-          }`;
+        : (this.questions[this.questionIndex]?.options.length ?? 0) <= 2
+          ? (this.questions[this.questionIndex]?.options[selectedIndex] ?? "")
+          : `${String.fromCharCode(65 + selectedIndex)}. ${
+              this.questions[this.questionIndex]?.options[selectedIndex] ?? ""
+            }`;
     const status = result.correct ? "CORRECT" : "WRONG";
 
     this.setText("quiz-result-status", status);
@@ -501,7 +752,8 @@ export class QuickChallengeSystem extends createSystem({
       "quiz-result-time",
       `Time taken: ${this.responseTimeSeconds.toFixed(1)} seconds`
     );
-    this.setText("quiz-result-winner", "Waiting for the final ranking...");
+    this.setText("quiz-result-winner", "");
+    this.setCloseButtonLabel("RETURN TO CLASS");
 
     const card = this.document?.getElementById("quiz-result-card");
     const statusElement = this.document?.getElementById("quiz-result-status");
@@ -516,6 +768,10 @@ export class QuickChallengeSystem extends createSystem({
       result.correct ? "quiz-result-correct" : "quiz-result-wrong"
     );
     this.setResultMode(true);
+  }
+
+  private setCloseButtonLabel(text: string): void {
+    this.setText("quiz-result-close", text);
   }
 
   private setResultMode(showResult: boolean): void {
@@ -537,6 +793,7 @@ export class QuickChallengeSystem extends createSystem({
     const resultCard = this.document?.getElementById("quiz-result-card");
     if (showResult) this.removeClass(resultCard, "quiz-result-hidden");
     else this.addClass(resultCard, "quiz-result-hidden");
+    this.showingResult = showResult;
     this.sync();
   }
 

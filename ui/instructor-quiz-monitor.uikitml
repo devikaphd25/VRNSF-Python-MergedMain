@@ -225,7 +225,7 @@
 <Panel class="quiz-monitor-root">
   <Panel class="quiz-monitor-header">
     <Panel class="quiz-header-copy">
-      <Text class="quiz-monitor-title">QUICK CHALLENGE — LIVE MONITOR</Text>
+      <Text id="quiz-monitor-title" class="quiz-monitor-title">QUICK CHALLENGE — LIVE MONITOR</Text>
       <Text id="quiz-monitor-question" class="quiz-question-title">Waiting for question</Text>
       <Text id="quiz-monitor-summary" class="quiz-monitor-summary">0 of 0 students answered</Text>
     </Panel>
@@ -241,9 +241,9 @@
   <Panel class="quiz-column-header">
     <Text class="quiz-rank-cell">RANK</Text>
     <Text class="quiz-name-cell">STUDENT</Text>
-    <Text class="quiz-answer-cell">SELECTED ANSWER</Text>
+    <Text id="quiz-monitor-answer-header" class="quiz-answer-cell">SELECTED ANSWER</Text>
     <Text class="quiz-time-cell">TIME</Text>
-    <Text class="quiz-result-cell">RESULT</Text>
+    <Text id="quiz-monitor-result-header" class="quiz-result-cell">RESULT</Text>
   </Panel>
 
   <Panel class="quiz-student-list">
@@ -259,7 +259,7 @@
     <Panel id="quiz-monitor-row-10" class="quiz-student-row"><Text id="quiz-monitor-rank-10" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-10" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-10" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-10" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-10" class="quiz-result-cell">UNANSWERED</Text></Panel>
   </Panel>
 
-  <Panel class="quiz-paging-row">
+  <Panel id="quiz-monitor-paging" class="quiz-paging-row">
     <Button id="quiz-monitor-up" class="quiz-page-button">UP</Button>
     <Text id="quiz-monitor-page" class="quiz-page-label">PAGE 1 / 1</Text>
     <Button id="quiz-monitor-down" class="quiz-page-button">DOWN</Button>
