@@ -60,6 +60,10 @@ interface QuizMonitorStudent {
   selectedOption?: string | null;
   correct?: boolean;
   answered?: boolean;
+  completed?: boolean;
+  correctCount?: number;
+  answeredCount?: number;
+  totalQuestions?: number;
   responseTimeSeconds?: number;
 }
 
@@ -70,6 +74,10 @@ interface InstructorQuizPayload {
   durationSeconds: number;
   startedAt: number;
   students?: QuizMonitorStudent[];
+  challengeType?: string;
+  questionIndex?: number;
+  totalQuestions?: number;
+  cycleLabel?: string;
 }
 
 type InstructorResultType = "game" | "quick-challenge";
@@ -192,6 +200,8 @@ export class InstructorDashboardSystem extends createSystem({
   private quizMonitorPage = 0;
   private readonly quizMonitorPageSize = 10;
   private quizMonitorFinished = false;
+  private quizSeriesType?: string;
+  private quizSeriesTotal = 1;
   private resultsButtonDocument?: UIKitDocument;
   private latestResultType: InstructorResultType = "game";
 
@@ -232,7 +242,7 @@ export class InstructorDashboardSystem extends createSystem({
       );
       (window as any).presentationSystem?.exitPresentationMode?.();
       socket.emit("instructorReturnAllToClass");
-      window.setTimeout(() => this.activateQuickChallenge(challenge?.activityId), 250);
+      window.setTimeout(() => this.activateConfiguredTask("challenge"), 250);
     };
 
     this.queries.saveOverlay.subscribe(
@@ -515,9 +525,24 @@ export class InstructorDashboardSystem extends createSystem({
         this.quizStudents = (data.students ?? []).map(student => ({
           ...student,
           answered: false,
+          completed: false,
           selectedIndex: null,
-          selectedOption: null
+          selectedOption: null,
+          correct: undefined,
+          correctCount: 0,
+          answeredCount: 0,
+          totalQuestions: Number(data.totalQuestions) || undefined,
+          responseTimeSeconds: undefined
         }));
+
+        if (data.challengeType === "five-parts") {
+          this.quizSeriesType = "five-parts";
+          this.quizSeriesTotal = Number(data.totalQuestions) || 5;
+        } else {
+          this.quizSeriesType = undefined;
+          this.quizSeriesTotal = 1;
+        }
+
         this.startQuizCountdown();
         this.renderQuizMonitor();
         this.setQuizMonitorVisible(true);
@@ -528,13 +553,31 @@ export class InstructorDashboardSystem extends createSystem({
       "quickChallengeStudentAnswered",
       data => {
         if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
-        if (data.selectedIndex === null || data.selectedIndex === undefined) {
-          return;
-        }
         const student = this.quizStudents.find(
           item => item.studentId === data.studentId
         );
         if (!student) return;
+
+        if (this.isFivePartsSeries()) {
+          student.answered = Number(data.answeredCount) > 0;
+          student.completed = Boolean(data.completed);
+          student.correctCount = Number(data.correctCount) || 0;
+          student.answeredCount = Number(data.answeredCount) || 0;
+          student.totalQuestions =
+            Number(data.totalQuestions) || this.quizSeriesTotal;
+          const serverResponseTime = Number(data.responseTimeSeconds);
+          student.responseTimeSeconds = student.completed &&
+            Number.isFinite(serverResponseTime) &&
+            serverResponseTime > 0
+            ? serverResponseTime
+            : undefined;
+          this.renderQuizMonitor();
+          return;
+        }
+
+        if (data.selectedIndex === null || data.selectedIndex === undefined) {
+          return;
+        }
 
         student.answered = true;
         student.selectedIndex = data.selectedIndex ?? null;
@@ -573,6 +616,13 @@ export class InstructorDashboardSystem extends createSystem({
         this.setLabMonitorAvailable(true);
       }
     );
+
+    socket.on("quickChallengeQuestionClosed", data => {
+      if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
+      this.stopQuizCountdown();
+      this.renderQuizMonitor();
+      this.showStatusMessage("Challenge timer ended.");
+    });
   }
 
   // ======================================================
@@ -866,6 +916,10 @@ export class InstructorDashboardSystem extends createSystem({
     const document = this.quizMonitorDocument;
     if (!document) return;
 
+    const title = document.getElementById(
+      "quiz-monitor-title"
+    ) as UIKit.Text;
+    const paging = document.getElementById("quiz-monitor-paging");
     const question = document.getElementById(
       "quiz-monitor-question"
     ) as UIKit.Text;
@@ -881,10 +935,33 @@ export class InstructorDashboardSystem extends createSystem({
     const pageLabel = document.getElementById(
       "quiz-monitor-page"
     ) as UIKit.Text;
-    const answeredCount = this.quizStudents.filter(
+    const answerHeader = document.getElementById(
+      "quiz-monitor-answer-header"
+    ) as UIKit.Text;
+    const resultHeader = document.getElementById(
+      "quiz-monitor-result-header"
+    ) as UIKit.Text;
+    const displayStudents = this.quizStudents;
+    const isFiveParts = this.isFivePartsSeries();
+    const finishedCount = displayStudents.filter(
+      student => student.completed
+    ).length;
+    const answeredCount = displayStudents.filter(
       student => student.answered
     ).length;
-    const rankedStudents = [...this.quizStudents].sort((left, right) => {
+    const rankedStudents = [...displayStudents].sort((left, right) => {
+      if (isFiveParts) {
+        const leftGroup = left.completed ? 0 : 1;
+        const rightGroup = right.completed ? 0 : 1;
+        if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+        if (left.completed && right.completed) {
+          const scoreDiff = (right.correctCount ?? 0) - (left.correctCount ?? 0);
+          if (scoreDiff !== 0) return scoreDiff;
+          return (left.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+            (right.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER);
+        }
+        return (right.answeredCount ?? 0) - (left.answeredCount ?? 0);
+      }
       const leftGroup = !left.answered ? 2 : left.correct ? 0 : 1;
       const rightGroup = !right.answered ? 2 : right.correct ? 0 : 1;
       if (leftGroup !== rightGroup) return leftGroup - rightGroup;
@@ -894,13 +971,19 @@ export class InstructorDashboardSystem extends createSystem({
       }
       return 0;
     });
-    const winnerId = rankedStudents.find(
-      student => student.answered && student.correct
-    )?.studentId;
-    const correctRankByStudent = new Map(
-      rankedStudents
-        .filter(student => student.answered && student.correct)
-        .map((student, index) => [student.studentId, index + 1])
+    const winnerId = isFiveParts
+      ? rankedStudents.find(student => student.completed)?.studentId
+      : rankedStudents.find(
+          student => student.answered && student.correct
+        )?.studentId;
+    const rankByStudent = new Map(
+      isFiveParts
+        ? rankedStudents
+            .filter(student => student.completed)
+            .map((student, index) => [student.studentId, index + 1])
+        : rankedStudents
+            .filter(student => student.answered && student.correct)
+            .map((student, index) => [student.studentId, index + 1])
     );
     const totalPages = Math.max(
       1,
@@ -914,21 +997,40 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     question?.setProperties({
-      text: this.activeQuiz?.question ?? "Waiting for question"
+      text: isFiveParts
+        ? "Quick Challenge"
+        : (this.activeQuiz?.question ?? "Waiting for question")
     });
     summary?.setProperties({
-      text: `${answeredCount} of ${this.quizStudents.length} students answered`
+      text: isFiveParts
+        ? `${finishedCount} of ${displayStudents.length} students finished`
+        : `${answeredCount} of ${displayStudents.length} students answered`
     });
-    footer?.setProperties({
-      text: finished
-        ? "Challenge finished. Final responses are shown."
-        : "The list updates as students submit."
-    });
+    if (isFiveParts) {
+      this.addClass(title, "quiz-row-hidden");
+      this.addClass(paging, "quiz-row-hidden");
+      this.addClass(footer, "quiz-row-hidden");
+    } else {
+      this.removeClass(title, "quiz-row-hidden");
+      this.removeClass(paging, "quiz-row-hidden");
+      this.removeClass(footer, "quiz-row-hidden");
+      footer?.setProperties({
+        text: finished
+          ? "Challenge finished. Final results are shown."
+          : "The list updates as students submit."
+      });
+      pageLabel?.setProperties({
+        text: `PAGE ${this.quizMonitorPage + 1} / ${totalPages}`
+      });
+    }
     timer?.setProperties({
       text: finished ? "00:00" : this.getQuizCountdownText()
     });
-    pageLabel?.setProperties({
-      text: `PAGE ${this.quizMonitorPage + 1} / ${totalPages}`
+    answerHeader?.setProperties({
+      text: isFiveParts ? "PROGRESS" : "SELECTED ANSWER"
+    });
+    resultHeader?.setProperties({
+      text: isFiveParts ? "SCORE" : "RESULT"
     });
 
     for (let row = 1; row <= 10; row += 1) {
@@ -957,16 +1059,40 @@ export class InstructorDashboardSystem extends createSystem({
 
       this.removeClass(rowElement, "quiz-row-hidden");
       this.removeClass(result, "quiz-result-correct", "quiz-result-wrong");
-      const correctRank = correctRankByStudent.get(student.studentId);
+      const studentRank = rankByStudent.get(student.studentId);
       rank?.setProperties({
-        // Wrong and unanswered submissions do not receive a placement.
-        // Therefore stopping a challenge with no correct answers shows no
-        // rank for every student.
-        text: correctRank ? this.formatOrdinal(correctRank) : "—"
+        text: studentRank ? this.formatOrdinal(studentRank) : "—"
       });
       name?.setProperties({
         text: `${student.name}${student.seat ? `  ${student.seat}` : ""}`
       });
+
+      if (isFiveParts) {
+        const total = student.totalQuestions ?? this.quizSeriesTotal;
+        const score = student.correctCount ?? 0;
+        answer?.setProperties({
+          text: student.completed ? "Completed" : "Not started"
+        });
+        responseTime?.setProperties({
+          text: student.completed
+            ? `${(student.responseTimeSeconds ?? 0).toFixed(1)}s`
+            : "—"
+        });
+        result?.setProperties({
+          text: student.completed ? `${score}/${total}` : "—"
+        });
+        if (student.completed) {
+          this.addClass(
+            result,
+            student.studentId === winnerId
+              ? "quiz-result-correct"
+              : score > 0
+                ? "quiz-result-correct"
+                : "quiz-result-wrong"
+          );
+        }
+        continue;
+      }
 
       if (!student.answered) {
         answer?.setProperties({ text: "Waiting for answer" });
@@ -976,9 +1102,11 @@ export class InstructorDashboardSystem extends createSystem({
       }
 
       const optionPrefix =
-        student.selectedIndex === null || student.selectedIndex === undefined
-          ? ""
-          : `${String.fromCharCode(65 + student.selectedIndex)}. `;
+        this.shouldPrefixAnswerLetters() &&
+        student.selectedIndex !== null &&
+        student.selectedIndex !== undefined
+          ? `${String.fromCharCode(65 + student.selectedIndex)}. `
+          : "";
       answer?.setProperties({
         text: student.selectedOption
           ? `${optionPrefix}${student.selectedOption}`
@@ -1505,7 +1633,11 @@ export class InstructorDashboardSystem extends createSystem({
       const challenge = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
         task => task.action === "challenge"
       );
-      this.activateQuickChallenge(challenge?.activityId);
+      if (this.isFivePartsChallengeTask(challenge)) {
+        this.activateFivePartsChallenge();
+      } else {
+        this.activateQuickChallenge(challenge?.activityId);
+      }
     }
     if (action === "briefing") {
       const briefing = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
@@ -1784,6 +1916,41 @@ export class InstructorDashboardSystem extends createSystem({
       "Quick challenge started"
     );
 
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private isFivePartsChallengeTask(task?: {
+    buttonId?: string;
+    title?: string;
+  }): boolean {
+    return (
+      task?.buttonId === "quick-challenge-button" ||
+      task?.title === "Five Parts Challenge"
+    );
+  }
+
+  private isFivePartsSeries(): boolean {
+    return this.quizSeriesType === "five-parts";
+  }
+
+  private shouldPrefixAnswerLetters(): boolean {
+    const options = this.activeQuiz?.options ?? [];
+    return options.length > 2;
+  }
+
+  private activateFivePartsChallenge(): void {
+    console.log("[InstructorDashboard] Starting Five Parts T/F challenge");
+
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: "five-parts"
+    });
+
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Five Parts Challenge started");
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(false);
