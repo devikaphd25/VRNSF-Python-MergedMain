@@ -13,7 +13,7 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import type { ClassroomSocket, ClassroomStudent, QuickChallenge, QuickChallengeReview } from "./server/types.js";
+import type { ClassroomSocket, ClassroomStudent, QuickChallenge, QuickChallengeReview, QuickChallengeStudentProgress } from "./server/types.js";
 
 import {
   students,
@@ -44,6 +44,12 @@ import {
   saveAppGameResult,
   updateAppUserLocation,
 } from "./server/services/app-data.repository.js";
+import {
+  FIVE_PARTS_CHALLENGE_TYPE,
+  FIVE_PARTS_DURATION_SECONDS,
+  FIVE_PARTS_TRUE_FALSE_QUESTIONS,
+  TRUE_FALSE_OPTIONS,
+} from "./server/data/five-parts-challenge.js";
 
 // Separates saved results from different launches of the same lab. Historical
 // rows remain in Supabase, but the live monitor reads only this run.
@@ -66,11 +72,109 @@ const INSTRUCTOR_DISCONNECT_GRACE_MS = 1_500;
 const activeQuickChallenges = new Map<string, QuickChallenge>();
 const lastQuickChallengeReviews = new Map<string, QuickChallengeReview>();
 
-function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeReview {
-  const roomStudents = Object.entries(students).filter(([socketId, student]) => {
+function getRoomClassroomStudents(roomId: string) {
+  return Object.entries(students).filter(([socketId, student]) => {
     const client = io.sockets.sockets.get(socketId);
-    return student.role === "student" && client?.data.roomId === challenge.roomId;
+    return (
+      student.role === "student" &&
+      client?.data.roomId === roomId &&
+      client.data.clientType === "classroom"
+    );
   });
+}
+
+function getFivePartsScore(progress: QuickChallengeStudentProgress) {
+  return progress.answers.filter(answer => answer.correct).length;
+}
+
+function getQuickChallengeWinner(challenge: QuickChallenge): {
+  socketId: string | null;
+  name: string | null;
+  timeSeconds: number | null;
+} {
+  if (challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE) {
+    const ranked = Array.from(challenge.studentProgress.entries())
+      .filter(([, progress]) => progress.completed)
+      .sort(([, left], [, right]) => {
+        const scoreDiff = getFivePartsScore(right) - getFivePartsScore(left);
+        if (scoreDiff !== 0) return scoreDiff;
+        return (left.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+          (right.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER);
+      });
+    const winner = ranked[0];
+    return {
+      socketId: winner?.[0] ?? null,
+      name: winner ? students[winner[0]]?.name ?? null : null,
+      timeSeconds: winner?.[1].totalTimeSeconds ?? null,
+    };
+  }
+
+  const rankedCorrectAnswers = Array.from(challenge.answers.entries())
+    .filter(([, answer]) => answer.correct)
+    .sort(
+      ([, left], [, right]) =>
+        left.responseTimeSeconds - right.responseTimeSeconds
+    );
+  const winnerEntry = rankedCorrectAnswers[0];
+  const winnerSocketId = winnerEntry?.[0] ?? null;
+  const winnerAnswer = winnerEntry?.[1] ?? null;
+  return {
+    socketId: winnerSocketId,
+    name: winnerSocketId ? students[winnerSocketId]?.name ?? null : null,
+    timeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
+  };
+}
+
+function emitQuickChallengeEnded(
+  challenge: QuickChallenge,
+  extra: { stoppedByInstructor?: boolean } = {}
+): void {
+  const winner = getQuickChallengeWinner(challenge);
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data.roomId !== challenge.roomId) continue;
+    client.emit("quickChallengeEnded", {
+      quizId: challenge.id,
+      winnerStudentId: winner.socketId,
+      winnerName: winner.name,
+      winnerTimeSeconds: winner.timeSeconds,
+      ...extra,
+    });
+  }
+}
+
+function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeReview {
+  const roomStudents = getRoomClassroomStudents(challenge.roomId);
+  const elapsedSeconds = Math.max(
+    0,
+    Math.round((Date.now() - challenge.startedAt) / 1000)
+  );
+
+  if (challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE) {
+    const progresses = Array.from(challenge.studentProgress.values());
+    const completed = progresses.filter(progress => progress.completed);
+    const correctCount = completed.reduce(
+      (sum, progress) => sum + getFivePartsScore(progress),
+      0
+    );
+    const wrongCount = completed.reduce(
+      (sum, progress) => sum + (progress.answers.length - getFivePartsScore(progress)),
+      0
+    );
+    return {
+      quizId: challenge.id,
+      cycleLabel: challenge.cycleLabel ?? "Current Learning Cycle",
+      question: "Five Parts Challenge",
+      options: ["Completed", "In progress"],
+      correctIndex: 0,
+      answerCounts: [completed.length, Math.max(0, roomStudents.length - completed.length)],
+      studentCount: roomStudents.length,
+      answeredCount: completed.length,
+      correctCount,
+      wrongCount,
+      elapsedSeconds,
+    };
+  }
+
   const answers = Array.from(challenge.answers.values());
   const answerCounts = challenge.options.map((_, index) =>
     answers.filter(answer => answer.selectedIndex === index).length
@@ -86,8 +190,54 @@ function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeRev
     answeredCount: answers.length,
     correctCount: answers.filter(answer => answer.correct).length,
     wrongCount: answers.filter(answer => !answer.correct).length,
-    elapsedSeconds: Math.max(0, Math.round((Date.now() - challenge.startedAt) / 1000)),
+    elapsedSeconds,
   };
+}
+
+function notifyInstructorStudentProgress(
+  challenge: QuickChallenge,
+  socketId: string,
+  student: ClassroomStudent,
+  extra: Record<string, unknown> = {}
+): void {
+  const progress = challenge.studentProgress.get(socketId);
+  const answeredCount = progress?.answers.length ?? 0;
+  const correctCount = progress ? getFivePartsScore(progress) : 0;
+  const payload = {
+    quizId: challenge.id,
+    studentId: socketId,
+    userId: student.userId,
+    name: student.name,
+    answeredCount,
+    correctCount,
+    totalQuestions: challenge.totalQuestions ?? FIVE_PARTS_TRUE_FALSE_QUESTIONS.length,
+    completed: Boolean(progress?.completed),
+    responseTimeSeconds: progress?.totalTimeSeconds,
+    ...extra,
+  };
+
+  for (const client of io.sockets.sockets.values()) {
+    if (
+      client.data.roomId === challenge.roomId &&
+      client.data.role === "instructor" &&
+      client.data.clientType === "classroom"
+    ) {
+      client.emit("quickChallengeStudentAnswered", payload);
+    }
+  }
+}
+
+function finishFivePartsIfEveryoneDone(challenge: QuickChallenge): void {
+  const roomStudents = getRoomClassroomStudents(challenge.roomId);
+  if (roomStudents.length === 0) return;
+  const everyoneDone = roomStudents.every(([socketId]) =>
+    challenge.studentProgress.get(socketId)?.completed
+  );
+  if (!everyoneDone) return;
+  if (challenge.timeout) clearTimeout(challenge.timeout);
+  publishQuickChallengeReview(challenge);
+  emitQuickChallengeEnded(challenge);
+  activeQuickChallenges.delete(challenge.roomId);
 }
 
 function publishQuickChallengeReview(challenge: QuickChallenge): void {
@@ -328,20 +478,29 @@ io.on("connection", (socket: ClassroomSocket) => {
     const previous = activeQuickChallenges.get(roomId);
     if (previous?.timeout) clearTimeout(previous.timeout);
 
+    const isTrueFalse = data.challengeType === "true-false";
+    const isFiveParts = data.challengeType === FIVE_PARTS_CHALLENGE_TYPE;
     const durationSeconds = Math.min(
       300,
-      Math.max(15, Number(data.durationSeconds) || 60)
+      Math.max(
+        15,
+        Number(data.durationSeconds) ||
+          (isFiveParts ? FIVE_PARTS_DURATION_SECONDS : 60)
+      )
     );
-    const isTrueFalse = data.challengeType === "true-false";
     const activityId = Number(data.activityId);
     let databaseQuestion: {
       prompt: string;
       choices: unknown;
       correct_index: number;
     } | null = null;
-    let cycleLabel = isTrueFalse ? "True or False Cycle" : "Current Learning Cycle";
+    let cycleLabel = isTrueFalse
+      ? "True or False Cycle"
+      : isFiveParts
+        ? "Lesson 1 · Five Parts Challenge"
+        : "Current Learning Cycle";
 
-    if (!isTrueFalse && Number.isInteger(activityId) && activityId > 0) {
+    if (!isTrueFalse && !isFiveParts && Number.isInteger(activityId) && activityId > 0) {
       const { data: question, error: questionError } = await supabaseAdmin
         .from("quiz_questions")
         .select("prompt, choices, correct_index")
@@ -366,29 +525,56 @@ io.on("connection", (socket: ClassroomSocket) => {
       }
     }
 
+    const fivePartsQuestions = isFiveParts
+      ? FIVE_PARTS_TRUE_FALSE_QUESTIONS.map(item => ({
+          prompt: item.prompt,
+          options: [...TRUE_FALSE_OPTIONS],
+          correctIndex: item.correctIndex,
+        }))
+      : [];
+    const fivePartsQuestion = fivePartsQuestions[0] ?? null;
+    if (isFiveParts && !fivePartsQuestion) {
+      socket.emit("error", {
+        message: "The Five Parts Challenge question is missing.",
+      });
+      return;
+    }
     const databaseChoices = Array.isArray(databaseQuestion?.choices)
       ? databaseQuestion.choices.map(String)
       : null;
     const challenge: QuickChallenge = {
       id: `quick-${roomId}-${Date.now()}`,
       roomId,
-      question: isTrueFalse
-        ? "True or False: In Python, True is a Boolean value."
-        : databaseQuestion?.prompt ?? "Which part of a computer runs the instructions — the “brain”?",
-      options: isTrueFalse
-        ? ["True", "False"]
+      question: isFiveParts
+        ? fivePartsQuestion!.prompt
+        : isTrueFalse
+          ? "True or False: In Python, True is a Boolean value."
+          : databaseQuestion?.prompt ?? "Which part of a computer runs the instructions — the “brain”?",
+      options: isFiveParts || isTrueFalse
+        ? [...TRUE_FALSE_OPTIONS]
         : databaseChoices?.length === 4
           ? databaseChoices
           : ["CPU", "Main memory (RAM)", "Secondary storage", "Input devices"],
-      correctIndex: isTrueFalse
-        ? 0
-        : databaseChoices?.length === 4
-          ? Number(databaseQuestion?.correct_index) || 0
-          : 0,
+      correctIndex: isFiveParts
+        ? fivePartsQuestion!.correctIndex
+        : isTrueFalse
+          ? 0
+          : databaseChoices?.length === 4
+            ? Number(databaseQuestion?.correct_index) || 0
+            : 0,
       durationSeconds,
       startedAt: Date.now(),
       cycleLabel,
+      challengeType: isFiveParts
+        ? FIVE_PARTS_CHALLENGE_TYPE
+        : isTrueFalse
+          ? "true-false"
+          : undefined,
+      questionIndex: isFiveParts ? 0 : undefined,
+      totalQuestions: isFiveParts ? fivePartsQuestions.length : undefined,
+      questions: isFiveParts ? fivePartsQuestions : undefined,
       answers: new Map(),
+      studentProgress: new Map(),
       timeout: null,
     };
     activeQuickChallenges.set(roomId, challenge);
@@ -400,6 +586,15 @@ io.on("connection", (socket: ClassroomSocket) => {
       options: challenge.options,
       durationSeconds: challenge.durationSeconds,
       startedAt: challenge.startedAt,
+      challengeType: challenge.challengeType,
+      questionIndex: challenge.questionIndex,
+      totalQuestions: challenge.totalQuestions,
+      questions: isFiveParts
+        ? fivePartsQuestions.map(item => ({
+            question: item.prompt,
+            options: item.options,
+          }))
+        : undefined,
     };
     const roomStudents = [];
 
@@ -431,30 +626,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
 
       publishQuickChallengeReview(challenge);
-
-      const rankedCorrectAnswers = Array.from(challenge.answers.entries())
-        .filter(([, answer]) => answer.correct)
-        .sort(
-          ([, left], [, right]) =>
-            left.responseTimeSeconds - right.responseTimeSeconds
-        );
-      const winnerEntry = rankedCorrectAnswers[0];
-      const winnerSocketId = winnerEntry?.[0] ?? null;
-      const winnerAnswer = winnerEntry?.[1] ?? null;
-      const winnerStudent = winnerSocketId
-        ? students[winnerSocketId]
-        : null;
-
-      for (const client of io.sockets.sockets.values()) {
-        if (client.data.roomId === roomId) {
-          client.emit("quickChallengeEnded", {
-            quizId: challenge.id,
-            winnerStudentId: winnerSocketId,
-            winnerName: winnerStudent?.name ?? null,
-            winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
-          });
-        }
-      }
+      emitQuickChallengeEnded(challenge);
       activeQuickChallenges.delete(roomId);
     }, durationSeconds * 1000 + 4000);
   });
@@ -468,9 +640,75 @@ io.on("connection", (socket: ClassroomSocket) => {
       !student ||
       socket.data.role === "instructor" ||
       !challenge ||
-      data.quizId !== challenge.id ||
-      challenge.answers.has(socket.id)
+      data.quizId !== challenge.id
     ) return;
+
+    if (challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE) {
+      const questions = challenge.questions ?? [];
+      const progress = challenge.studentProgress.get(socket.id) ?? {
+        answers: [],
+        completed: false,
+      };
+      if (progress.completed || questions.length === 0) return;
+
+      const rawAnswers = Array.isArray(data.answers) ? data.answers : null;
+      if (!rawAnswers || rawAnswers.length !== questions.length) return;
+
+      const graded = [];
+      for (let questionIndex = 0; questionIndex < questions.length; questionIndex += 1) {
+        const currentQuestion = questions[questionIndex];
+        const selectedIndex = Number.isInteger(rawAnswers[questionIndex])
+          ? Number(rawAnswers[questionIndex])
+          : null;
+        if (
+          selectedIndex === null ||
+          selectedIndex < 0 ||
+          selectedIndex >= currentQuestion.options.length
+        ) {
+          return;
+        }
+        graded.push({
+          questionIndex,
+          selectedIndex,
+          correct: selectedIndex === currentQuestion.correctIndex,
+          answeredAt: Date.now(),
+        });
+      }
+
+      const answeredAt = Date.now();
+      progress.answers = graded;
+      progress.completed = true;
+      progress.finishedAt = answeredAt;
+      progress.totalTimeSeconds = Math.max(
+        0,
+        (answeredAt - challenge.startedAt) / 1000
+      );
+      challenge.studentProgress.set(socket.id, progress);
+      publishQuickChallengeReview(challenge);
+
+      const correctCount = getFivePartsScore(progress);
+      socket.emit("quickChallengeResult", {
+        quizId: challenge.id,
+        completed: true,
+        hasNext: false,
+        correctCount,
+        answeredCount: graded.length,
+        totalQuestions: questions.length,
+        responseTimeSeconds: progress.totalTimeSeconds,
+        results: graded.map((answer, questionIndex) => ({
+          questionIndex,
+          selectedIndex: answer.selectedIndex,
+          correctIndex: questions[questionIndex].correctIndex,
+          correct: answer.correct,
+        })),
+        message: `Score: ${correctCount}/${questions.length}`,
+      });
+      notifyInstructorStudentProgress(challenge, socket.id, student);
+      finishFivePartsIfEveryoneDone(challenge);
+      return;
+    }
+
+    if (challenge.answers.has(socket.id)) return;
 
     const rawIndex = data.selectedIndex;
     const selectedIndex =
@@ -515,9 +753,11 @@ io.on("connection", (socket: ClassroomSocket) => {
       responseTimeSeconds,
       message: correct
         ? "Correct!"
-        : `Not quite. The correct answer is ${String.fromCharCode(
-            65 + challenge.correctIndex
-          )}. ${challenge.options[challenge.correctIndex]}.`,
+        : challenge.options.length === 2
+          ? `Not quite. The correct answer is ${challenge.options[challenge.correctIndex]}.`
+          : `Not quite. The correct answer is ${String.fromCharCode(
+              65 + challenge.correctIndex
+            )}. ${challenge.options[challenge.correctIndex]}.`,
     });
 
     const answerPayload = {
@@ -559,25 +799,9 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     if (challenge.timeout) clearTimeout(challenge.timeout);
     publishQuickChallengeReview(challenge);
-    const rankedCorrectAnswers = Array.from(challenge.answers.entries())
-      .filter(([, answer]) => answer.correct)
-      .sort(([, left], [, right]) =>
-        left.responseTimeSeconds - right.responseTimeSeconds
-      );
-    const winnerEntry = rankedCorrectAnswers[0];
-    const winnerSocketId = winnerEntry?.[0] ?? null;
-    const winnerAnswer = winnerEntry?.[1] ?? null;
-    const winnerStudent = winnerSocketId ? students[winnerSocketId] : null;
-
+    emitQuickChallengeEnded(challenge, { stoppedByInstructor: true });
     for (const client of io.sockets.sockets.values()) {
       if (client.data.roomId !== roomId) continue;
-      client.emit("quickChallengeEnded", {
-        quizId: challenge.id,
-        winnerStudentId: winnerSocketId,
-        winnerName: winnerStudent?.name ?? null,
-        winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
-        stoppedByInstructor: true,
-      });
       if (client.data.role !== "instructor") {
         const connectedStudent = students[client.id];
         if (connectedStudent) connectedStudent.mode = "Classroom Mode";

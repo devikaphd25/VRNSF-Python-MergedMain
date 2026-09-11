@@ -79,6 +79,24 @@ export interface RoomRecord {
   closed_at?: string | null;
 }
 
+export interface QuickChallengeQuestion {
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+}
+
+export interface QuickChallengeStudentProgress {
+  answers: Array<{
+    questionIndex: number;
+    selectedIndex: number;
+    correct: boolean;
+    answeredAt: number;
+  }>;
+  completed: boolean;
+  finishedAt?: number;
+  totalTimeSeconds?: number;
+}
+
 export interface QuickChallenge {
   id: string;
   roomId: string;
@@ -88,12 +106,17 @@ export interface QuickChallenge {
   durationSeconds: number;
   startedAt: number;
   cycleLabel?: string;
+  challengeType?: string;
+  questionIndex?: number;
+  totalQuestions?: number;
+  questions?: QuickChallengeQuestion[];
   answers: Map<string, {
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
     responseTimeSeconds: number;
   }>;
+  studentProgress: Map<string, QuickChallengeStudentProgress>;
   timeout: NodeJS.Timeout | null;
 }
 
