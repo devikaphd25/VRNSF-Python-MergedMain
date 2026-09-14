@@ -1,4 +1,8 @@
-// src/systems/raise-hand-notification.system.ts
+/**
+ * Instructor raised-hand notification system.
+ * Goal: listen for student hand state, display student name/seat, and let the
+ * instructor lower the hand with mouse or controller ray.
+ */
 
 import {
   AssetManager,
@@ -433,16 +437,21 @@ export class RaiseHandNotificationSystem extends createSystem({
       return;
     }
 
-    const overlayOpen =
-      Boolean((window as any).isInstructorDashboardOpen) ||
-      Boolean((window as any).isInstructorLabMonitorOpen) ||
-      Boolean((window as any).isInstructorMistakesOpen);
+    // A raised hand is urgent classroom information. Keep this compact HUD
+    // visible even while a dashboard or live monitor is open.
+    const shouldShow = Boolean(this.currentStudentId);
 
-    const shouldShow =
-      Boolean(this.currentStudentId) &&
-      !overlayOpen;
+    // Environment transitions can re-parent or move scene-owned UI. Restore
+    // this compact alert to the instructor camera every time it is displayed.
+    const notificationObject = this.notificationEntity.object3D;
+    if (shouldShow && notificationObject.parent !== this.camera) {
+      this.camera.add(notificationObject);
+      notificationObject.position.set(0, -0.31, -1.08);
+      notificationObject.rotation.set(0, 0, 0);
+      notificationObject.scale.setScalar(0.88);
+    }
 
-    this.notificationEntity.object3D.visible = shouldShow;
+    notificationObject.visible = shouldShow;
 
     if (shouldShow) {
       this.notificationRoot?.classList.remove(

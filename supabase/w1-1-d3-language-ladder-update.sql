@@ -88,6 +88,7 @@ begin
     update public.quiz_questions
     set deck = 'w1-1-d3',
         slide_number = 3,
+        ordinal = 1,
         prompt = 'Which translator executes a program one statement at a time?',
         choices = '["Compiler", "Interpreter", "Machine language", "CPU"]'::jsonb,
         correct_index = 1

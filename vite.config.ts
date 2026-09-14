@@ -1,3 +1,8 @@
+/**
+ * Vite/IWSDK development configuration.
+ * Compiles UIKitML, enables the Quest emulator, proxies /api to the Node server,
+ * and exposes the HTTPS development host to headsets on the local network.
+ */
 import { iwsdkDev } from "@iwsdk/vite-plugin-dev";
 import { compileUIKit } from "@iwsdk/vite-plugin-uikitml";
 import { defineConfig } from "vite";

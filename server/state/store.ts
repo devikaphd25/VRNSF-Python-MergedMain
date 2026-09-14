@@ -1,3 +1,10 @@
+/**
+ * Shared transient server state.
+ *
+ * Goal: hold currently connected students, users moving between classroom and
+ * lab, and live LabSession instances. This state resets with the Node server;
+ * permanent identities and results belong in Supabase.
+ */
 // ========================================================
 // SHARED SERVER STATE
 // ========================================================

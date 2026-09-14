@@ -1,3 +1,4 @@
+/** Defines seat entities and their seat-name/type data used by SeatSystem. */
 import {createComponent, Group, Object3DEventMap, Types} from "@iwsdk/core";
 
 import {SeatType} from "../utils/utils";

@@ -10,6 +10,7 @@ import {
   eq,
   PanelDocument,
   PanelUI,
+  RayInteractable,
   UIKit,
   UIKitDocument
 } from "@iwsdk/core";
@@ -27,7 +28,8 @@ type InstructorMode =
   | "Classroom Mode"
   | "Presentation Mode"
   | "Lab Mode"
-  | "Quick Challenge";
+  | "Quick Challenge"
+  | "Challenge 2";
 
 interface DashboardStudent {
   id: string;
@@ -60,11 +62,17 @@ interface QuizMonitorStudent {
   selectedOption?: string | null;
   correct?: boolean;
   answered?: boolean;
+  responseTimeSeconds?: number;
   completed?: boolean;
   correctCount?: number;
   answeredCount?: number;
   totalQuestions?: number;
-  responseTimeSeconds?: number;
+  completedCount?: number;
+  totalItems?: number;
+  attempts?: number;
+  wrongAttempts?: number;
+  finalScore?: number;
+  finalPlacement?: number | null;
 }
 
 interface InstructorQuizPayload {
@@ -75,9 +83,8 @@ interface InstructorQuizPayload {
   startedAt: number;
   students?: QuizMonitorStudent[];
   challengeType?: string;
-  questionIndex?: number;
   totalQuestions?: number;
-  cycleLabel?: string;
+  totalItems?: number;
 }
 
 type InstructorResultType = "game" | "quick-challenge";
@@ -197,11 +204,16 @@ export class InstructorDashboardSystem extends createSystem({
   private activeQuiz?: InstructorQuizPayload;
   private quizStudents: QuizMonitorStudent[] = [];
   private quizCountdownTimer?: number;
+  private quizCountdownStoppedText?: string;
   private quizMonitorPage = 0;
   private readonly quizMonitorPageSize = 10;
   private quizMonitorFinished = false;
   private quizSeriesType?: string;
   private quizSeriesTotal = 1;
+  private challenge2FinalResults?: any;
+  private challenge2EndReason?: "completed" | "timeout" | "instructor_stop";
+  private returnToQuizAfterMistakes = false;
+  private activeQuizKind: "quick-challenge" | "challenge-2" = "quick-challenge";
   private resultsButtonDocument?: UIKitDocument;
   private latestResultType: InstructorResultType = "game";
 
@@ -219,6 +231,10 @@ export class InstructorDashboardSystem extends createSystem({
   private labResultsFinalized = false;
   private openLabMonitorAfterSavedResults = false;
   private activeLessonPage = 0;
+  private taskQueueOffset = 0;
+  private readonly taskQueueVisibleRows = 5;
+  /** Tasks selected during this instructor session, keyed by lesson and slot. */
+  private completedTaskKeys = new Set<string>();
   private labActivityStartedAt: number | null = null;
   private labActivityTimer?: number;
   private labActivityFinalElapsedSeconds = 0;
@@ -242,7 +258,9 @@ export class InstructorDashboardSystem extends createSystem({
       );
       (window as any).presentationSystem?.exitPresentationMode?.();
       socket.emit("instructorReturnAllToClass");
-      window.setTimeout(() => this.activateConfiguredTask("challenge"), 250);
+      window.setTimeout(() => {
+        this.activateConfiguredTask("challenge");
+      }, 250);
     };
 
     this.queries.saveOverlay.subscribe(
@@ -260,7 +278,7 @@ export class InstructorDashboardSystem extends createSystem({
       "qualify",
       entity => {
         this.connectSmallMenuButton(
-          entity.index
+          entity
         );
       }
     );
@@ -519,9 +537,11 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "quickChallengeStartedForInstructor",
       (data: InstructorQuizPayload) => {
+        this.activeQuizKind = "quick-challenge";
         this.activeQuiz = data;
         this.quizMonitorPage = 0;
         this.quizMonitorFinished = false;
+        this.challenge2FinalResults = undefined;
         this.quizStudents = (data.students ?? []).map(student => ({
           ...student,
           answered: false,
@@ -607,6 +627,7 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "quickChallengeEnded",
       () => {
+        if (this.activeQuizKind !== "quick-challenge") return;
         this.stopQuizCountdown();
         this.quizMonitorFinished = true;
         this.setCurrentMode("Classroom Mode");
@@ -617,11 +638,100 @@ export class InstructorDashboardSystem extends createSystem({
       }
     );
 
-    socket.on("quickChallengeQuestionClosed", data => {
-      if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
-      this.stopQuizCountdown();
+    socket.on(
+      "challenge2StartedForInstructor",
+      (data: InstructorQuizPayload) => {
+        this.activeQuizKind = "challenge-2";
+        this.activeQuiz = data;
+        this.quizMonitorPage = 0;
+        this.quizMonitorFinished = false;
+        this.quizCountdownStoppedText = undefined;
+        this.challenge2EndReason = undefined;
+        this.challenge2FinalResults = undefined;
+        this.quizStudents = (data.students ?? []).map(student => ({
+          ...student,
+          answered: false,
+          selectedIndex: null,
+          selectedOption: `0 / ${data.totalItems ?? 5} devices`,
+          completedCount: 0,
+          totalItems: data.totalItems ?? 5,
+          attempts: 0,
+          wrongAttempts: 0
+        }));
+        this.startQuizCountdown();
+        this.renderQuizMonitor();
+        this.setQuizMonitorVisible(true);
+      }
+    );
+
+    socket.on("challenge2StudentProgress", data => {
+      if (
+        this.activeQuizKind !== "challenge-2" ||
+        !this.activeQuiz ||
+        data?.challengeId !== this.activeQuiz.id
+      ) return;
+
+      const student = this.quizStudents.find(
+        item => item.studentId === data.studentId
+      );
+      if (!student) return;
+
+      student.completedCount = Number(data.completedCount) || 0;
+      student.totalItems = Number(data.totalItems) || 5;
+      student.attempts = Number(data.attempts) || 0;
+      student.wrongAttempts = Number(data.wrongAttempts) || 0;
+      student.answered = Boolean(data.completed);
+      student.correct = Boolean(data.completed);
+      student.selectedIndex = null;
+      const currentQuestion = student.answered
+        ? student.totalItems
+        : Math.min(student.completedCount + 1, student.totalItems);
+      student.selectedOption =
+        `Q ${currentQuestion} / ${student.totalItems}  •  RIGHT ${student.completedCount}`;
+      // Do not expose a running elapsed time in the student's TIME column.
+      // The final completion duration is meaningful only after all five
+      // devices have been classified successfully.
+      student.responseTimeSeconds = student.answered
+        ? Number(data.responseTimeSeconds) || 0
+        : undefined;
       this.renderQuizMonitor();
-      this.showStatusMessage("Challenge timer ended.");
+    });
+
+    socket.on("challenge2Ended", data => {
+      if (
+        this.activeQuizKind !== "challenge-2" ||
+        (data?.challengeId && this.activeQuiz?.id !== data.challengeId)
+      ) return;
+      this.challenge2FinalResults = data?.finalResults;
+      this.challenge2EndReason = data?.reason;
+      for (const finalResult of data?.finalResults?.rankings ?? []) {
+        const student = this.quizStudents.find(
+          item => item.studentId === finalResult.studentId
+        );
+        if (!student) continue;
+        student.completedCount = Number(finalResult.correctAnswers) || 0;
+        student.wrongAttempts = Number(finalResult.wrongAnswers) || 0;
+        student.attempts = Number(finalResult.attempts) || 0;
+        student.responseTimeSeconds = Number(finalResult.elapsedSeconds) || 0;
+        student.finalScore = Number(finalResult.score) || 0;
+        student.finalPlacement = finalResult.placement ?? null;
+        student.answered =
+          student.completedCount >= (student.totalItems ?? 5);
+        student.correct = student.answered;
+      }
+      this.quizCountdownStoppedText =
+        data?.reason === "timeout" ? "00:00" : this.getQuizCountdownText();
+      this.stopQuizCountdown();
+      this.quizMonitorFinished = true;
+      this.setCurrentMode("Classroom Mode");
+      this.showStatusMessage(
+        data?.reason === "completed"
+          ? "All students completed the competition — final ranking ready"
+          : "Challenge 2 finished — final ranking ready"
+      );
+      this.renderQuizMonitor(true);
+      this.setLatestResultType("quick-challenge");
+      this.setLabMonitorAvailable(true);
     });
   }
 
@@ -630,11 +740,11 @@ export class InstructorDashboardSystem extends createSystem({
   // ======================================================
 
   private connectSmallMenuButton(
-    entityIndex: number
+    entity: any
   ): void {
     const document =
       PanelDocument.data.document[
-        entityIndex
+        entity.index
       ] as UIKitDocument;
 
     if (!document) {
@@ -658,14 +768,24 @@ export class InstructorDashboardSystem extends createSystem({
       return;
     }
 
-    openButton.addEventListener(
-      "click",
-      () => {
-        this.setDashboardVisible(
-          true
-        );
-      }
+    this.bindSpatialButton(
+      document,
+      "instructor-menu-open-button",
+      () => this.setDashboardVisible(true)
     );
+
+    // The panel can render before UIKit finishes creating its hit targets.
+    // Publish readiness only after the listeners exist, then rebuild the SDK
+    // ray target so the first mouse/controller activation is accepted.
+    (window as any).isInstructorMenuButtonReady = true;
+    entity.object3D.pointerEvents = "auto";
+    entity.object3D.pointerEventsOrder = 65000;
+    entity.removeComponent(RayInteractable);
+    entity.addComponent(RayInteractable);
+    requestAnimationFrame(() => {
+      (window as any).refreshInstructorMenuButton?.();
+      entity.object3D.updateMatrixWorld(true);
+    });
 
     console.log(
       "[InstructorDashboard] Small menu button connected"
@@ -698,8 +818,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.applyConfiguredMenuContent();
     void this.loadInstructorMenuContent();
     this.connectCloseButton();
-    this.connectModeButtons();
-    this.connectExtendedMenuButtons();
+    this.connectQueueButtons();
     this.connectTaskScrollControls();
     this.connectEndClassControls();
     this.updateModeDisplay();
@@ -847,6 +966,7 @@ export class InstructorDashboardSystem extends createSystem({
       document,
       "lab-monitor-mistakes-button",
       () => {
+          this.returnToQuizAfterMistakes = false;
           const setter =
             (window as any)
               .setInstructorMistakesOpen;
@@ -894,8 +1014,15 @@ export class InstructorDashboardSystem extends createSystem({
     );
     this.bindSpatialButton(document, "quiz-monitor-stop", () => {
       if (!this.activeQuiz || this.quizMonitorFinished) return;
-      socket.emit("stopQuickChallenge", { quizId: this.activeQuiz.id });
-      this.showStatusMessage("Stopping quick challenge...");
+      if (this.activeQuizKind === "challenge-2") {
+        socket.emit("instructorStopChallenge2", {
+          challengeId: this.activeQuiz.id
+        });
+        this.showStatusMessage("Stopping Challenge 2...");
+      } else {
+        socket.emit("stopQuickChallenge", { quizId: this.activeQuiz.id });
+        this.showStatusMessage("Stopping quick challenge...");
+      }
     });
     this.bindSpatialButton(document, "quiz-monitor-up", () => {
       this.quizMonitorPage = Math.max(0, this.quizMonitorPage - 1);
@@ -908,6 +1035,15 @@ export class InstructorDashboardSystem extends createSystem({
       );
       this.quizMonitorPage = Math.min(totalPages - 1, this.quizMonitorPage + 1);
       this.renderQuizMonitor();
+    });
+    this.bindSpatialButton(document, "quiz-monitor-wrong-answers", () => {
+      if (!this.quizMonitorFinished || this.activeQuizKind !== "challenge-2") {
+        return;
+      }
+      this.renderChallenge2MistakesReport();
+      this.returnToQuizAfterMistakes = true;
+      const setter = (window as any).setInstructorMistakesOpen;
+      setter?.(true);
     });
     this.renderQuizMonitor();
   }
@@ -941,26 +1077,32 @@ export class InstructorDashboardSystem extends createSystem({
     const resultHeader = document.getElementById(
       "quiz-monitor-result-header"
     ) as UIKit.Text;
-    const displayStudents = this.quizStudents;
-    const isFiveParts = this.isFivePartsSeries();
-    const finishedCount = displayStudents.filter(
-      student => student.completed
-    ).length;
-    const answeredCount = displayStudents.filter(
+    const finalReview = document.getElementById("quiz-monitor-final-review") as any;
+    const answeredCount = this.quizStudents.filter(
       student => student.answered
     ).length;
-    const rankedStudents = [...displayStudents].sort((left, right) => {
-      if (isFiveParts) {
-        const leftGroup = left.completed ? 0 : 1;
-        const rightGroup = right.completed ? 0 : 1;
-        if (leftGroup !== rightGroup) return leftGroup - rightGroup;
-        if (left.completed && right.completed) {
-          const scoreDiff = (right.correctCount ?? 0) - (left.correctCount ?? 0);
-          if (scoreDiff !== 0) return scoreDiff;
-          return (left.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
-            (right.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER);
-        }
-        return (right.answeredCount ?? 0) - (left.answeredCount ?? 0);
+    const rankedStudents = [...this.quizStudents].sort((left, right) => {
+      if (this.isFivePartsSeries()) {
+        if (Boolean(left.completed) !== Boolean(right.completed)) return left.completed ? -1 : 1;
+        return ((right.correctCount ?? 0) - (left.correctCount ?? 0)) ||
+          ((left.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER) - (right.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER));
+      }
+      if (this.activeQuizKind === "challenge-2") {
+        const leftAttempted = (left.attempts ?? 0) > 0;
+        const rightAttempted = (right.attempts ?? 0) > 0;
+        if (leftAttempted !== rightAttempted) return leftAttempted ? -1 : 1;
+        const correctDifference =
+          (right.completedCount ?? 0) - (left.completedCount ?? 0);
+        if (correctDifference !== 0) return correctDifference;
+        const mistakeDifference =
+          (left.wrongAttempts ?? 0) - (right.wrongAttempts ?? 0);
+        if (mistakeDifference !== 0) return mistakeDifference;
+        const timeDifference =
+          (left.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+          (right.responseTimeSeconds ?? Number.MAX_SAFE_INTEGER);
+        if (timeDifference !== 0) return timeDifference;
+        return this.getChallenge2WinnerScore(right, finished) -
+          this.getChallenge2WinnerScore(left, finished);
       }
       const leftGroup = !left.answered ? 2 : left.correct ? 0 : 1;
       const rightGroup = !right.answered ? 2 : right.correct ? 0 : 1;
@@ -971,19 +1113,19 @@ export class InstructorDashboardSystem extends createSystem({
       }
       return 0;
     });
-    const winnerId = isFiveParts
-      ? rankedStudents.find(student => student.completed)?.studentId
-      : rankedStudents.find(
-          student => student.answered && student.correct
-        )?.studentId;
-    const rankByStudent = new Map(
-      isFiveParts
-        ? rankedStudents
-            .filter(student => student.completed)
-            .map((student, index) => [student.studentId, index + 1])
-        : rankedStudents
-            .filter(student => student.answered && student.correct)
-            .map((student, index) => [student.studentId, index + 1])
+    const rankedParticipants = rankedStudents.filter(student =>
+      this.activeQuizKind === "challenge-2"
+        ? (student.attempts ?? 0) > 0
+        : this.isFivePartsSeries() ? student.completed : student.answered && student.correct
+    );
+    const winnerId = rankedParticipants[0]?.studentId;
+    const correctRankByStudent = new Map(
+      rankedParticipants.map((student, index) => [
+        student.studentId,
+        finished && student.finalPlacement
+          ? student.finalPlacement
+          : index + 1
+      ])
     );
     const totalPages = Math.max(
       1,
@@ -997,42 +1139,54 @@ export class InstructorDashboardSystem extends createSystem({
     );
 
     question?.setProperties({
-      text: isFiveParts
-        ? "Quick Challenge"
-        : (this.activeQuiz?.question ?? "Waiting for question")
+      text: this.isFivePartsSeries() ? "Quick Challenge" : this.activeQuiz?.question ?? "Waiting for question"
     });
     summary?.setProperties({
-      text: isFiveParts
-        ? `${finishedCount} of ${displayStudents.length} students finished`
-        : `${answeredCount} of ${displayStudents.length} students answered`
+      text: this.isFivePartsSeries()
+        ? `${this.quizStudents.filter(student => student.completed).length} of ${this.quizStudents.length} students finished`
+        : this.activeQuizKind === "challenge-2"
+        ? `${answeredCount} of ${this.quizStudents.length} students completed`
+        : `${answeredCount} of ${this.quizStudents.length} students answered`
     });
-    if (isFiveParts) {
+    // Match the PR #7 series layout while retaining access to every page.
+    if (this.isFivePartsSeries()) {
       this.addClass(title, "quiz-row-hidden");
-      this.addClass(paging, "quiz-row-hidden");
       this.addClass(footer, "quiz-row-hidden");
     } else {
       this.removeClass(title, "quiz-row-hidden");
-      this.removeClass(paging, "quiz-row-hidden");
       this.removeClass(footer, "quiz-row-hidden");
-      footer?.setProperties({
-        text: finished
-          ? "Challenge finished. Final results are shown."
-          : "The list updates as students submit."
-      });
-      pageLabel?.setProperties({
-        text: `PAGE ${this.quizMonitorPage + 1} / ${totalPages}`
-      });
     }
+    this.removeClass(paging, "quiz-row-hidden");
+    footer?.setProperties({
+      text: finished
+        ? this.activeQuizKind === "challenge-2"
+          ? this.challenge2EndReason === "instructor_stop"
+            ? "Challenge stopped by instructor. Progress and mistakes are shown; no ranking awarded."
+            : "Top 3 awarded. Others keep their accuracy and completion-time result."
+          : "Challenge finished. Final responses are shown."
+        : this.activeQuizKind === "challenge-2"
+          ? "Live score: 70% accuracy + 30% normalized speed."
+          : "The list updates as students submit."
+    });
     timer?.setProperties({
-      text: finished ? "00:00" : this.getQuizCountdownText()
+      text: finished
+        ? this.quizCountdownStoppedText ?? "00:00"
+        : this.getQuizCountdownText()
+    });
+    pageLabel?.setProperties({
+      text: `PAGE ${this.quizMonitorPage + 1} / ${totalPages}`
     });
     answerHeader?.setProperties({
-      text: isFiveParts ? "PROGRESS" : "SELECTED ANSWER"
+      text: this.activeQuizKind === "challenge-2"
+        ? "RIGHT / WRONG"
+        : this.isFivePartsSeries() ? "PROGRESS" : "SELECTED ANSWER"
     });
     resultHeader?.setProperties({
-      text: isFiveParts ? "SCORE" : "RESULT"
+      text: this.activeQuizKind === "challenge-2" ? "QUESTION" : this.isFivePartsSeries() ? "SCORE" : "RESULT"
     });
-
+    finalReview?.setProperties({
+      display: finished && this.activeQuizKind === "challenge-2" ? "flex" : "none"
+    });
     for (let row = 1; row <= 10; row += 1) {
       const student = pageStudents[row - 1];
       const rowElement = document.getElementById(`quiz-monitor-row-${row}`);
@@ -1059,45 +1213,62 @@ export class InstructorDashboardSystem extends createSystem({
 
       this.removeClass(rowElement, "quiz-row-hidden");
       this.removeClass(result, "quiz-result-correct", "quiz-result-wrong");
-      const studentRank = rankByStudent.get(student.studentId);
+      const correctRank = correctRankByStudent.get(student.studentId);
+      const displayedRank =
+        this.activeQuizKind === "challenge-2" &&
+          (this.challenge2EndReason === "instructor_stop" ||
+            (correctRank ?? 0) > 3)
+          ? undefined
+          : correctRank;
       rank?.setProperties({
-        text: studentRank ? this.formatOrdinal(studentRank) : "—"
+        // Challenge 2 awards only first, second, and third place. Other
+        // attempted students retain their score but do not receive a place.
+        text: displayedRank ? this.formatOrdinal(displayedRank) : "—"
       });
       name?.setProperties({
         text: `${student.name}${student.seat ? `  ${student.seat}` : ""}`
       });
 
-      if (isFiveParts) {
-        const total = student.totalQuestions ?? this.quizSeriesTotal;
-        const score = student.correctCount ?? 0;
+      if (this.isFivePartsSeries()) {
+        answer?.setProperties({ text: student.completed ? "Completed" : "Not submitted" });
+        responseTime?.setProperties({ text: student.completed ? `${(student.responseTimeSeconds ?? 0).toFixed(1)}s` : "—" });
+        result?.setProperties({ text: student.completed ? `${student.correctCount ?? 0}/${student.totalQuestions ?? this.quizSeriesTotal}` : "—" });
+        continue;
+      }
+
+      if (this.activeQuizKind === "challenge-2") {
+        const totalItems = student.totalItems ?? this.activeQuiz?.totalItems ?? 5;
+        const rightAnswers = student.completedCount ?? 0;
+        const currentQuestion = student.answered
+          ? totalItems
+          : Math.min(rightAnswers + 1, totalItems);
+        const mistakes = student.wrongAttempts ?? 0;
         answer?.setProperties({
-          text: student.completed ? "Completed" : "Not started"
+          text: `RIGHT ${rightAnswers}  •  WRONG ${mistakes}`
         });
         responseTime?.setProperties({
-          text: student.completed
+          text: student.answered
             ? `${(student.responseTimeSeconds ?? 0).toFixed(1)}s`
             : "—"
         });
         result?.setProperties({
-          text: student.completed ? `${score}/${total}` : "—"
+          // Placement belongs only in the RANK column. Keep this column as
+          // question progress before and after the challenge finishes.
+          text: `Q ${currentQuestion} / ${totalItems}`
         });
-        if (student.completed) {
-          this.addClass(
-            result,
-            student.studentId === winnerId
-              ? "quiz-result-correct"
-              : score > 0
-                ? "quiz-result-correct"
-                : "quiz-result-wrong"
-          );
-        }
         continue;
       }
 
       if (!student.answered) {
-        answer?.setProperties({ text: "Waiting for answer" });
-        responseTime?.setProperties({ text: "—" });
-        result?.setProperties({ text: "UNANSWERED" });
+        answer?.setProperties({
+          text: "Waiting for answer"
+        });
+        responseTime?.setProperties({
+          text: "—"
+        });
+        result?.setProperties({
+          text: "UNANSWERED"
+        });
         continue;
       }
 
@@ -1130,6 +1301,42 @@ export class InstructorDashboardSystem extends createSystem({
     }
 
     this.syncDocument(document);
+  }
+
+  /**
+   * Normalize accuracy and speed to 0..1, then combine them using the agreed
+   * 70/30 educational weighting. A student with no attempts receives zero and
+   * is separately excluded from ranking. At stop/timeout, unfinished students
+   * use total elapsed challenge time so an early last click cannot inflate the
+   * speed portion of their final score.
+   */
+  private getChallenge2WinnerScore(
+    student: QuizMonitorStudent,
+    finished: boolean
+  ): number {
+    const attempts = student.attempts ?? 0;
+    if (attempts <= 0) return 0;
+    if (finished && student.finalScore !== undefined) {
+      return student.finalScore / 100;
+    }
+
+    const correct = student.completedCount ?? 0;
+    const accuracy = Math.min(1, Math.max(0, correct / attempts));
+    const timeLimit = Math.max(1, this.activeQuiz?.durationSeconds ?? 180);
+    const elapsedChallengeSeconds = Math.min(
+      timeLimit,
+      Math.max(0, (Date.now() - (this.activeQuiz?.startedAt ?? Date.now())) / 1000)
+    );
+    const completionTime = student.answered
+      ? student.responseTimeSeconds ?? elapsedChallengeSeconds
+      : finished
+        ? elapsedChallengeSeconds
+        : student.responseTimeSeconds ?? elapsedChallengeSeconds;
+    const speed = Math.min(
+      1,
+      Math.max(0, 1 - completionTime / timeLimit)
+    );
+    return accuracy * 0.70 + speed * 0.30;
   }
 
   private formatOrdinal(value: number): string {
@@ -1375,6 +1582,10 @@ export class InstructorDashboardSystem extends createSystem({
             (window as any)
               .setInstructorMistakesOpen;
           setter?.(false);
+          if (this.returnToQuizAfterMistakes) {
+            this.returnToQuizAfterMistakes = false;
+            this.setQuizMonitorVisible(true);
+          }
         }
       );
     }
@@ -1449,6 +1660,26 @@ export class InstructorDashboardSystem extends createSystem({
     );
   }
 
+  /** Reuse the lab mistake window for the completed Challenge 2 review. */
+  private renderChallenge2MistakesReport(): void {
+    const commonErrors = Array.isArray(
+      this.challenge2FinalResults?.commonErrors
+    ) ? this.challenge2FinalResults.commonErrors : [];
+    this.renderMistakesReport({
+      totalMistakes: commonErrors.reduce(
+        (total: number, error: any) => total + (Number(error.count) || 0),
+        0
+      ),
+      mistakes: commonErrors.map((error: any) => ({
+        question:
+          `${error.itemName}: ${String(error.selectedCategory).toUpperCase()}`,
+        correctType: String(error.correctCategory).toUpperCase(),
+        count: Number(error.count) || 0,
+        students: Array.isArray(error.students) ? error.students : []
+      }))
+    });
+  }
+
   update(): void {
     if (
       !(window as any)
@@ -1475,34 +1706,10 @@ export class InstructorDashboardSystem extends createSystem({
   // MODE BUTTONS
   // ======================================================
 
-  private connectModeButtons(): void {
-    this.connectButton(
-      "class-mode-button",
-      () => {
-        this.activateConfiguredTask("briefing");
-      }
-    );
-
-    this.connectButton(
-      "presentation-mode-button",
-      () => {
-        this.activateConfiguredTask("presentation");
-      }
-    );
-
-    this.connectButton(
-      "lab-mode-button",
-      () => {
-        this.toggleLabActivity();
-      }
-    );
-
-    this.connectButton(
-      "quick-challenge-button",
-      () => {
-        this.activateConfiguredTask("challenge");
-      }
-    );
+  private connectQueueButtons(): void {
+    for (let slot = 0; slot < this.taskQueueVisibleRows; slot += 1) {
+      this.connectButton(`queue-task-${slot}`, () => this.activateQueueSlot(slot));
+    }
   }
 
   private connectDebriefViewChoice(entityIndex: number): void {
@@ -1528,87 +1735,126 @@ export class InstructorDashboardSystem extends createSystem({
     if (!visible) this.pendingBriefingAssetPath = undefined;
   }
 
-  private connectExtendedMenuButtons(): void {
-    INSTRUCTOR_LESSONS.slice(1).flatMap(lesson => lesson.tasks).forEach(task =>
-      this.connectButton(task.buttonId, () => this.activateConfiguredTask(task.action))
-    );
-    this.connectButton(
-      "game-space-quiz-button",
-      () => this.activateTrueFalseChallenge()
-    );
-  }
-
   private connectTaskScrollControls(): void {
-    this.connectButton("task-scroll-up", () => this.changeLessonPage(-1));
-    this.connectButton("task-scroll-down", () => this.changeLessonPage(1));
+    this.connectButton("task-scroll-up", () => this.scrollTaskQueue(-1));
+    this.connectButton("task-scroll-down", () => this.scrollTaskQueue(1));
     this.renderLessonPage();
   }
 
-  private changeLessonPage(direction: -1 | 1): void {
-    const pageIds = INSTRUCTOR_LESSONS.map(lesson => lesson.pageId);
-    const nextPage = Math.max(
-      0,
-      Math.min(pageIds.length - 1, this.activeLessonPage + direction)
-    );
-
-    if (nextPage === this.activeLessonPage) {
-      this.showStatusMessage(
-        direction < 0
-          ? "Already at Lesson 1"
-          : `Already at Lesson ${pageIds.length}`
-      );
-      this.updateLessonScrollButtons(pageIds.length);
-      this.sync();
-      return;
-    }
-
-    this.activeLessonPage = nextPage;
+  private scrollTaskQueue(direction: -1 | 1): void {
+    const maximumOffset = Math.max(0, this.getTaskQueue().length - this.taskQueueVisibleRows);
+    const nextOffset = Math.max(0, Math.min(maximumOffset, this.taskQueueOffset + direction));
+    if (nextOffset === this.taskQueueOffset) return;
+    this.taskQueueOffset = nextOffset;
     this.renderLessonPage();
-    this.showStatusMessage(`Lesson ${this.activeLessonPage + 1} tasks`);
   }
 
   private renderLessonPage(): void {
-    const pageIds = INSTRUCTOR_LESSONS.map(lesson => lesson.pageId);
-
-    pageIds.forEach((id, index) => {
-      const page = this.dashboardDocument?.getElementById(id);
-      // Keep one stable UIKit tree. Re-showing a page after display:none can
-      // leave its text nodes and pointer targets unrendered in a WebXR panel.
-      if (index === 0) {
-        this.removeClass(page, "lesson-page-hidden");
-      } else {
-        this.addClass(page, "lesson-page-hidden");
-      }
-    });
-
-    this.applyActiveLessonContent();
-    this.updateLessonScrollButtons(pageIds.length);
-    this.sync();
-  }
-
-  private applyActiveLessonContent(): void {
-    const lesson = INSTRUCTOR_LESSONS[this.activeLessonPage];
-    if (!lesson) return;
-
+    const queue = this.getTaskQueue();
+    const maximumOffset = Math.max(0, queue.length - this.taskQueueVisibleRows);
+    this.taskQueueOffset = Math.min(this.taskQueueOffset, maximumOffset);
     const setText = (id: string, value: string): void => {
       const element = this.dashboardDocument?.getElementById(id) as UIKit.Text;
       if (!element) return;
       element.setProperties({ text: value });
-      // UIKit's current Text declaration omits textContent, but assigning it
-      // keeps text visible after a WebXR panel refresh.
       (element as any).textContent = value;
     };
+    setText("task-count", String(queue.length));
 
-    setText("lesson-1-label", lesson.label);
-    lesson.tasks.forEach((task, index) => {
-      const visibleTask = index + 1;
-      setText(`lesson-1-task-${visibleTask}-type`, task.type);
-      setText(`lesson-1-task-${visibleTask}-title`, task.title);
-      setText(`lesson-1-task-${visibleTask}-description`, task.description);
-    });
+    for (let slot = 0; slot < this.taskQueueVisibleRows; slot += 1) {
+      const item = queue[this.taskQueueOffset + slot];
+      const button = this.dashboardDocument?.getElementById(`queue-task-${slot}`);
+      if (!item) {
+        this.addClass(button, "is-hidden");
+        continue;
+      }
+      this.removeClass(button, "is-hidden");
+      setText(`queue-task-${slot}-number`, String(this.taskQueueOffset + slot + 1).padStart(2, "0"));
+      setText(`queue-task-${slot}-type`, item.type);
+      setText(`queue-task-${slot}-title`, item.title);
+      setText(`queue-task-${slot}-description`, item.description);
+      const typeBadge = this.dashboardDocument?.getElementById(`queue-task-${slot}-type`);
+      ["video-type", "challenge-type", "briefing-type", "game-type"].forEach(className =>
+        this.removeClass(typeBadge, className)
+      );
+      this.addClass(
+        typeBadge,
+        item.kind === "game"
+          ? "game-type"
+          : item.task.action === "challenge"
+            ? "challenge-type"
+            : item.task.action === "briefing"
+              ? "briefing-type"
+              : "video-type"
+      );
+      const dot = this.dashboardDocument?.getElementById(`queue-task-${slot}-status`);
+      const selected = this.completedTaskKeys.has(item.key);
+      if (selected) this.addClass(dot, "task-status-complete");
+      else this.removeClass(dot, "task-status-complete");
+      dot?.setProperties({
+        backgroundColor: selected ? "#22c55e" : "#64748b",
+        borderColor: selected ? "#86efac" : "#94a3b8"
+      });
+    }
+    this.updateLessonScrollButtons(queue.length);
+    this.sync();
   }
 
-  private updateLessonScrollButtons(pageCount: number): void {
+  private getTaskQueue() {
+    const lessonTasks = INSTRUCTOR_LESSONS.flatMap((lesson, lessonIndex) =>
+      lesson.tasks.map(task => ({
+        kind: "lesson" as const,
+        key: `task:${task.activityId ?? task.buttonId}`,
+        lessonIndex,
+        task,
+        type: task.type,
+        title: task.title,
+        description: task.description
+      }))
+    );
+    return [
+      ...lessonTasks,
+      {
+        kind: "game" as const,
+        key: "game:variable-sorting",
+        game: "lab" as const,
+        type: "GAME",
+        title: this.labActivityStartedAt === null ? "Variable Sorting" : "Return from Game",
+        description:
+          this.labActivityStartedAt === null
+            ? "Sort Python values into the correct data-type bins"
+            : "Return all students to the classroom"
+      },
+      {
+        kind: "game" as const,
+        key: "game:true-false",
+        game: "true-false" as const,
+        type: "GAME",
+        title: "True or False",
+        description: "Launch a quick true-or-false class challenge"
+      }
+    ];
+  }
+
+  private activateQueueSlot(slot: number): void {
+    const item = this.getTaskQueue()[this.taskQueueOffset + slot];
+    if (!item) return;
+    if (item.kind === "lesson" && item.task.unavailableReason) {
+      this.showStatusMessage(item.task.unavailableReason);
+      return;
+    }
+    this.completedTaskKeys.add(item.key);
+    this.renderLessonPage();
+    if (item.kind === "game") {
+      if (item.game === "lab") this.toggleLabActivity();
+      else this.activateTrueFalseChallenge();
+      return;
+    }
+    this.activeLessonPage = item.lessonIndex;
+    this.activateConfiguredTask(item.task.action);
+  }
+
+  private updateLessonScrollButtons(queueLength: number): void {
     const upButton = this.dashboardDocument?.getElementById("task-scroll-up");
     const downButton = this.dashboardDocument?.getElementById("task-scroll-down");
 
@@ -1618,8 +1864,11 @@ export class InstructorDashboardSystem extends createSystem({
       else this.removeClass(button, "scroll-button-unavailable");
     };
 
-    setUnavailable(upButton, this.activeLessonPage === 0);
-    setUnavailable(downButton, this.activeLessonPage >= pageCount - 1);
+    setUnavailable(upButton, this.taskQueueOffset === 0);
+    setUnavailable(
+      downButton,
+      this.taskQueueOffset >= Math.max(0, queueLength - this.taskQueueVisibleRows)
+    );
   }
 
   private activateConfiguredTask(action: InstructorTaskAction): void {
@@ -1633,10 +1882,20 @@ export class InstructorDashboardSystem extends createSystem({
       const challenge = INSTRUCTOR_LESSONS[this.activeLessonPage]?.tasks.find(
         task => task.action === "challenge"
       );
-      if (this.isFivePartsChallengeTask(challenge)) {
+      if (this.activeLessonPage === 0 && this.isFivePartsChallengeTask(challenge)) {
         this.activateFivePartsChallenge();
+        return;
+      }
+      if (challenge?.unavailableReason) {
+        this.showStatusMessage(challenge.unavailableReason);
+        return;
+      }
+      if (this.activeLessonPage === 1) {
+        this.activateChallenge2();
       } else {
-        this.activateQuickChallenge(challenge?.activityId);
+        this.activateQuickChallenge(
+          this.activeLessonPage === 2 ? challenge?.sourceActivityId ?? challenge?.activityId : challenge?.activityId
+        );
       }
     }
     if (action === "briefing") {
@@ -1686,15 +1945,53 @@ export class InstructorDashboardSystem extends createSystem({
       return;
     }
 
-    this.bindSpatialButton(
-      this.dashboardDocument!,
-      elementId,
-      handler
-    );
+    this.bindSpatialButton(this.dashboardDocument!, elementId, () => {
+      if (this.isTrackedTaskButton(elementId)) {
+        this.completedTaskKeys.add(this.getTaskCompletionKey(elementId));
+        this.updateTaskCompletionDots();
+        this.sync();
+      }
+      handler();
+    });
 
     console.log(
       `[InstructorDashboard] Connected: ${elementId}`
     );
+  }
+
+  private isTrackedTaskButton(elementId: string): boolean {
+    const configuredTaskIds = INSTRUCTOR_LESSONS.flatMap(lesson =>
+      lesson.tasks.map(task => task.buttonId)
+    );
+    return [
+      "lab-mode-button",
+      "game-space-quiz-button",
+      ...configuredTaskIds
+    ].includes(elementId);
+  }
+
+  private getTaskCompletionKey(elementId: string): string {
+    return `task:${elementId}`;
+  }
+
+  /** Gray means untouched; green means selected during this class session. */
+  private updateTaskCompletionDots(): void {
+    const buttonIds = [
+      ...INSTRUCTOR_LESSONS.flatMap(lesson =>
+        lesson.tasks.map(task => task.buttonId)
+      ),
+      "lab-mode-button",
+      "game-space-quiz-button"
+    ];
+    buttonIds.forEach(buttonId => {
+      const dot = this.dashboardDocument?.getElementById(`${buttonId}-status`);
+      if (!dot) return;
+      const completed = this.completedTaskKeys.has(
+        this.getTaskCompletionKey(buttonId)
+      );
+      if (completed) this.addClass(dot, "task-status-complete");
+      else this.removeClass(dot, "task-status-complete");
+    });
   }
 
   // ======================================================
@@ -1921,6 +2218,21 @@ export class InstructorDashboardSystem extends createSystem({
     this.setLabMonitorAvailable(false);
   }
 
+  private activateChallenge2(): void {
+    console.log("[InstructorDashboard] Starting Challenge 2");
+
+    socket.emit("instructorStartChallenge2", {
+      durationSeconds: 180
+    });
+
+    this.setCurrentMode("Challenge 2");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 2 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
   private isFivePartsChallengeTask(task?: {
     buttonId?: string;
     title?: string;
@@ -1932,7 +2244,7 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private isFivePartsSeries(): boolean {
-    return this.quizSeriesType === "five-parts";
+    return this.activeQuizKind !== "challenge-2" && this.quizSeriesType === "five-parts";
   }
 
   private shouldPrefixAnswerLetters(): boolean {
@@ -2625,8 +2937,8 @@ export class InstructorDashboardSystem extends createSystem({
       activeButtonId =
         "lab-mode-button";
     } else if (
-      this.currentMode ===
-      "Quick Challenge"
+      this.currentMode === "Quick Challenge" ||
+      this.currentMode === "Challenge 2"
     ) {
       activeButtonId =
         "quick-challenge-button";

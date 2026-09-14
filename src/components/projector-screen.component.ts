@@ -1,3 +1,4 @@
+/** Defines the ECS component that marks a 3D entity as the classroom projector screen. */
 import {createComponent, Group, Object3DEventMap, Types} from "@iwsdk/core";
 
 

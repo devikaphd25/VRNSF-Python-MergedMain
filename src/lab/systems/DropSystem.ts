@@ -1,3 +1,4 @@
+/** Detects card drops into type bins, scores the answer, and advances the activity. */
 import { AudioUtils, createSystem, type Entity, Grabbed, Vector3, } from "@iwsdk/core";
 import { TypeBin, TypeCard } from "../components/gameComponents.js";
 import { addCorrect, addWrong, getActiveDeck, getActiveDeckLength, getCorrectAudioEntity, getCardIndexSignal, getDispenseStateSignal, getWrongAudioEntity, requestCommand, setFeedback, } from "../state/gameState.js";

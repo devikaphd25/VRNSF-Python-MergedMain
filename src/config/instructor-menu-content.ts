@@ -1,7 +1,14 @@
+/**
+ * Instructor menu content model and lesson-page loader.
+ * Goal: translate Supabase week_activities rows into three-button lesson pages
+ * (presentation, challenge, briefing) shown by instructor-menu.system.ts.
+ */
 export type InstructorTaskAction = "presentation" | "challenge" | "briefing";
 
 export type InstructorTaskContent = {
   activityId?: number;
+  sourceActivityId?: number;
+  unavailableReason?: string;
   buttonId: string;
   typeId: string;
   titleId: string;
@@ -101,6 +108,35 @@ export const INSTRUCTOR_LESSONS: InstructorLessonContent[] = [
     ]
   }
 ];
+
+/** Local mapping: Five Parts series in slot 1, original single-question quiz in slot 3. */
+function moveCurrentChallengeToThirdSlot(): void {
+  const first = INSTRUCTOR_LESSONS[0]?.tasks.find(task => task.action === "challenge");
+  const third = INSTRUCTOR_LESSONS[2]?.tasks.find(task => task.action === "challenge");
+  if (!first || !third) return;
+  third.sourceActivityId = first.activityId;
+  third.title = "Challenge 3 — Computer Parts Quiz";
+  third.description = "Identify the job of each computer component";
+  first.title = "Challenge 1 — Computer Parts: True or False";
+  first.description = "Answer five True/False questions about computer components";
+  const second = INSTRUCTOR_LESSONS[1]?.tasks.find(task => task.action === "challenge");
+  if (second) {
+    second.title = "Challenge 2 — Devices In & Out";
+    second.description = "Sort devices into input, output, both, or storage";
+  }
+  delete first.unavailableReason;
+}
+
+INSTRUCTOR_LESSONS.push({
+  pageId: "lesson-page-3", labelId: "lesson-3-label",
+  label: "LESSON 3 - LANGUAGE LADDER AND TRANSLATORS",
+  tasks: [
+    { buttonId: "task-lesson3-video", typeId: "lesson-3-task-1-type", titleId: "lesson-3-task-1-title", descriptionId: "lesson-3-task-1-description", type: "PRESENTATION", title: "Language Ladder and Translators", description: "Review programming languages and translators", action: "presentation" },
+    { buttonId: "task-lesson3-challenge", typeId: "lesson-3-task-2-type", titleId: "lesson-3-task-2-title", descriptionId: "lesson-3-task-2-description", type: "CHALLENGE", title: "Five Parts Challenge", description: "Identify the job of each computer component", action: "challenge" },
+    { buttonId: "task-lesson3-briefing", typeId: "lesson-3-task-3-type", titleId: "lesson-3-task-3-title", descriptionId: "lesson-3-task-3-description", type: "DEBRIEF", title: "Language Ladder Debrief", description: "Review programming languages and translators", action: "briefing", assetPath: "/images/briefings/week-1/language-ladder-and-translators-debrief.png" }
+  ]
+});
+moveCurrentChallengeToThirdSlot();
 
 export type InstructorContentResponse = {
   weekNumber: number;
@@ -239,5 +275,8 @@ export function replaceInstructorLessons(content: InstructorContentResponse): vo
     };
   });
 
-  if (lessons.length > 0) INSTRUCTOR_LESSONS.splice(0, INSTRUCTOR_LESSONS.length, ...lessons);
+  if (lessons.length > 0) {
+    INSTRUCTOR_LESSONS.splice(0, INSTRUCTOR_LESSONS.length, ...lessons);
+    if (content.weekNumber === 1) moveCurrentChallengeToThirdSlot();
+  }
 }
