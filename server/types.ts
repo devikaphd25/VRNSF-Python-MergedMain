@@ -134,6 +134,26 @@ export interface QuickChallengeReview {
   elapsedSeconds: number;
 }
 
+export type Challenge2Category = "input" | "output" | "both" | "storage";
+
+export interface Challenge2StudentProgress {
+  completedItemIds: Set<string>;
+  attempts: number;
+  wrongAttempts: number;
+  wrongSelections: Map<string, Map<Challenge2Category, number>>;
+  startedAt: number;
+  completedAt: number | null;
+}
+
+export interface Challenge2Session {
+  id: string;
+  roomId: string;
+  durationSeconds: number;
+  startedAt: number;
+  progress: Map<string, Challenge2StudentProgress>;
+  timeout: NodeJS.Timeout | null;
+}
+
 export type ClassroomSocket = Socket & {
   isGameClient?: boolean;
   studentId?: number;

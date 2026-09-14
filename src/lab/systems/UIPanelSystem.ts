@@ -1,3 +1,4 @@
+/** Mirrors reactive lab score, streak, progress, and feedback state into UIKit text. */
 import { createSystem, eq, PanelDocument, PanelUI, type UIKitDocument, } from "@iwsdk/core";
 import { getActiveDeckLength, getCardIndexSignal, getFeedbackSignal, getLessonStateSignal, getScoreSignal, getStreakSignal, } from "../state/gameState.js";
 import { setTextSafe } from "./uiText.js";

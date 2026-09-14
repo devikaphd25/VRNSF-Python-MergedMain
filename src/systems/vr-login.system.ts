@@ -1,3 +1,9 @@
+/**
+ * VR login and classroom-entry system.
+ * Goal: show Professor/Student controls, validate the instructor PIN, register
+ * a persistent device user, create/join the active room, and then hand the
+ * authenticated identity to src/index.ts. Supports mouse and controller rays.
+ */
 import {
   createSystem,
   eq,

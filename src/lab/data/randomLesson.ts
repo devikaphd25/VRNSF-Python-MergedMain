@@ -1,3 +1,4 @@
+/** Generates a balanced randomized Python-type card deck for each lab attempt. */
 import type { PythonTypeId, TypeCardData } from "./lessonOne.js";
 const PYTHON_TYPE_IDS: PythonTypeId[] = ["int", "float", "bool", "str"];
 const DEFAULT_DECK_SIZE = 12;

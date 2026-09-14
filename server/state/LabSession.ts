@@ -1,3 +1,8 @@
+/**
+ * In-memory state for one student's active Python lab attempt.
+ * Goal: accumulate progress, mistakes, score, timing, and final status before
+ * server.ts writes the completed result to Supabase game_results.
+ */
 import type { LabExerciseUpdate, LabMistake, LabStatus } from "../types.js";
 
 export class LabSession {

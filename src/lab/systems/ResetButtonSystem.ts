@@ -1,3 +1,4 @@
+/** Handles reset-button interaction and requests a clean lab-attempt reset. */
 import { type AnimationAction, type AnimationClip, AnimationMixer, BoxGeometry, createSystem, type Entity, Group, Hovered, Interactable, LoopOnce, Mesh, MeshStandardMaterial, type Object3D, Pressed, } from "@iwsdk/core";
 import { ResetButton } from "../components/gameComponents.js";
 import { requestCommand, UMES_MAROON } from "../state/gameState.js";

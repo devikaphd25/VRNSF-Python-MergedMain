@@ -1,4 +1,9 @@
-// src/network/socket.ts
+/**
+ * Shared browser Socket.IO client.
+ * Goal: connect each browser/headset to server.ts using its saved identity and
+ * selected role. All real-time classroom systems import this same connection
+ * to avoid duplicate multiplayer sockets.
+ */
 
 import {
   io

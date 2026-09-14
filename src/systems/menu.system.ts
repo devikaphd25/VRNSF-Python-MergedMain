@@ -1,4 +1,8 @@
-// systems/menu.system.ts
+/**
+ * Legacy controller-attached classroom menu.
+ * It listens for navigation actions, while the newer instructor workflow is
+ * provided by InstructorMenuSystem.
+ */
 import {
   createSystem,
   PanelUI,
@@ -255,8 +259,10 @@ private closeMenu() {
     this.player.quaternion.copy(this.savedPlayerQuaternion);
   }
 
-  if (classroomMesh) classroomMesh.visible = true;
-  if (instructorMesh) instructorMesh.visible = true;
+    if (classroomMesh) classroomMesh.visible = true;
+    if (instructorMesh) {
+      instructorMesh.visible = !(window as any).isInstructor;
+    }
 
   console.log("[MenuSystem] Returned to classroom");
 }

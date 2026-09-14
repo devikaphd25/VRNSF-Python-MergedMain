@@ -1,3 +1,4 @@
+/** Static Python type definitions and fallback lesson-card content. */
 export type PythonTypeId = "int" | "float" | "bool" | "str";
 export type TypeCardData = {
     id: string;

@@ -1,3 +1,4 @@
+/** Creates and styles the four destination bins used to classify Python values. */
 import { BoxGeometry, createSystem, Group, Hovered, Interactable, Mesh, MeshStandardMaterial, } from "@iwsdk/core";
 import { TypeBin } from "../components/gameComponents.js";
 import { PYTHON_TYPES, type PythonTypeId } from "../data/lessonOne.js";

@@ -4,13 +4,15 @@
     padding: 5;
     flex-direction: column;
     gap: 2.4;
-    background-color: rgba(4, 16, 38, 0.98);
+    background-color: #041026;
     border-width: 0.25;
     border-color: rgba(96, 165, 250, 0.75);
     border-radius: 4;
     pointer-events: auto;
     pointer-events-order: 50000;
   }
+
+  .quiz-progress { font-size: 2.4; color: #a5b4fc; font-family: inter; }
 
   .quiz-header {
     width: 100%;

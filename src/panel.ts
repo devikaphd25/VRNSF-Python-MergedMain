@@ -1,4 +1,4 @@
-// systems/panel.ts
+/** Builds the legacy classroom control panel and forwards its actions to Socket.IO. */
 import {
   createSystem,
   PanelUI,

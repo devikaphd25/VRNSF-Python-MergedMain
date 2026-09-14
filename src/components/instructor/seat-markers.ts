@@ -8,6 +8,12 @@ import {
   Vector3
 } from "@iwsdk/core";
 
+import { socket } from "../../network/socket";
+
+function isLocalStudent(studentId: string): boolean {
+  return !(window as any).isInstructor && studentId === socket.id;
+}
+
 interface Student {
   id: string;
   name?: string;
@@ -19,6 +25,7 @@ interface Student {
 // Store markers by student ID
 const markers = new Map<string, Sprite>();
 let playerRef: any = null;
+let stagePosition = new Vector3(0, 0, 0);
 let isFacingStage = false;
 let markersSuppressed = false;
 let markersForcedVisible = false;
@@ -145,7 +152,10 @@ function checkPlayerFacingStage(): boolean {
     const playerPos = new Vector3();
     playerRef.getWorldPosition(playerPos);
 
-    const toStage = new Vector3(0, playerPos.y, 0).sub(playerPos);
+    // Use the classroom's real instructor/stage anchor instead of assuming
+    // the stage is at the world origin.
+    const toStage = stagePosition.clone().sub(playerPos);
+    toStage.y = 0;
     toStage.normalize();
 
     const dot = forward.dot(toStage);
@@ -162,10 +172,17 @@ function checkPlayerFacingStage(): boolean {
 export function updateMarkerVisibility(player: any) {
   playerRef = player;
   isFacingStage = checkPlayerFacingStage();
+  const isInstructor = Boolean((window as any).isInstructor);
 
-  markers.forEach((marker) => {
+  markers.forEach((marker, studentId) => {
     marker.visible =
-      !markersSuppressed && (markersForcedVisible || isFacingStage);
+      !((window as any).isLabActive) && !isLocalStudent(studentId) &&
+      !markersSuppressed &&
+      (
+        markersForcedVisible ||
+        !isInstructor ||
+        isFacingStage
+      );
   });
 }
 
@@ -180,9 +197,14 @@ export function updateSeatMarkers(
   console.log("[SeatMarkers] Updating markers for", students.length, "students");
 
   // ✅ Filter out demo students and students without seats
-  const realStudents = students.filter(s => !s.isDemo && s.seat && s.seat !== "Not selected");
+  const realStudents = students.filter(s =>
+    !s.isDemo && s.seat && s.seat !== "Not selected" && !isLocalStudent(s.id)
+  );
 
   console.log("[SeatMarkers] Real students with seats:", realStudents.length);
+
+  const stageAnchor = classroom.getObjectByName("InstructorAvatar_Anchor");
+  if (stageAnchor) stageAnchor.getWorldPosition(stagePosition);
 
   // Get current student IDs
   const currentStudentIds = realStudents.map(s => s.id);
@@ -233,12 +255,18 @@ export function updateSeatMarkers(
       );
 
       marker.scale.set(0.65, 0.65, 0.65);
+      marker.userData.studentId = student.id;
       marker.userData.displayName = displayName;
       marker.userData.mode = student.mode;
 
       // ✅ Start visible by default
       marker.visible =
-        !markersSuppressed && (markersForcedVisible || isFacingStage);
+        !markersSuppressed &&
+        (
+          markersForcedVisible ||
+          !(window as any).isInstructor ||
+          isFacingStage
+        );
 
       scene.add(marker);
       markers.set(student.id, marker);
@@ -267,8 +295,8 @@ export function updateSeatMarkers(
 // ==========================================
 export function showAllMarkers() {
   markersSuppressed = false;
-  markers.forEach((marker) => {
-    marker.visible = true;
+  markers.forEach((marker, studentId) => {
+    marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
   });
   console.log("[SeatMarkers] All markers forced visible");
 }
@@ -279,7 +307,9 @@ export function showAllMarkers() {
  * textures are loaded.
  */
 export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
-  const arrivals = Array.from(markers.values()).map((marker, index) => {
+  const arrivals = Array.from(markers.values())
+    .filter(marker => !isLocalStudent(String(marker.userData.studentId)))
+    .map((marker, index) => {
     if (!marker.userData.classroomMarkerPosition) {
       marker.userData.classroomMarkerPosition = marker.position.clone();
       marker.userData.classroomMarkerScale = marker.scale.clone();
@@ -297,7 +327,7 @@ export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
   if (arrivals.length === 0) return Promise.resolve();
 
   arrivals.forEach(({ marker, start, destinationScale }) => {
-    marker.visible = true;
+    marker.visible = !((window as any).isLabActive) && !isLocalStudent(String(marker.userData.studentId));
     marker.position.copy(start);
     marker.scale.copy(destinationScale).multiplyScalar(0.72);
   });
@@ -341,8 +371,8 @@ export function setSeatMarkersForcedVisible(forced: boolean): void {
 
   if (forced) {
     markersSuppressed = false;
-    markers.forEach((marker) => {
-      marker.visible = true;
+    markers.forEach((marker, studentId) => {
+      marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
     });
   } else if (playerRef) {
     updateMarkerVisibility(playerRef);
@@ -354,25 +384,26 @@ export function setSeatMarkersForcedVisible(forced: boolean): void {
 }
 
 export function hideAllMarkers() {
-  markersSuppressed = true;
-  markers.forEach((marker) => {
+  // This is the menu's temporary per-frame hide. Do not set the persistent
+  // presentation suppression flag, otherwise markers remain hidden after the
+  // menu closes and the normal visibility loop resumes.
+  markers.forEach((marker, studentId) => {
     marker.visible = false;
   });
-  console.log("[SeatMarkers] All markers forced hidden");
 }
 
 export function setSeatMarkersSuppressed(suppressed: boolean) {
   markersSuppressed = suppressed;
 
   if (suppressed) {
-    markers.forEach((marker) => {
+    markers.forEach((marker, studentId) => {
       marker.visible = false;
     });
   } else if (playerRef) {
     updateMarkerVisibility(playerRef);
   } else {
-    markers.forEach((marker) => {
-      marker.visible = true;
+    markers.forEach((marker, studentId) => {
+      marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
     });
   }
 

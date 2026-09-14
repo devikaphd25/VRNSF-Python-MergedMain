@@ -1,3 +1,4 @@
+/** ECS component definitions for lab cards, bins, dispenser, and control buttons. */
 import { createComponent, Types } from "@iwsdk/core";
 export const TypeCard = createComponent("TypeCard", {
     cardId: { type: Types.String, default: "" },

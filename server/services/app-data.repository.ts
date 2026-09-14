@@ -1,3 +1,10 @@
+/**
+ * Supabase repository for permanent application data.
+ *
+ * Goal: isolate database reads/writes for app_users and game_results from the
+ * Socket.IO workflow. It converts snake_case database rows into AppUser
+ * objects and saves final lab outcomes. Called primarily by server.ts.
+ */
 import { timingSafeEqual, scryptSync } from "node:crypto";
 import { supabaseAdmin } from "./supabase-admin.service.js";
 import type {

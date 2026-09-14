@@ -30,6 +30,7 @@
     gap: 9;
     align-items: center;
     justify-content: center;
+    pointer-events: none;
   }
 
   .menu-line {
@@ -38,6 +39,7 @@
 
     background-color: rgba(255, 255, 255, 0.96);
     border-radius: 3;
+    pointer-events: none;
   }
 
   .menu-label {
@@ -47,6 +49,7 @@
     font-size: 14;
     font-weight: 600;
     font-family: inter;
+    pointer-events: none;
   }
 </style>
 

@@ -1,4 +1,4 @@
-// systems/hint-system.ts
+/** Displays short contextual hints received from the multiplayer server. */
 import { createSystem, PanelUI, PanelDocument, UIKitDocument, UIKit } from "@iwsdk/core";
 import { socket } from "../network/socket";
 
@@ -397,4 +397,3 @@ private releaseRaiseHandButton(): void {
    });
  }
 }
-

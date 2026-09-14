@@ -1,3 +1,9 @@
+/**
+ * Student Quick Challenge UI and interaction system.
+ * Goal: receive the selected lesson question, collect one answer by mouse/ray,
+ * submit it through Socket.IO, show correctness/time, and return on instructor
+ * stop. The instructor monitor is handled by instructor-menu.system.ts.
+ */
 import {
   createSystem,
   eq,
@@ -7,7 +13,7 @@ import {
   UIKit,
   type UIKitDocument,
 } from "@iwsdk/core";
-import { Matrix4, Raycaster, Vector2 } from "three";
+import { Matrix4, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket";
 
@@ -288,7 +294,7 @@ export class QuickChallengeSystem extends createSystem({
   private bindSpatialButton(
     elementId: string,
     handler: () => void,
-    eventNames: string[] = ["pointerdown"]
+    eventNames: Array<"pointerdown" | "click"> = ["pointerdown", "click"]
   ): void {
     const element =
       this.document?.getElementById(elementId);
@@ -637,7 +643,8 @@ export class QuickChallengeSystem extends createSystem({
       return;
     }
 
-    if (this.isFivePartsChallenge() && this.reviewResults) {
+    if (this.submitted) {
+      // Preserve a graded result, including non-series challenges.
       return;
     }
 
@@ -693,7 +700,6 @@ export class QuickChallengeSystem extends createSystem({
       this.stopTimer();
       this.timeExpired = true;
       if (!this.submitted && !this.isFivePartsChallenge()) {
-        this.submitted = true;
         this.setFeedback(
           "Time is up.",
           "feedback-incorrect"
@@ -849,6 +855,16 @@ export class QuickChallengeSystem extends createSystem({
     this.setOtherStudentUiDisabled(visible);
 
     if (entity?.object3D) {
+      if (visible && !entity.object3D.visible) {
+        const viewer = this.renderer.xr.isPresenting
+          ? this.renderer.xr.getCamera() : this.camera;
+        const eye = viewer.getWorldPosition(new Vector3());
+        const direction = viewer.getWorldDirection(new Vector3());
+        // Center on the current view once when opened, including browser
+        // camera pitch. Keep this world transform as the student moves.
+        entity.object3D.position.copy(eye).addScaledVector(direction, 1.6);
+        viewer.getWorldQuaternion(entity.object3D.quaternion);
+      }
       entity.object3D.visible = visible;
       entity.object3D.pointerEvents = visible ? "auto" : "none";
       entity.object3D.pointerEventsOrder = 50000;
@@ -891,6 +907,7 @@ export class QuickChallengeSystem extends createSystem({
         "panelEntity",
         "hintEntity",
         "raiseHandEntity",
+        "studentBoardViewButtonEntity",
         "notificationEntity",
         "transitionEntity",
         "studentResultEntity",
