@@ -1,4 +1,8 @@
-// src/systems/raise-hand.system.ts
+/**
+ * Student raise/lower-hand control.
+ * Goal: expose a reachable button in classroom, presentation, and briefing
+ * modes and send the state to server.ts by Socket.IO. Supports mouse and ray.
+ */
 
 import {
   AssetManager,

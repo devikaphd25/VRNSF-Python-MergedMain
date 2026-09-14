@@ -1,3 +1,9 @@
+/**
+ * Persistent device identity helper.
+ * Goal: let one physical headset reuse one app_users identity and fixed seat.
+ * Quest uses durable localStorage; desktop tabs receive separate test IDs so
+ * multiple students can be simulated in one browser.
+ */
 const DEVICE_ID_STORAGE_KEY = "vrDeviceId";
 
 export function getPersistentDeviceId(): string {

@@ -1,3 +1,8 @@
+/**
+ * Classroom seat-assignment and avatar-placement system.
+ * Goal: match each connected student's Supabase seat name to scene coordinates
+ * and keep seat markers/avatars consistent across classroom modes.
+ */
 import {
   createSystem,
   ne

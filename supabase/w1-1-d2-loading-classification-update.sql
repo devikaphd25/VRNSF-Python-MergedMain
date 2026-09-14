@@ -87,7 +87,10 @@ begin
     );
   else
     update public.quiz_questions
-    set prompt = 'When a program starts, where is it loaded before the CPU executes it?',
+    set deck = 'w1-1-d2',
+        slide_number = 2,
+        ordinal = 1,
+        prompt = 'When a program starts, where is it loaded before the CPU executes it?',
         choices = '["Secondary storage", "Main memory (RAM)", "Output device", "Keyboard"]'::jsonb,
         correct_index = 1
     where id = target_question_id;

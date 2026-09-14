@@ -13,7 +13,15 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import type { ClassroomSocket, ClassroomStudent, QuickChallenge, QuickChallengeReview, QuickChallengeStudentProgress } from "./server/types.js";
+import type {
+  QuickChallengeStudentProgress,
+  Challenge2Category,
+  Challenge2Session,
+  ClassroomSocket,
+  ClassroomStudent,
+  QuickChallenge,
+  QuickChallengeReview
+} from "./server/types.js";
 
 import {
   students,
@@ -71,6 +79,141 @@ const instructorRoomCloseTimers = new Map<string, NodeJS.Timeout>();
 const INSTRUCTOR_DISCONNECT_GRACE_MS = 1_500;
 const activeQuickChallenges = new Map<string, QuickChallenge>();
 const lastQuickChallengeReviews = new Map<string, QuickChallengeReview>();
+const activeChallenge2Sessions = new Map<string, Challenge2Session>();
+
+// Server-authoritative answers for Lesson 2 Practice 2. Student clients send
+// only the item and selected box; the server decides whether it is correct.
+const CHALLENGE_2_ANSWERS: Readonly<Record<string, Challenge2Category>> = {
+  webcam: "input",
+  projector: "output",
+  computer: "both",
+  "usb-flash-drive": "storage",
+  microphone: "input",
+};
+const CHALLENGE_2_ITEM_NAMES: Readonly<Record<string, string>> = {
+  webcam: "Webcam",
+  projector: "Projector",
+  computer: "Computer",
+  "usb-flash-drive": "USB Flash Drive",
+  microphone: "Microphone",
+};
+const CHALLENGE_2_TOTAL_ITEMS = Object.keys(CHALLENGE_2_ANSWERS).length;
+// Leave just enough time for the final correct feedback to render, then stop
+// both instructor and student timers and publish the ranking immediately.
+const CHALLENGE_2_ALL_COMPLETE_DELAY_MS = 150;
+
+function buildChallenge2FinalResults(session: Challenge2Session) {
+  const endedAt = Date.now();
+  const rankings = [...session.progress.entries()].map(([socketId, progress]) => {
+    const student = students[socketId];
+    const correctAnswers = progress.completedItemIds.size;
+    const accuracy = progress.attempts > 0
+      ? correctAnswers / progress.attempts
+      : 0;
+    const elapsedSeconds = Math.max(
+      0,
+      ((progress.completedAt ?? endedAt) - progress.startedAt) / 1000
+    );
+    const speed = Math.max(
+      0,
+      Math.min(1, 1 - elapsedSeconds / session.durationSeconds)
+    );
+    const score = progress.attempts > 0
+      ? accuracy * 0.70 + speed * 0.30
+      : 0;
+    const mistakes = [...progress.wrongSelections.entries()].map(
+      ([itemId, selections]) => ({
+        itemId,
+        itemName: CHALLENGE_2_ITEM_NAMES[itemId] ?? itemId,
+        // Map insertion order preserves the student's first wrong category.
+        firstAnswer: selections.keys().next().value as Challenge2Category,
+        correctAnswer: CHALLENGE_2_ANSWERS[itemId],
+        attempts: [...selections.values()].reduce(
+          (total, count) => total + count,
+          0
+        ),
+      })
+    );
+    return {
+      studentId: socketId,
+      name: student?.name ?? "Student",
+      seat: student?.seat,
+      correctAnswers,
+      wrongAnswers: progress.wrongAttempts,
+      attempts: progress.attempts,
+      accuracy: accuracy * 100,
+      elapsedSeconds,
+      score: score * 100,
+      mistakes,
+      placement: null as number | null,
+    };
+  });
+
+  rankings.sort((left, right) => {
+    const leftAttempted = left.attempts > 0;
+    const rightAttempted = right.attempts > 0;
+    if (leftAttempted !== rightAttempted) return leftAttempted ? -1 : 1;
+    // Ranking priority: finish more devices, make fewer mistakes, then finish
+    // faster. When everyone completes all five, this becomes exactly
+    // "fewest mistakes first; fastest time breaks a tie."
+    return right.correctAnswers - left.correctAnswers ||
+      left.wrongAnswers - right.wrongAnswers ||
+      left.elapsedSeconds - right.elapsedSeconds ||
+      right.score - left.score;
+  });
+  rankings.filter(result => result.attempts > 0).forEach((result, index) => {
+    result.placement = index < 3 ? index + 1 : null;
+  });
+
+  const commonErrors = Object.entries(CHALLENGE_2_ANSWERS).flatMap(
+    ([itemId, correctCategory]) => {
+      const selections = new Map<
+        Challenge2Category,
+        { count: number; students: Set<string> }
+      >();
+      for (const [studentId, progress] of session.progress.entries()) {
+        const itemSelections = progress.wrongSelections.get(itemId);
+        itemSelections?.forEach((count, category) => {
+          const selection = selections.get(category) ?? {
+            count: 0,
+            students: new Set<string>(),
+          };
+          selection.count += count;
+          selection.students.add(students[studentId]?.name ?? "Student");
+          selections.set(category, selection);
+        });
+      }
+      const mostCommon = [...selections.entries()].sort(
+        (a, b) => b[1].count - a[1].count
+      )[0];
+      return mostCommon
+        ? [{
+            itemId,
+            itemName: CHALLENGE_2_ITEM_NAMES[itemId] ?? itemId,
+            selectedCategory: mostCommon[0],
+            correctCategory,
+            count: mostCommon[1].count,
+            students: [...mostCommon[1].students],
+          }]
+        : [];
+    }
+  );
+
+  return {
+    challengeId: session.id,
+    endedAt,
+    durationSeconds: session.durationSeconds,
+    rankings,
+    commonErrors,
+    correctAnswers: Object.entries(CHALLENGE_2_ANSWERS).map(
+      ([itemId, category]) => ({
+        itemId,
+        itemName: CHALLENGE_2_ITEM_NAMES[itemId] ?? itemId,
+        category,
+      })
+    ),
+  };
+}
 
 function getRoomClassroomStudents(roomId: string) {
   return Object.entries(students).filter(([socketId, student]) => {
@@ -248,6 +391,43 @@ function publishQuickChallengeReview(challenge: QuickChallenge): void {
       client.emit("debriefReviewData", review);
     }
   }
+}
+
+function endChallenge2Session(
+  session: Challenge2Session,
+  reason: "completed" | "timeout" | "instructor_stop"
+): void {
+  if (session.timeout) clearTimeout(session.timeout);
+  const finalResults = buildChallenge2FinalResults(session);
+  // A manually stopped activity is a review, not a completed competition.
+  // Preserve progress and mistakes but do not award placements.
+  if (reason === "instructor_stop") {
+    finalResults.rankings.forEach(result => {
+      result.placement = null;
+    });
+  }
+
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data.roomId !== session.roomId) continue;
+    client.emit("challenge2Ended", {
+      challengeId: session.id,
+      reason,
+      finalResults,
+    });
+
+    if (client.data.role !== "instructor") {
+      const student = students[client.id];
+      if (student) student.mode = "Classroom Mode";
+      client.emit("modeChanged", {
+        mode: "Classroom Mode",
+        destination: "Class",
+        fromInstructor: true,
+      });
+    }
+  }
+
+  activeChallenge2Sessions.delete(session.roomId);
+  broadcastStudentList(io);
 }
 
 function cancelScheduledRoomClose(roomId: string): void {
@@ -817,6 +997,195 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
     activeQuickChallenges.delete(roomId);
     broadcastStudentList(io);
+  });
+
+  // ========================================================
+  // LESSON 2 - CHALLENGE 2 (DEVICE GRAB AND DROP)
+  // ========================================================
+
+  socket.on("instructorStartChallenge2", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("error", {
+        message: "Only a registered classroom instructor can start Challenge 2.",
+      });
+      return;
+    }
+
+    const previous = activeChallenge2Sessions.get(roomId);
+    if (previous) endChallenge2Session(previous, "instructor_stop");
+
+    const durationSeconds = Math.min(
+      600,
+      Math.max(60, Number(data.durationSeconds) || 180)
+    );
+    const session: Challenge2Session = {
+      id: `challenge-2-${roomId}-${Date.now()}`,
+      roomId,
+      durationSeconds,
+      startedAt: Date.now(),
+      progress: new Map(),
+      timeout: null,
+    };
+    activeChallenge2Sessions.set(roomId, session);
+
+    const roomStudents = [];
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      const studentSocket = io.sockets.sockets.get(studentSocketId);
+      if (
+        !studentSocket ||
+        studentSocket.data.roomId !== roomId ||
+        studentSocket.data.role === "instructor" ||
+        studentSocket.data.clientType !== "classroom"
+      ) continue;
+
+      session.progress.set(studentSocketId, {
+        completedItemIds: new Set(),
+        attempts: 0,
+        wrongAttempts: 0,
+        wrongSelections: new Map(),
+        startedAt: session.startedAt,
+        completedAt: null,
+      });
+      student.mode = "Challenge 2";
+      roomStudents.push({
+        studentId: studentSocketId,
+        userId: student.userId,
+        name: student.name,
+        seat: student.seat,
+      });
+      studentSocket.emit("challenge2Started", {
+        id: session.id,
+        durationSeconds,
+        startedAt: session.startedAt,
+        totalItems: CHALLENGE_2_TOTAL_ITEMS,
+      });
+    }
+
+    socket.emit("challenge2StartedForInstructor", {
+      id: session.id,
+      question: "Challenge 2: Predict - Devices In & Out",
+      options: ["Input", "Output", "Both", "Storage"],
+      durationSeconds,
+      startedAt: session.startedAt,
+      totalItems: CHALLENGE_2_TOTAL_ITEMS,
+      studentCount: roomStudents.length,
+      students: roomStudents,
+    });
+    broadcastStudentList(io);
+
+    session.timeout = setTimeout(() => {
+      if (activeChallenge2Sessions.get(roomId)?.id !== session.id) return;
+      endChallenge2Session(session, "timeout");
+    }, durationSeconds * 1000);
+  });
+
+  socket.on("challenge2ItemAnswer", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const student = students[socket.id];
+    const session = activeChallenge2Sessions.get(roomId);
+    if (
+      !student ||
+      socket.data.role === "instructor" ||
+      !session ||
+      data.challengeId !== session.id
+    ) return;
+
+    const itemId = String(data.itemId ?? "").trim();
+    const selectedCategory = String(data.selectedCategory ?? "").trim() as Challenge2Category;
+    const expectedCategory = CHALLENGE_2_ANSWERS[itemId];
+    const progress = session.progress.get(socket.id);
+    if (!expectedCategory || !progress || progress.completedItemIds.has(itemId)) return;
+    if (!["input", "output", "both", "storage"].includes(selectedCategory)) return;
+
+    progress.attempts += 1;
+    const correct = selectedCategory === expectedCategory;
+    if (correct) progress.completedItemIds.add(itemId);
+    else {
+      progress.wrongAttempts += 1;
+      let itemSelections = progress.wrongSelections.get(itemId);
+      if (!itemSelections) {
+        itemSelections = new Map();
+        progress.wrongSelections.set(itemId, itemSelections);
+      }
+      itemSelections.set(
+        selectedCategory,
+        (itemSelections.get(selectedCategory) ?? 0) + 1
+      );
+    }
+
+    const completedCount = progress.completedItemIds.size;
+    const completed = completedCount === CHALLENGE_2_TOTAL_ITEMS;
+    if (completed && progress.completedAt === null) progress.completedAt = Date.now();
+    const responseTimeSeconds = Math.max(
+      0,
+      ((progress.completedAt ?? Date.now()) - progress.startedAt) / 1000
+    );
+
+    socket.emit("challenge2ItemResult", {
+      challengeId: session.id,
+      itemId,
+      selectedCategory,
+      expectedCategory,
+      correct,
+      completedCount,
+      totalItems: CHALLENGE_2_TOTAL_ITEMS,
+    });
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.roomId === roomId &&
+        client.data.role === "instructor" &&
+        client.data.clientType === "classroom"
+      ) {
+        client.emit("challenge2StudentProgress", {
+          challengeId: session.id,
+          studentId: socket.id,
+          userId: student.userId,
+          name: student.name,
+          seat: student.seat,
+          itemId,
+          selectedCategory,
+          expectedCategory,
+          correct,
+          completed,
+          completedCount,
+          totalItems: CHALLENGE_2_TOTAL_ITEMS,
+          attempts: progress.attempts,
+          wrongAttempts: progress.wrongAttempts,
+          responseTimeSeconds,
+        });
+      }
+    }
+
+    const connectedStudentIds = [...session.progress.keys()].filter(id =>
+      io.sockets.sockets.has(id)
+    );
+    const everyoneCompleted =
+      connectedStudentIds.length > 0 &&
+      connectedStudentIds.every(id =>
+        session.progress.get(id)?.completedItemIds.size === CHALLENGE_2_TOTAL_ITEMS
+      );
+    if (everyoneCompleted) {
+      setTimeout(() => {
+        if (activeChallenge2Sessions.get(roomId)?.id === session.id) {
+          endChallenge2Session(session, "completed");
+        }
+      }, CHALLENGE_2_ALL_COMPLETE_DELAY_MS);
+    }
+  });
+
+  socket.on("instructorStopChallenge2", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const session = activeChallenge2Sessions.get(roomId);
+    if (
+      !roomId ||
+      !isInstructorSocket(socket) ||
+      socket.data.clientType !== "classroom" ||
+      !session ||
+      (data.challengeId && data.challengeId !== session.id)
+    ) return;
+    endChallenge2Session(session, "instructor_stop");
   });
 
 
@@ -3247,6 +3616,14 @@ socket.on("instructorBriefingAnnotation", data => {
     console.log(
       "[Server] Instructor returning ALL students to Class"
     );
+
+    // Classroom/emergency return must also close the active Challenge 2
+    // session so students remove its panorama, device, and drop boxes.
+    const challenge2RoomId = String(socket.data.roomId ?? "").trim();
+    const activeChallenge2 = activeChallenge2Sessions.get(challenge2RoomId);
+    if (activeChallenge2) {
+      endChallenge2Session(activeChallenge2, "instructor_stop");
+    }
 
     let returnedCount = 0;
     const resultSavePromises: Promise<void>[] = [];

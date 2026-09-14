@@ -1,4 +1,4 @@
-// student-table.ts
+/** Renders live students into the optional browser-based instructor table. */
 import { socket } from "../../network/socket";
 
 // ✅ Add Window interface declaration

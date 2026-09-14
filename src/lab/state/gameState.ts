@@ -1,3 +1,8 @@
+/**
+ * Central reactive state for one local lab attempt.
+ * Systems read/write these signals; multiplayer progress is emitted separately
+ * to the server, which persists the final result in Supabase.
+ */
 import { type Entity, type World } from "@iwsdk/core";
 import { signal, type Signal } from "@preact/signals-core";
 import type { PythonTypeId, TypeCardData } from "../data/lessonOne.js";

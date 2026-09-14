@@ -1,3 +1,4 @@
+/** Shared 3D positions, rotations, sizes, and interaction thresholds for the lab. */
 import type { PythonTypeId } from "../data/lessonOne.js";
 export const TABLE_POSITION: [
     number,

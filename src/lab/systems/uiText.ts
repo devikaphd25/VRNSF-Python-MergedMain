@@ -1,3 +1,4 @@
+/** Safely updates a UIKit text node and tolerates panels that are not mounted yet. */
 import { UIKit, type UIKitDocument } from "@iwsdk/core";
 export function setTextSafe(doc: UIKitDocument | undefined | null, id: string, text: string): boolean {
     if (!doc) {

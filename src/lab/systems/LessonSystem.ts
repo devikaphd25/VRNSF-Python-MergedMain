@@ -1,3 +1,4 @@
+/** Starts/resets a lesson, builds its deck, spawns cards, and reports live progress. */
 import { AudioUtils, Box3, BoxGeometry, createSystem, DoubleSide, Group, Interactable, Mesh, MeshStandardMaterial, OneHandGrabbable, PanelDocument, PanelUI, PlaneGeometry, Quaternion, type UIKitDocument, Vector3, } from "@iwsdk/core";
 import { TypeCard } from "../components/gameComponents.js";
 import { setTextSafe } from "./uiText.js";

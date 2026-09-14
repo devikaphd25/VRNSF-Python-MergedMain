@@ -1,3 +1,8 @@
+/**
+ * Browser-safe Supabase client.
+ * Depends on VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. Use only operations
+ * permitted by RLS/RPC grants; privileged writes belong on the Node server.
+ */
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;

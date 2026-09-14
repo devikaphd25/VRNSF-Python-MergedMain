@@ -1,3 +1,4 @@
+/** Development validation helpers that test randomized decks for size and type coverage. */
 import { generateLessonDeck } from "./randomLesson.js";
 import type { PythonTypeId, TypeCardData } from "./lessonOne.js";
 export type ValidationResult = {
