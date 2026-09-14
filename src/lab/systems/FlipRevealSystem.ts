@@ -1,3 +1,4 @@
+/** Reveals a grabbed card's value when the learner rotates it into the reveal pose. */
 import { AudioSource, AudioUtils, createSystem, type Entity, Grabbed, InputComponent, PanelDocument, PlaybackMode, type UIKitDocument, Vector3, } from "@iwsdk/core";
 import { TypeCard } from "../components/gameComponents.js";
 import { REVEAL_DOT_THRESHOLD, REVEAL_UP_THRESHOLD } from "../state/layout.js";

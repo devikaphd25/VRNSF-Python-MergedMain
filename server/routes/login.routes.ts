@@ -1,3 +1,8 @@
+/**
+ * Legacy username/password login endpoint retained for the optional HTML login.
+ * The immersive headset workflow uses device identity and Supabase-backed users
+ * through the main server API instead.
+ */
 import express from "express";
 import { supabaseAdmin } from "../services/supabase-admin.service.js";
 import {

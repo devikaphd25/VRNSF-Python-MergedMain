@@ -1,3 +1,4 @@
+/** Loads, normalizes, and binds lab GLB models/animations with fallback geometry. */
 import { type AnimationClip, AssetManager, Box3, Mesh, MeshStandardMaterial, Object3D, Vector3, } from "@iwsdk/core";
 const warnedKeys = new Set<string>();
 function warnOnce(key: string, cause: unknown): void {

@@ -6,6 +6,7 @@
  */
 import {
   createSystem,
+  AssetManager,
   Quaternion,
   Vector3,
   Mesh,
@@ -20,11 +21,13 @@ import {
   eq,
   PanelDocument,
   PanelUI,
+  RayInteractable,
   UIKit,
   UIKitDocument
 } from "@iwsdk/core";
-import { CanvasTexture, Raycaster, SRGBColorSpace, TextureLoader, Vector2 } from "three";
+import { Box3, Object3D, CanvasTexture, Raycaster, SRGBColorSpace, TextureLoader, Vector2 } from "three";
 import { socket } from "../network/socket";
+import { INSTRUCTOR_LESSONS, replaceInstructorLessons } from "../config/instructor-menu-content";
 import {
   restoreSeatMarkersAfterDebrief,
   setSeatMarkerTheme,
@@ -48,27 +51,21 @@ type DebriefReviewData = {
 
 type DebriefView = "classroom" | "immersive360";
 
-// Presentation-only demonstration data for the Mission Review side screens.
-// It is never persisted to Supabase and does not replace live classroom data.
-const DEBRIEF_PRESENTATION_DEMO: DebriefReviewData = {
-  cycleLabel: "W1-1 · Cycle 1 of 3",
-  question: "Which computer component executes instructions and acts as the system brain?",
-  options: ["CPU", "RAM", "SSD", "Keyboard"],
-  correctIndex: 0,
-  answerCounts: [18, 3, 2, 0],
-  studentCount: 23,
-  answeredCount: 23,
-  correctCount: 18,
-  wrongCount: 5,
-  elapsedSeconds: 272,
-};
-
 export class PresentationSystem extends createSystem({
   controls: {
     required: [PanelUI, PanelDocument],
     where: [eq(PanelUI, "config", "./ui/instructor-video-controls.json")]
+  },
+  studentControls: {
+    required: [PanelUI, PanelDocument],
+    where: [eq(PanelUI, "config", "./ui/student-side-controls.json")]
   }
 }) {
+  private studentControlsDocument?: UIKitDocument;
+  private studentHandRaised = false;
+  private sideHandModel?: Object3D;
+  private lastHandClickAt = 0;
+  private sideScreensInitialized = false;
   private isPresentationMode = false;
   private savedSeatPosition = new Vector3();
   private savedSeatQuaternion = new Quaternion();
@@ -136,6 +133,16 @@ export class PresentationSystem extends createSystem({
     socket.on("presentationContentChanged", this.onPresentationContentChanged);
     socket.on("briefingAnnotation", this.onBriefingAnnotation);
     socket.on("debriefReviewData", this.onDebriefReviewData);
+    socket.on("raiseHandUpdated", this.onStudentHandUpdated);
+    socket.on("handToggled", this.onStudentHandUpdated);
+    socket.on("disconnect", this.onHandDisconnected);
+    this.queries.studentControls.subscribe("qualify", entity => {
+      this.studentControlsDocument = PanelDocument.data.document[entity.index] as UIKitDocument;
+      const button = this.studentControlsDocument?.getElementById("side-raise-hand");
+      button?.addEventListener("click", this.onSideHandClick);
+      button?.addEventListener("pointerdown", this.onSideHandClick);
+      this.updateStudentHandControl();
+    });
     // Quest suspends Web Audio until a user gesture occurs. Create the
     // context early and resume it on any deliberate pointer/controller press.
     this.audioContext = new AudioContext();
@@ -162,6 +169,12 @@ export class PresentationSystem extends createSystem({
   };
 
   update() {
+    // Transform entities join the scene after index.ts finishes setup.
+    if (!this.sideScreensInitialized) this.initializeClassroomSideScreens();
+    if (this.sideScreensInitialized && !this.sideHandModel && !(window as any).isInstructor) {
+      this.createSideHandModel();
+    }
+    this.updateClassroomSideScreenVisibility();
     // Draw only when the HTML video advances. CanvasTexture is more reliable
     // than VideoTexture on Quest for locally served MP4 files.
     if (
@@ -321,7 +334,6 @@ export class PresentationSystem extends createSystem({
     const back10 = this.controlsDocument?.getElementById("video-back-10");
     const forward10 = this.controlsDocument?.getElementById("video-forward-10");
     const restart = this.controlsDocument?.getElementById("video-restart");
-    const next = this.controlsDocument?.getElementById("video-next");
     const returnButton = this.controlsDocument?.getElementById("video-return-class");
     const marker = this.controlsDocument?.getElementById("briefing-highlight");
     const clearMarker = this.controlsDocument?.getElementById("briefing-highlight-clear");
@@ -359,14 +371,6 @@ export class PresentationSystem extends createSystem({
       if (Date.now() < this.controlsEnabledAt) return;
       this.restartVideo();
       emitPlayback("play", 0);
-    });
-
-    next?.addEventListener("click", (event: any) => {
-      event?.stopPropagation?.();
-      if (Date.now() < this.controlsEnabledAt) return;
-      this.restartVideo();
-      emitPlayback("pause", 0);
-      (window as any).advancePresentationToChallenge?.();
     });
 
     returnButton?.addEventListener("click", (event: any) => {
@@ -671,7 +675,7 @@ export class PresentationSystem extends createSystem({
       "presentation-controls-root"
     );
     (controlsRoot as any)?.setProperties?.({
-      width: isBriefing ? 1060 : 1180,
+      width: isBriefing ? 880 : 1120,
       height: isBriefing ? 150 : 104,
       gap: isBriefing ? 20 : 12,
       padding: isBriefing ? 22 : 16
@@ -689,13 +693,11 @@ export class PresentationSystem extends createSystem({
         fontSize: isBriefing ? 42 : 18
       });
     }
-    for (const id of ["video-next", "video-return-class"]) {
-      (this.controlsDocument?.getElementById(id) as any)?.setProperties?.({
-        width: isBriefing ? 235 : 160,
-        height: isBriefing ? 102 : 70,
-        fontSize: isBriefing ? 36 : 18
-      });
-    }
+    this.controlsDocument?.getElementById("video-return-class")?.setProperties({
+      width: isBriefing ? 300 : 200,
+      height: isBriefing ? 102 : 70,
+      fontSize: isBriefing ? 36 : 18
+    });
     this.updateMarkerLabel();
     (this.controlsDocument as any)?.requestUpdate?.();
   }
@@ -1013,13 +1015,13 @@ export class PresentationSystem extends createSystem({
   // ✅ Public method to exit presentation mode (for external calls)
   public exitPresentationMode(): void {
     // Close both dashboard surfaces before starting the return. The same
-    // controller select used on EMERGENCY RETURN must not pass through and
+    // controller select used on RETURN TO CLASS must not pass through and
     // reopen the dashboard while the doorway is covering the scene.
     (window as any).setInstructorDashboardOpen?.(false);
     const menuButton = (window as any).instructorMenuButtonObject;
     if (menuButton) menuButton.visible = false;
     if (this.transitionInProgress) {
-      // Emergency Return can arrive from the instructor while a student's
+      // Return to Class can arrive from the instructor while a student's
       // doorway animation is still finishing. Never discard that request;
       // complete the doorway frame, then run the normal shared restoration.
       this.pendingClassroomReturn = true;
@@ -1039,6 +1041,122 @@ export class PresentationSystem extends createSystem({
     } else if (mode === "Classroom Mode" && this.isPresentationMode) {
       this.togglePresentationMode();
     }
+  }
+
+  public initializeClassroomSideScreens(): void {
+    if (this.sideScreensInitialized) return;
+    // Do not leave the panels at their cinema defaults while the classroom
+    // entity is still waiting for its first TransformSystem update.
+    if (!this.world.scene.getObjectByName("ProjectorScreen")) return;
+    if (!this.world.scene.getObjectByName("Seat_R1_03")) return;
+    this.sideScreensInitialized = true;
+    this.createCinemaObjects();
+    this.setDebriefReviewVisible(false);
+    if (!(window as any).isInstructor && this.debriefRightScreen) {
+      // Register the screen as the ECS parent too; a raw Object3D.add alone
+      // is overwritten when TransformSystem applies the entity parent.
+      const screenEntity = this.world.createTransformEntity(
+        this.debriefRightScreen, { persistent: true }
+      );
+      const entity = this.world.createTransformEntity(undefined, { parent: screenEntity })
+        .addComponent(PanelUI, {
+          config: "./ui/student-side-controls.json", maxWidth: 3.45, maxHeight: 3.9
+        })
+        .addComponent(RayInteractable);
+      if (entity.object3D) {
+        this.debriefRightScreen.add(entity.object3D);
+        entity.object3D.position.set(0, 0, 0.025);
+        entity.object3D.frustumCulled = false;
+      }
+    }
+    void this.loadSideScreenTasks();
+  }
+
+  private async loadSideScreenTasks(): Promise<void> {
+    try {
+      const response = await fetch("/api/instructor-content");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      replaceInstructorLessons(await response.json());
+      this.redrawDebriefScreens();
+    } catch (error) {
+      console.warn("[Side screens] Using configured fallback activities", error);
+    }
+  }
+
+  private onSideHandClick = (event: any): void => {
+    event?.stopPropagation?.();
+    if ((window as any).isInstructor || !socket.connected) return;
+    if (Date.now() - this.lastHandClickAt < 350) return;
+    this.lastHandClickAt = Date.now();
+    this.studentHandRaised = !this.studentHandRaised;
+    this.updateStudentHandControl();
+    // The server derives the student identity from this connection.
+    socket.emit("raiseHand", { raised: this.studentHandRaised });
+  };
+
+  private onStudentHandUpdated = (data: {
+    studentId?: string; playerId?: string; raised: boolean;
+  }): void => {
+    if ((data.studentId ?? data.playerId) !== socket.id) return;
+    this.studentHandRaised = Boolean(data.raised);
+    this.updateStudentHandControl();
+  };
+
+  private onHandDisconnected = (): void => {
+    this.studentHandRaised = false;
+    this.updateStudentHandControl();
+  };
+
+  private createSideHandModel(): void {
+    const asset = AssetManager.getGLTF("raiseHandIcon");
+    if (!asset || !this.debriefRightScreen || this.sideHandModel) return;
+    const hand = asset.scene.clone(true);
+    hand.name = "SideScreenRaiseHandModel";
+    hand.rotation.set(0, Math.PI, 0);
+    hand.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(hand);
+    const size = bounds.getSize(new Vector3());
+    hand.scale.setScalar(0.65 / Math.max(size.x, size.y, size.z, 0.001));
+    hand.updateMatrixWorld(true);
+    bounds.setFromObject(hand);
+    const center = bounds.getCenter(new Vector3());
+    // Align the original hand model with the small transparent touch target.
+    hand.position.set(-center.x, 0.95 - center.y, 0.08 - bounds.min.z);
+    hand.traverse(child => {
+      child.pointerEvents = "none";
+      if (!(child instanceof Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      const unlit = materials.map(material => {
+        const original = material as MeshStandardMaterial;
+        return new MeshBasicMaterial({
+          map: original.map ?? null,
+          color: 0xffffff,
+          transparent: original.transparent,
+          opacity: original.opacity,
+          alphaTest: original.alphaTest,
+          side: DoubleSide,
+          toneMapped: false
+        });
+      });
+      child.material = Array.isArray(child.material) ? unlit : unlit[0];
+      child.frustumCulled = false;
+    });
+    this.debriefRightScreen.add(hand);
+    this.sideHandModel = hand;
+    this.updateStudentHandControl();
+  }
+
+  private updateStudentHandControl(): void {
+    this.studentControlsDocument?.getElementById("side-hand-label")?.setProperties({
+      text: this.studentHandRaised ? "Lower Hand" : "Raise Hand"
+    });
+    this.sideHandModel?.traverse(child => {
+      if (!(child instanceof Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach(material => (material as MeshBasicMaterial).color.setHex(
+        this.studentHandRaised ? 0x4ade80 : 0xffffff
+      ));
+    });
   }
 
   private createCinemaObjects() {
@@ -1153,145 +1271,50 @@ export class PresentationSystem extends createSystem({
   ): void {
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-    gradient.addColorStop(0, "#08182f");
-    gradient.addColorStop(1, "#102c4d");
-    context.fillStyle = gradient;
+    context.fillStyle = "#050b16";
     context.fillRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#42e8ff";
-    context.lineWidth = 16;
-    context.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
-    // Side-screen figures are intentionally fixed for presentation/demo mode.
-    // Live Socket.IO data remains available in this.debriefReview for the
-    // working classroom monitors, but is not exposed in this demonstration.
-    const review = DEBRIEF_PRESENTATION_DEMO;
-    const studentCount = Math.max(0, review?.studentCount ?? 0);
-    const correctCount = Math.max(0, review?.correctCount ?? 0);
-    const wrongCount = Math.max(0, review?.wrongCount ?? 0);
-    const unansweredCount = Math.max(0, studentCount - (review?.answeredCount ?? 0));
-    const percent = (value: number) => studentCount > 0
-      ? Math.round(value * 100 / studentCount)
-      : 0;
-    const formatTime = (seconds: number) => {
-      const safe = Math.max(0, Math.round(seconds));
-      return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
-    };
-    const wrapText = (text: string, x: number, startY: number, width: number, lineHeight: number) => {
-      let line = "";
-      let y = startY;
-      for (const word of text.split(" ")) {
-        const test = `${line}${word} `;
-        if (line && context.measureText(test).width > width) {
-          context.fillText(line.trim(), x, y);
-          line = `${word} `;
-          y += lineHeight;
-        } else {
-          line = test;
-        }
+    context.strokeStyle = "#1689b7";
+    context.lineWidth = 6;
+    context.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+    if (kind === "errors") {
+      // Students get an interactive panel here; instructors see an explanation.
+      if ((window as any).isInstructor) {
+        context.textAlign = "center";
+        context.fillStyle = "#e0f2fe";
+        context.font = "700 48px Arial";
+        context.fillText("STUDENT CONTROLS", 450, 300);
+        context.font = "32px Arial";
+        context.fillStyle = "#94a3b8";
+        context.fillText("Students can raise their hand here", 450, 380);
       }
-      if (line) context.fillText(line.trim(), x, y);
-      return y;
-    };
-
-    context.fillStyle = "#8af3ff";
-    context.font = "700 42px Arial";
-    context.fillText(kind === "summary" ? "CHALLENGE REVIEW" : "CYCLE SUMMARY", 54, 74);
-
-    if (kind === "summary") {
-      context.fillStyle = "#9db4d0";
-      context.font = "700 25px Arial";
-      context.fillText(review?.cycleLabel?.toUpperCase() ?? "CURRENT LEARNING CYCLE", 54, 122);
-      context.fillStyle = "#ffffff";
-      context.font = "700 35px Arial";
-      let y = wrapText(
-        review?.question ?? "Challenge question will appear when the lesson challenge is completed.",
-        54,
-        177,
-        790,
-        43
-      ) + 62;
-      const options = review?.options?.length
-        ? review.options
-        : ["No response data available"];
-      options.slice(0, 4).forEach((label, index) => {
-        const isCorrect = index === review?.correctIndex;
-        const optionCount = review?.answerCounts?.[index] ?? 0;
-        context.fillStyle = isCorrect ? "rgba(69,184,255,0.92)" : "rgba(255,102,112,0.72)";
-        context.fillRect(50, y - 34, 790, 66);
-        context.fillStyle = "#071426";
-        context.font = "700 29px Arial";
-        context.fillText(`${String.fromCharCode(65 + index)}. ${label}`, 70, y + 9);
-        context.textAlign = "right";
-        context.fillText(`${percent(optionCount)}%`, 815, y + 9);
-        context.textAlign = "left";
-        y += 82;
-      });
       return;
     }
-
-    // Mission progress mirrors the conductor sequence without exposing any
-    // individual student's answer or identity on the shared review display.
-    context.fillStyle = "rgba(4, 17, 35, 0.72)";
-    context.fillRect(48, 104, 804, 92);
-    context.strokeStyle = "rgba(66, 232, 255, 0.55)";
-    context.lineWidth = 3;
-    context.strokeRect(48, 104, 804, 92);
-
-    const missionSteps = [
-      ["LECTURE", "✓", "#77efb2"],
-      ["QUESTIONS", "✓", "#77efb2"],
-      ["CHALLENGE", "✓", "#77efb2"],
-      ["DEBRIEF", "ACTIVE", "#ffc85a"],
-    ] as const;
-    missionSteps.forEach(([label, state, color], index) => {
-      const x = 72 + index * 196;
-      context.fillStyle = "#dcecff";
-      context.font = "700 21px Arial";
-      context.fillText(label, x, 140);
-      context.fillStyle = color;
-      context.font = "700 20px Arial";
-      context.fillText(state, x, 174);
-      if (index < missionSteps.length - 1) {
-        context.fillStyle = "#7890ad";
-        context.font = "700 28px Arial";
-        context.fillText("›", x + 162, 160);
-      }
+    context.textAlign = "left";
+    context.fillStyle = "#cbd5e1";
+    context.font = "600 34px Arial";
+    context.fillText("Tasks of Today", 52, 70);
+    const tasks = INSTRUCTOR_LESSONS.flatMap(lesson => lesson.tasks);
+    const rows = [
+      { label: "VIDEOS", count: tasks.filter(task => task.action === "presentation").length, color: "#38bdf8" },
+      { label: "CHALLENGES", count: tasks.filter(task => task.action === "challenge").length, color: "#fbbf24" },
+      // The dashboard offers Variable Sorting and True or False as its two games.
+      { label: "GAMES", count: 2, color: "#34d399" },
+      { label: "DEBRIEF ROOMS", count: tasks.filter(task => task.action === "briefing").length, color: "#a78bfa" }
+    ];
+    rows.forEach((row, index) => {
+      const y = 106 + index * 142;
+      context.fillStyle = "#0b2037";
+      context.fillRect(32, y, 836, 126);
+      context.fillStyle = row.color;
+      context.fillRect(32, y, 8, 126);
+      context.textAlign = "center";
+      context.font = "700 64px Arial";
+      context.fillText(String(row.count), 150, y + 88);
+      context.textAlign = "left";
+      context.fillStyle = "#f1f5f9";
+      context.font = "700 34px Arial";
+      context.fillText(row.label, 254, y + 78);
     });
-
-    context.fillStyle = "#9db4d0";
-    context.font = "700 23px Arial";
-    context.fillText("COMPLETION TIME", 54, 246);
-    context.fillStyle = "#8af3ff";
-    context.font = "700 58px Arial";
-    context.fillText(formatTime(review?.elapsedSeconds ?? 0), 54, 310);
-
-    context.fillStyle = "rgba(69, 184, 255, 0.14)";
-    context.fillRect(48, 350, 804, 126);
-    context.strokeStyle = "rgba(69, 184, 255, 0.72)";
-    context.lineWidth = 4;
-    context.strokeRect(48, 350, 804, 126);
-    context.fillStyle = "#dcecff";
-    context.font = "700 29px Arial";
-    context.fillText("CORRECT ANSWERS", 76, 400);
-    context.fillStyle = "#45b8ff";
-    context.font = "700 58px Arial";
-    context.textAlign = "right";
-    context.fillText(`${percent(correctCount)}%`, 820, 438);
-    context.textAlign = "left";
-
-    context.fillStyle = "rgba(255, 200, 90, 0.12)";
-    context.fillRect(48, 504, 804, 126);
-    context.strokeStyle = "rgba(255, 200, 90, 0.72)";
-    context.lineWidth = 4;
-    context.strokeRect(48, 504, 804, 126);
-    context.fillStyle = "#dcecff";
-    context.font = "700 29px Arial";
-    context.fillText("STUDENTS WITH A MISTAKE", 76, 554);
-    context.fillStyle = "#ffc85a";
-    context.font = "700 48px Arial";
-    context.textAlign = "right";
-    context.fillText(`${wrongCount}`, 820, 596);
-    context.textAlign = "left";
   }
 
   private redrawDebriefScreens(): void {
@@ -1301,10 +1324,10 @@ export class PresentationSystem extends createSystem({
     if (this.debriefRightTexture) this.debriefRightTexture.needsUpdate = true;
   }
 
-  private positionDebriefSideWindows(): void {
+  private positionDebriefSideWindows(immersive = this.debriefView === "immersive360"): void {
     if (!this.debriefLeftScreen || !this.debriefRightScreen) return;
 
-    if (this.debriefView === "immersive360") {
+    if (immersive) {
       this.debriefLeftScreen.scale.setScalar(1);
       this.debriefRightScreen.scale.setScalar(1);
       this.debriefLeftScreen.position.set(-5.75, 3.0, 6.35);
@@ -1315,61 +1338,45 @@ export class PresentationSystem extends createSystem({
     }
 
     const projector = this.world.scene.getObjectByName("ProjectorScreen") as Mesh;
-    const leftBezel = this.world.scene.getObjectByName("ScreenBezel_Left") as Mesh;
-    const rightBezel = this.world.scene.getObjectByName("ScreenBezel_Right") as Mesh;
-    if (!projector || !leftBezel || !rightBezel) return;
+    if (!projector) return;
 
-    // Anchor to the projector geometry's own visible screen edges. A world
-    // Box3 can absorb surrounding transformed classroom geometry and place the
-    // panels at the wall edges instead of at the projector frame.
+    // Anchor to the projector geometry so startup and classroom debrief
+    // agree, including models with different bezel layouts.
     projector.updateWorldMatrix(true, false);
-    leftBezel.updateWorldMatrix(true, false);
-    rightBezel.updateWorldMatrix(true, false);
     projector.geometry.computeBoundingBox();
-    leftBezel.geometry.computeBoundingBox();
-    rightBezel.geometry.computeBoundingBox();
     const bounds = projector.geometry.boundingBox;
-    const leftBounds = leftBezel.geometry.boundingBox;
-    const rightBounds = rightBezel.geometry.boundingBox;
-    if (!bounds || !leftBounds || !rightBounds) return;
+    if (!bounds) return;
     const localCenter = bounds.getCenter(new Vector3());
-    const leftLocalCenter = leftBounds.getCenter(new Vector3());
-    const rightLocalCenter = rightBounds.getCenter(new Vector3());
-    const edgeA = new Vector3(
-      leftBounds.min.x,
-      leftLocalCenter.y,
-      leftLocalCenter.z
-    ).applyMatrix4(leftBezel.matrixWorld);
-    const edgeB = new Vector3(
-      rightBounds.max.x,
-      rightLocalCenter.y,
-      rightLocalCenter.z
-    ).applyMatrix4(rightBezel.matrixWorld);
     const center = localCenter.clone().applyMatrix4(projector.matrixWorld);
-    const screenRight = edgeB.clone().sub(edgeA).normalize();
     const viewerPosition = new Vector3();
     const presentationSeat = this.world.scene.getObjectByName("Seat_R1_03");
-    if (presentationSeat) {
-      presentationSeat.getWorldPosition(viewerPosition);
-    } else {
-      this.player.getWorldPosition(viewerPosition);
-    }
-    // setDebriefReviewVisible runs before the instructor is moved to the
-    // presentation seat. Always use the stable first-row viewing axis here;
-    // using the player's old position turns the panels almost edge-on.
+    if (presentationSeat) presentationSeat.getWorldPosition(viewerPosition);
+    else this.player.getWorldPosition(viewerPosition);
     const towardViewer = viewerPosition.clone().sub(center);
     towardViewer.y = 0;
     towardViewer.normalize();
-    const forwardOffset = towardViewer.clone().multiplyScalar(0.12);
-
-    // Match the classroom projector's 3.4 m height. Full-size 360 panels are
-    // 4.2 m tall and extend all the way onto the classroom side walls.
-    const classroomPanelScale = 0.78;
+    // Left and right are relative to a student facing the board.
+    const screenRight = new Vector3(0, 1, 0).cross(towardViewer).normalize();
+    const edgeA = new Vector3(bounds.min.x, localCenter.y, localCenter.z)
+      .applyMatrix4(projector.matrixWorld);
+    const edgeB = new Vector3(bounds.max.x, localCenter.y, localCenter.z)
+      .applyMatrix4(projector.matrixWorld);
+    if (edgeB.clone().sub(edgeA).dot(screenRight) < 0) {
+      const swap = edgeA.clone();
+      edgeA.copy(edgeB);
+      edgeB.copy(swap);
+    }
+    // Keep the hinge flush with the board; a tiny clearance avoids overlap.
+    const forwardOffset = towardViewer.clone().multiplyScalar(0.005);
+    const top = new Vector3(localCenter.x, bounds.max.y, localCenter.z)
+      .applyMatrix4(projector.matrixWorld);
+    const bottom = new Vector3(localCenter.x, bounds.min.y, localCenter.z)
+      .applyMatrix4(projector.matrixWorld);
+    const classroomPanelScale = top.distanceTo(bottom) / 4.2;
     this.debriefLeftScreen.scale.setScalar(classroomPanelScale);
     this.debriefRightScreen.scale.setScalar(classroomPanelScale);
 
-    // Keep both windows coplanar with the projector face. Angling them like
-    // wings makes them read as objects on the classroom side walls.
+    // Start facing the class, then hinge the outer edges toward the seats.
     this.debriefLeftScreen.position
       .copy(edgeA)
       .addScaledVector(screenRight, -(3.8 * classroomPanelScale) / 2)
@@ -1390,9 +1397,9 @@ export class PresentationSystem extends createSystem({
     // Fold the outer edges gently toward the class to form a shallow C/U
     // shape. Recalculate each center around its inner bezel edge so the fold
     // behaves like a hinge and never detaches from the projector frame.
-    const classroomWingAngle = 0.68;
-    this.debriefLeftScreen.rotateY(-classroomWingAngle);
-    this.debriefRightScreen.rotateY(classroomWingAngle);
+    const classroomWingAngle = 0.35;
+    this.debriefLeftScreen.rotateY(classroomWingAngle);
+    this.debriefRightScreen.rotateY(-classroomWingAngle);
     const halfPanelWidth = (3.8 * classroomPanelScale) / 2;
     const leftCandidate = new Vector3(halfPanelWidth, 0, 0)
       .applyQuaternion(this.debriefLeftScreen.quaternion);
@@ -1416,6 +1423,22 @@ export class PresentationSystem extends createSystem({
     this.debriefRightScreen.updateMatrixWorld(true);
   }
 
+  private shouldShowClassroomSideScreens(): boolean {
+    const state = window as any;
+    if (this.transitionInProgress || state.isQuickChallengeOpen ||
+        state.isChallenge2Open || state.isLabActive) return false;
+    if (this.isPresentationMode || state.isPresentationActive) {
+      return this.presentationMediaType === "image";
+    }
+    return state.classroomMesh?.visible !== false;
+  }
+
+  private updateClassroomSideScreenVisibility(): void {
+    const visible = this.shouldShowClassroomSideScreens();
+    if (this.debriefLeftScreen) this.debriefLeftScreen.visible = visible;
+    if (this.debriefRightScreen) this.debriefRightScreen.visible = visible;
+  }
+
   private setDebriefReviewVisible(visible: boolean): void {
     const showSideWindows =
       visible &&
@@ -1425,11 +1448,22 @@ export class PresentationSystem extends createSystem({
     // The legacy cinema box is an opaque, inward-facing room. Hide it while
     // the debrief sphere is active or it masks the 360-degree space texture.
     if (showImmersiveRoom && this.blackRoom) this.blackRoom.visible = false;
-    if (showSideWindows) this.positionDebriefSideWindows();
-    // Summary and mistakes flank the real classroom projector just as they
-    // flank the artificial center screen in the 360-degree review room.
-    if (this.debriefLeftScreen) this.debriefLeftScreen.visible = showSideWindows;
-    if (this.debriefRightScreen) this.debriefRightScreen.visible = showSideWindows;
+    // Place the same panels beside the board in either debrief destination.
+    this.positionDebriefSideWindows(showImmersiveRoom);
+    const showScreens = showSideWindows
+      ? !this.transitionInProgress
+      : !visible && this.shouldShowClassroomSideScreens();
+    for (const [screen, texture] of [
+      [this.debriefLeftScreen, this.debriefLeftTexture],
+      [this.debriefRightScreen, this.debriefRightTexture]
+    ] as const) {
+      if (!screen) continue;
+      screen.visible = showScreens;
+      const material = screen.material as MeshBasicMaterial;
+      material.map = texture ?? null;
+      material.color.setHex(0xffffff);
+      material.needsUpdate = true;
+    }
     if (this.debriefCenterFrame) this.debriefCenterFrame.visible = showImmersiveRoom;
     if (this.debriefBoardFrame) this.debriefBoardFrame.visible = showImmersiveRoom;
     if (this.debriefBoardBack) this.debriefBoardBack.visible = showImmersiveRoom;
@@ -1503,10 +1537,16 @@ export class PresentationSystem extends createSystem({
       const useImmersiveRoom =
         this.presentationMediaType === "video" ||
         this.debriefView === "immersive360";
+      // Set the destination state first so closing a student result does not
+      // briefly restore the classroom-board overlay during the transition.
+      (window as any).isPresentationOpen = true;
+      (window as any).closeStudentResultForRoomTransition?.();
       this.savedSeatPosition.copy(this.player.position);
       this.savedSeatQuaternion.copy(this.player.quaternion);
-      (window as any).isPresentationOpen = true;
       (window as any).isPresentationActive = true;
+      // The normal course/status/results canvas must not sit over either the
+      // classroom debrief image or the 360-degree debrief presentation.
+      this.setClassroomBoardStatusVisible(false);
       const menuButton = (window as any).instructorMenuButtonObject;
       if (menuButton) menuButton.visible = false;
       if (classroomMesh) classroomMesh.visible = !useImmersiveRoom;
@@ -1577,6 +1617,9 @@ export class PresentationSystem extends createSystem({
       // overwrite that orientation on an active XR rig.
       (window as any).isPresentationOpen = false;
       (window as any).isPresentationActive = false;
+      this.setClassroomBoardStatusVisible(
+        !Boolean((window as any).isStudentResultOpen)
+      );
       if (classroomMesh) classroomMesh.visible = true;
       this.setClassroomDebriefDimmed(false);
       if (instructorMesh) {
@@ -1681,6 +1724,14 @@ export class PresentationSystem extends createSystem({
     this.classroomProjectorOriginalMaterial = undefined;
   }
 
+  /** Toggle the normal course/status/results canvas attached to the board. */
+  private setClassroomBoardStatusVisible(visible: boolean): void {
+    const boardStatus = this.world.scene.getObjectByName(
+      "ClassroomBoardStatus"
+    );
+    if (boardStatus) boardStatus.visible = visible;
+  }
+
   private facePlayerTowardClassroomProjector(): void {
     const projector = this.world.scene.getObjectByName("ProjectorScreen") as Mesh;
     if (!projector) return;
@@ -1783,6 +1834,9 @@ export class PresentationSystem extends createSystem({
     socket.off("presentationContentChanged", this.onPresentationContentChanged);
     socket.off("briefingAnnotation", this.onBriefingAnnotation);
     socket.off("debriefReviewData", this.onDebriefReviewData);
+    socket.off("raiseHandUpdated", this.onStudentHandUpdated);
+    socket.off("handToggled", this.onStudentHandUpdated);
+    socket.off("disconnect", this.onHandDisconnected);
     this.renderer.domElement.removeEventListener("pointerdown", this.onAnnotationPointerDown);
     this.renderer.domElement.removeEventListener("pointermove", this.onAnnotationPointerMove);
     window.removeEventListener("pointerup", this.onAnnotationPointerUp);

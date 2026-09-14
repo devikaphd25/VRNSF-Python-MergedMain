@@ -1,3 +1,4 @@
+/** Canonical seat identifiers and small seat lookup helpers shared by classroom systems. */
 const Seats = [
     'Seat_R0_00',
     'Seat_R1_01', 'Seat_R1_02', 'Seat_R1_03', 'Seat_R1_04', 'Seat_R1_05',

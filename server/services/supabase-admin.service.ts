@@ -1,3 +1,10 @@
+/**
+ * Server-only Supabase connection.
+ *
+ * Goal: create the privileged database client used by repositories and server
+ * workflows. Depends on SUPABASE_URL and SUPABASE_SECRET_KEY from .env.server.
+ * Never import this module into browser code or expose the secret key.
+ */
 import { createClient } from "@supabase/supabase-js";
 import WebSocket from "ws";
 

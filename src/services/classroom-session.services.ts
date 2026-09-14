@@ -1,3 +1,9 @@
+/**
+ * Browser-side Supabase classroom API.
+ * Goal: call SQL RPC functions for rooms, participants, questions, responses,
+ * scores, and subscriptions. Converts database failures into
+ * ClassroomSessionError messages consumed by login/classroom UI.
+ */
 import { ClassroomSessionError } from "../errors/classroom-session.errors";
 import { supabase } from "./supabase-client.services";
 

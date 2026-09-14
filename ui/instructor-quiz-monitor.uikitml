@@ -196,6 +196,45 @@
     gap: 14;
   }
 
+  .quiz-final-review {
+    width: 100%;
+    display: none;
+    flex-direction: column;
+    gap: 6;
+    padding: 12;
+    background-color: rgba(15, 23, 42, 0.9);
+    border-radius: 12;
+  }
+
+  .quiz-review-heading {
+    color: #67e8f9;
+    font-size: 15;
+    font-weight: bold;
+  }
+
+  .quiz-review-copy {
+    color: white;
+    font-size: 14;
+  }
+
+  .quiz-wrong-answers-button {
+    width: 220;
+    height: 46;
+    align-self: center;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(217, 119, 6, 0.32);
+    border-width: 1;
+    border-color: #fbbf24;
+    border-radius: 13;
+    color: white;
+    font-size: 16;
+    font-weight: bold;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 13001;
+  }
+
   .quiz-page-button {
     width: 86;
     height: 42;
@@ -263,6 +302,9 @@
     <Button id="quiz-monitor-up" class="quiz-page-button">UP</Button>
     <Text id="quiz-monitor-page" class="quiz-page-label">PAGE 1 / 1</Text>
     <Button id="quiz-monitor-down" class="quiz-page-button">DOWN</Button>
+  </Panel>
+  <Panel id="quiz-monitor-final-review" class="quiz-final-review">
+    <Button id="quiz-monitor-wrong-answers" class="quiz-wrong-answers-button">VIEW COMMON MISTAKES</Button>
   </Panel>
   <Text id="quiz-monitor-footer" class="quiz-footer">The list updates as students submit.</Text>
 </Panel>

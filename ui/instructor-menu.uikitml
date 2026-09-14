@@ -1,330 +1,81 @@
+<!-- NASA-inspired instructor dashboard. Runtime text comes from instructor-menu-content.ts. -->
 <style>
-  .dashboard-root {
-    overflow: hidden;
-    width: 920;
-    height: 620;
-    flex-direction: column;
-    gap: 18;
-    padding-top: 28;
-    padding-bottom: 24;
-    padding-left: 30;
-    padding-right: 30;
-    background-color: rgba(5, 13, 29, 0.97);
-    border-radius: 30;
-    border-width: 2;
-    border-color: rgba(125, 211, 252, 0.58);
-    pointer-events: auto;
-  }
-
-  .dashboard-header {
-    height: 78;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    padding-bottom: 16;
-    border-bottom-width: 1;
-    border-bottom-color: rgba(255, 255, 255, 0.14);
-  }
-
-  .title-area { flex-direction: column; gap: 6; }
-  .dashboard-title { color: #ffffff; font-size: 32; font-weight: 700; font-family: inter; }
-  .dashboard-subtitle { color: #94a3b8; font-size: 15; font-family: inter; }
-
-  .header-right { flex-direction: row; gap: 14; align-items: center; }
-  .online-pill {
-    flex-direction: row;
-    gap: 8;
-    align-items: center;
-    padding-left: 15;
-    padding-right: 15;
-    padding-top: 9;
-    padding-bottom: 9;
-    background-color: rgba(16, 185, 129, 0.15);
-    border-radius: 18;
-    border-width: 1;
-    border-color: rgba(52, 211, 153, 0.45);
-  }
-  .online-number { color: #86efac; font-size: 17; font-weight: 700; font-family: inter; }
-  .online-label { color: #d1fae5; font-size: 13; font-family: inter; }
-
-  .close-button {
-    width: 52;
-    height: 52;
-    align-items: center;
-    justify-content: center;
-    background-color: rgba(255, 255, 255, 0.09);
-    border-radius: 26;
-    border-width: 1;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: #ffffff;
-    font-size: 20;
-    font-weight: 700;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .close-button:hover { background-color: rgba(239, 68, 68, 0.32); border-color: #f87171; }
-
-  .content-row { height: 390; flex-direction: row; gap: 18; }
-  .section-card {
-    flex-direction: column;
-    gap: 12;
-    padding: 16;
-    background-color: rgba(15, 27, 51, 0.88);
-    border-radius: 22;
-    border-width: 1;
-  }
-  .tasks-section { width: 555; border-color: rgba(56, 189, 248, 0.48); }
-  .games-section { width: 287; border-color: rgba(139, 92, 246, 0.52); }
-  .section-header { flex-direction: row; justify-content: space-between; align-items: center; }
-  .section-title { color: #ffffff; font-size: 23; font-weight: 700; font-family: inter; }
-  .task-title { color: #7dd3fc; }
-  .game-title { color: #c4b5fd; }
-  .section-note { color: #94a3b8; font-size: 12; font-family: inter; }
-
-  .task-body { flex-grow: 1; flex-direction: row; gap: 10; }
-  .task-scroll {
-    width: 455;
-    height: 310;
-    flex-direction: column;
-    gap: 10;
-    overflow: hidden;
-    padding-right: 8;
-  }
-  .lesson-page { height: 300; flex-direction: column; gap: 10; }
+  .dashboard-root { overflow: hidden; width: 1040; height: 820; flex-direction: column; gap: 14; padding: 26; background-color: #020b18; border-radius: 22; border-width: 2; border-color: #1689b7; pointer-events: auto; }
+  .dashboard-header { height: 72; flex-direction: row; justify-content: space-between; align-items: center; padding-left: 8; padding-right: 4; border-bottom-width: 2; border-bottom-color: rgba(14, 165, 233, 0.5); }
+  .title-area { flex-direction: column; gap: 5; }
+  .dashboard-title { color: #ffffff; font-size: 30; font-weight: 800; font-family: inter; }
+  .dashboard-subtitle { color: #38bdf8; font-size: 13; font-weight: 700; font-family: inter; }
+  .header-right { flex-direction: row; gap: 13; align-items: center; }
+  .online-counter { width: 170; height: 50; flex-direction: row; gap: 10; align-items: center; justify-content: center; background-color: #082f49; border-radius: 10; border-width: 1; border-color: #38bdf8; }
+  .task-counter { width: 120; height: 50; flex-direction: row; gap: 8; align-items: center; justify-content: center; background-color: #10253d; border-radius: 10; border-width: 1; border-color: #f59e0b; }
+  .task-counter-number { color: #ffffff; font-size: 24; font-weight: 800; font-family: inter; }
+  .task-counter-label { color: #ffffff; font-size: 11; font-weight: 700; font-family: inter; }
+  .online-number { color: #67e8f9; font-size: 27; font-weight: 800; font-family: inter; }
+  .online-label { color: #e0f2fe; font-size: 11; font-weight: 700; font-family: inter; }
+  .close-button { width: 48; height: 48; align-items: center; justify-content: center; background-color: rgba(30, 41, 59, 0.9); border-radius: 10; border-width: 1; border-color: rgba(148, 163, 184, 0.5); color: #ffffff; font-size: 19; font-weight: 800; cursor: pointer; pointer-events: auto; }
+  .close-button:hover { background-color: rgba(127, 29, 29, 0.8); border-color: #f87171; }
+  .queue-shell { height: 576; flex-direction: column; gap: 10; padding: 14; background-color: #061629; border-radius: 16; border-width: 1; border-color: #176b91; }
+  .queue-header { height: 30; flex-direction: row; justify-content: space-between; align-items: center; }
+  .queue-title { color: #ffffff; font-size: 20; font-weight: 800; font-family: inter; }
+  .queue-body { flex-grow: 1; flex-direction: row; gap: 12; }
+  .task-scroll { width: 910; height: 510; flex-direction: column; gap: 8; overflow: hidden; }
+  .lesson-page { flex-direction: column; gap: 8; }
+  .game-list { flex-direction: column; gap: 8; }
   .lesson-page-hidden { display: none; }
-  .scroll-controls { width: 58; flex-direction: column; justify-content: center; gap: 12; }
-  .scroll-button {
-    width: 58;
-    height: 62;
-    align-items: center;
-    justify-content: center;
-    background-color: rgba(14, 116, 144, 0.32);
-    border-radius: 14;
-    border-width: 1;
-    border-color: rgba(103, 232, 249, 0.52);
-    color: #cffafe;
-    font-size: 13;
-    font-weight: 700;
-    font-family: inter;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .scroll-button:hover { background-color: rgba(8, 145, 178, 0.58); border-color: #67e8f9; }
-  .scroll-button-unavailable {
-    background-color: rgba(30, 41, 59, 0.34);
-    border-color: rgba(100, 116, 139, 0.42);
-    color: #64748b;
-  }
-
-  .lesson-label {
-    color: #64748b;
-    font-size: 12;
-    font-weight: 700;
-    font-family: inter;
-    padding-top: 5;
-    padding-left: 5;
-  }
-  .menu-card {
-    min-height: 78;
-    flex-direction: row;
-    align-items: center;
-    gap: 13;
-    padding-left: 14;
-    padding-right: 14;
-    padding-top: 11;
-    padding-bottom: 11;
-    background-color: rgba(24, 42, 70, 0.94);
-    border-radius: 16;
-    border-width: 1;
-    border-color: rgba(148, 163, 184, 0.24);
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .menu-card:hover { background-color: rgba(30, 64, 105, 1); border-color: rgba(125, 211, 252, 0.8); }
-  .mode-button-active { background-color: rgba(3, 105, 161, 0.43); border-color: #7dd3fc; }
-  .task-type {
-    width: 92;
-    height: 34;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10;
-    color: #ffffff;
-    font-size: 11;
-    font-weight: 700;
-    font-family: inter;
-  }
-  .video-type { background-color: rgba(14, 116, 144, 0.72); }
-  .challenge-type { background-color: rgba(180, 83, 9, 0.72); }
-  .briefing-type { background-color: rgba(79, 70, 229, 0.72); }
-  .card-copy { flex-grow: 1; flex-direction: column; gap: 4; }
-  .card-title { color: #ffffff; font-size: 16; font-weight: 700; font-family: inter; }
-  .card-description { color: #aebdd0; font-size: 12; font-family: inter; }
-
-  .game-list { flex-direction: column; gap: 14; padding-top: 8; }
-  .game-card {
-    height: 124;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 7;
-    padding: 16;
-    background-color: rgba(46, 31, 82, 0.72);
-    border-radius: 17;
-    border-width: 1;
-    border-color: rgba(167, 139, 250, 0.34);
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .game-card:hover { background-color: rgba(76, 29, 149, 0.64); border-color: #c4b5fd; }
-  .game-card-active {
-    background-color: rgba(14, 116, 144, 0.62);
-    border-color: #67e8f9;
-  }
-  .game-card-active:hover { background-color: rgba(8, 145, 178, 0.7); border-color: #a5f3fc; }
-  .game-code { color: #ddd6fe; font-size: 12; font-weight: 700; font-family: inter; }
-  .game-name { color: #ffffff; font-size: 18; font-weight: 700; font-family: inter; }
-  .game-description { color: #b7aacd; font-size: 12; font-family: inter; }
-
-  .footer-row { height: 58; flex-direction: row; align-items: center; justify-content: space-between; gap: 15; }
-  .footer-actions { width: 210; height: 52; flex-direction: row; gap: 10; }
-  .logout-button {
-    width: 190;
-    height: 56;
-    align-items: center;
-    justify-content: center;
-    background-color: rgba(127, 29, 29, 0.46);
-    border-radius: 16;
-    border-width: 1;
-    border-color: rgba(248, 113, 113, 0.72);
-    color: #fecaca;
-    font-size: 18;
-    font-weight: 700;
-    font-family: inter;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .logout-button:hover { background-color: rgba(185, 28, 28, 0.7); border-color: #fca5a5; }
-  .end-class-button {
-    width: 210;
-    height: 52;
-    align-items: center;
-    justify-content: center;
-    background-color: rgba(154, 52, 18, 0.5);
-    border-radius: 16;
-    border-width: 1;
-    border-color: rgba(251, 146, 60, 0.72);
-    color: #fed7aa;
-    font-size: 15;
-    font-weight: 700;
-    font-family: inter;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .end-class-button:hover { background-color: rgba(194, 65, 12, 0.72); border-color: #fdba74; }
-  .end-confirm-row { width: 210; height: 52; flex-direction: row; gap: 8; }
-  .end-confirm-button, .end-cancel-button {
-    width: 101;
-    height: 52;
-    align-items: center;
-    justify-content: center;
-    border-radius: 16;
-    border-width: 1;
-    color: #ffffff;
-    font-size: 12;
-    font-weight: 700;
-    font-family: inter;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .end-confirm-button { background-color: rgba(185, 28, 28, 0.78); border-color: #f87171; }
-  .end-cancel-button { background-color: rgba(51, 65, 85, 0.92); border-color: #94a3b8; }
+  .menu-card { height: 94; flex-shrink: 0; flex-direction: row; align-items: center; gap: 12; padding-left: 14; padding-right: 14; background-color: #0a2341; border-radius: 10; border-width: 1; border-color: #18577a; cursor: pointer; pointer-events: auto; }
+  .game-card { height: 60; flex-direction: row; align-items: center; gap: 12; padding-left: 14; padding-right: 14; background-color: #0a2341; border-radius: 10; border-width: 1; border-color: #18577a; cursor: pointer; pointer-events: auto; }
+  .menu-card:hover { background-color: #0c375c; border-color: #22d3ee; }
+  .game-card:hover { background-color: #0c375c; border-color: #22d3ee; }
+  .mode-button-active { border-color: #22d3ee; background-color: rgba(8, 70, 105, 0.88); }
+  .task-number { width: 28; color: #7dd3fc; font-size: 15; font-weight: 800; font-family: inter; }
+  .task-type { width: 140; height: 40; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 6; color: #ffffff; font-size: 14; font-weight: 800; font-family: inter; }
+  .video-type { background-color: #0369a1; }
+  .challenge-type { background-color: #d97706; }
+  .briefing-type { background-color: #4f46e5; }
+  .game-type { background-color: #059669; }
+  .card-copy { flex-grow: 1; flex-direction: column; gap: 3; }
+  .card-title { color: #ffffff; font-size: 20; font-weight: 750; font-family: inter; }
+  .game-name { color: #ffffff; font-size: 17; font-weight: 750; font-family: inter; }
+  .card-description { color: #ffffff; font-size: 14; font-family: inter; }
+  .game-description { color: #ffffff; font-size: 12; font-family: inter; }
+  .game-code { display: none; }
+  .task-status-dot { width: 18; height: 18; background-color: #64748b; border-radius: 9; border-width: 1; border-color: #94a3b8; flex-shrink: 0; }
+  .task-status-complete { background-color: #22c55e; border-color: #86efac; }
+  .scroll-controls { width: 62; flex-direction: column; justify-content: center; gap: 12; }
+  .scroll-button { width: 62; height: 105; align-items: center; justify-content: center; background-color: rgba(3, 105, 161, 0.38); border-radius: 10; border-width: 1; border-color: rgba(34, 211, 238, 0.72); color: #cffafe; font-size: 13; font-weight: 800; font-family: inter; cursor: pointer; pointer-events: auto; }
+  .scroll-button:hover { background-color: rgba(8, 145, 178, 0.7); border-color: #67e8f9; }
+  .scroll-button-unavailable { background-color: rgba(30, 41, 59, 0.45); border-color: #475569; color: #64748b; }
+  .footer-row { height: 60; flex-direction: row; align-items: center; gap: 14; }
+  .footer-actions { width: 205; height: 54; flex-direction: row; gap: 8; }
+  .end-class-button { width: 205; height: 54; align-items: center; justify-content: center; background-color: rgba(153, 27, 27, 0.65); border-radius: 10; border-width: 1; border-color: #f87171; color: #fecaca; font-size: 15; font-weight: 800; font-family: inter; cursor: pointer; pointer-events: auto; }
+  .end-class-button:hover { background-color: rgba(185, 28, 28, 0.9); }
+  .end-confirm-row { width: 205; height: 54; flex-direction: row; gap: 7; }
+  .end-confirm-button, .end-cancel-button { width: 99; height: 54; align-items: center; justify-content: center; border-radius: 9; border-width: 1; color: #ffffff; font-size: 10; font-weight: 800; cursor: pointer; pointer-events: auto; }
+  .end-confirm-button { background-color: #991b1b; border-color: #f87171; }
+  .end-cancel-button { background-color: #334155; border-color: #94a3b8; }
   .is-hidden { display: none; }
-  .status-area {
-    flex-grow: 1;
-    height: 52;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding-left: 18;
-    padding-right: 18;
-    background-color: rgba(15, 23, 42, 0.92);
-    border-radius: 15;
-    border-width: 1;
-    border-color: rgba(148, 163, 184, 0.2);
-  }
-  .status-text { color: #cbd5e1; font-size: 14; font-family: inter; }
-  .current-mode { color: #7dd3fc; font-size: 13; font-weight: 700; font-family: inter; }
+  .status-area { flex-grow: 1; height: 54; flex-direction: row; align-items: center; justify-content: space-between; padding-left: 18; padding-right: 18; background-color: rgba(8, 47, 73, 0.62); border-radius: 10; border-width: 1; border-color: rgba(14, 165, 233, 0.44); }
+  .status-text { color: #cbd5e1; font-size: 13; font-family: inter; }
+  .current-mode { color: #22d3ee; font-size: 13; font-weight: 800; font-family: inter; }
 </style>
 
 <Panel id="instructor-dashboard-root" class="dashboard-root">
-  <div class="dashboard-header">
-    <div class="title-area">
-      <span class="dashboard-title">VR Classroom Instructor</span>
-      <span class="dashboard-subtitle">Choose a task or launch a learning game</span>
-    </div>
-    <div class="header-right">
-      <div class="online-pill">
-        <span id="online-student-count" class="online-number">0</span>
-        <span id="online-student-label" class="online-label">Students Online</span>
-      </div>
-      <button id="dashboard-close-button" class="close-button">X</button>
-    </div>
-  </div>
-
-  <div id="dashboard-main-content" class="content-row">
-    <div class="section-card tasks-section">
-      <div class="section-header">
-        <span class="section-title task-title">TASKS</span>
-        <span class="section-note">Use UP / DOWN to change lessons</span>
-      </div>
-      <div class="task-body">
-        <div id="task-scroll-container" class="task-scroll">
-          <div id="lesson-page-1" class="lesson-page">
-            <span id="lesson-1-label" class="lesson-label">LESSON 1 - LITERAL COMPUTERS AND THE FIVE COMPUTER PARTS</span>
-            <button id="presentation-mode-button" class="menu-card"><span id="lesson-1-task-1-type" class="task-type video-type">PRESENTATION</span><div class="card-copy"><span id="lesson-1-task-1-title" class="card-title">Literal Computers and the Five Computer Parts</span><span id="lesson-1-task-1-description" class="card-description">Present CPU, RAM, storage, input, and output</span></div></button>
-            <button id="quick-challenge-button" class="menu-card"><span id="lesson-1-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-1-task-2-title" class="card-title">Five Parts Challenge</span><span id="lesson-1-task-2-description" class="card-description">Identify the job of each computer component</span></div></button>
-            <button id="class-mode-button" class="menu-card mode-button-active"><span id="lesson-1-task-3-type" class="task-type briefing-type">DEBRIEF</span><div class="card-copy"><span id="lesson-1-task-3-title" class="card-title">Five Parts Debrief</span><span id="lesson-1-task-3-description" class="card-description">Review the five-part computer model</span></div></button>
-          </div>
-          <div id="lesson-page-2" class="lesson-page lesson-page-hidden">
-            <span id="lesson-2-label" class="lesson-label">LESSON 2 - VARIABLES</span>
-            <button id="task-lesson2-video" class="menu-card"><span id="lesson-2-task-1-type" class="task-type video-type">VIDEO</span><div class="card-copy"><span id="lesson-2-task-1-title" class="card-title">Variables and Data Types</span><span id="lesson-2-task-1-description" class="card-description">Present the next instructional video</span></div></button>
-            <button id="task-lesson2-challenge" class="menu-card"><span id="lesson-2-task-2-type" class="task-type challenge-type">CHALLENGE</span><div class="card-copy"><span id="lesson-2-task-2-title" class="card-title">Variable Builder</span><span id="lesson-2-task-2-description" class="card-description">Test variables with an interactive activity</span></div></button>
-            <button id="task-lesson2-briefing" class="menu-card"><span id="lesson-2-task-3-type" class="task-type briefing-type">BRIEFING</span><div class="card-copy"><span id="lesson-2-task-3-title" class="card-title">Variables Review</span><span id="lesson-2-task-3-description" class="card-description">Discuss answers with the class</span></div></button>
-          </div>
-        </div>
-        <div class="scroll-controls">
-          <button id="task-scroll-up" class="scroll-button">UP</button>
-          <button id="task-scroll-down" class="scroll-button">DOWN</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="section-card games-section">
-      <div class="section-header">
-        <span class="section-title game-title">GAMES</span>
-      </div>
-      <div class="game-list">
-        <button id="lab-mode-button" class="game-card">
-          <span id="lab-game-code" class="game-code">GAME 01</span><span id="lab-game-name" class="game-name">Variable Sorting</span><span id="lab-game-description" class="game-description">Sort Python values into the correct data-type bins</span>
-        </button>
-        <button id="game-space-quiz-button" class="game-card">
-          <span class="game-code">GAME 02</span><span class="game-name">True or False</span><span class="game-description">Launch a quick true-or-false class challenge</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div class="footer-row">
-    <div class="footer-actions">
-      <button id="end-class-button" class="end-class-button">END CLASS</button>
-      <div id="end-class-confirm-row" class="end-confirm-row is-hidden">
-        <button id="end-class-confirm-button" class="end-confirm-button">CONFIRM END</button>
-        <button id="end-class-cancel-button" class="end-cancel-button">CANCEL</button>
-      </div>
-    </div>
-    <div class="status-area">
-      <span id="dashboard-status-text" class="status-text">Select a task or game</span>
-      <span id="current-mode-text" class="current-mode">Classroom Mode</span>
-    </div>
-  </div>
+  <Panel class="dashboard-header">
+    <Panel class="title-area"><Text class="dashboard-title">VR CLASSROOM</Text><Text class="dashboard-subtitle">WEEK 1 TASKS</Text></Panel>
+    <Panel class="header-right"><Panel class="task-counter"><Text id="task-count" class="task-counter-number">0</Text><Text class="task-counter-label">TASKS</Text></Panel><Panel class="online-counter"><Text id="online-student-count" class="online-number">0</Text><Text id="online-student-label" class="online-label">STUDENTS ONLINE</Text></Panel><Button id="dashboard-close-button" class="close-button">X</Button></Panel>
+  </Panel>
+  <Panel id="dashboard-main-content" class="queue-shell">
+    <Panel class="queue-header"><Text class="queue-title">ALL CLASS TASKS</Text><Text id="lesson-1-label" class="is-hidden">LESSON 1</Text></Panel>
+    <Panel class="queue-body">
+      <Panel id="task-scroll-container" class="task-scroll">
+        <Button id="queue-task-0" class="menu-card"><Text id="queue-task-0-number" class="task-number">01</Text><Text id="queue-task-0-type" class="task-type video-type">PRESENTATION</Text><Panel class="card-copy"><Text id="queue-task-0-title" class="card-title">Task</Text><Text id="queue-task-0-description" class="card-description">Class activity</Text></Panel><Panel id="queue-task-0-status" class="task-status-dot"></Panel></Button>
+        <Button id="queue-task-1" class="menu-card"><Text id="queue-task-1-number" class="task-number">02</Text><Text id="queue-task-1-type" class="task-type challenge-type">CHALLENGE</Text><Panel class="card-copy"><Text id="queue-task-1-title" class="card-title">Task</Text><Text id="queue-task-1-description" class="card-description">Class activity</Text></Panel><Panel id="queue-task-1-status" class="task-status-dot"></Panel></Button>
+        <Button id="queue-task-2" class="menu-card"><Text id="queue-task-2-number" class="task-number">03</Text><Text id="queue-task-2-type" class="task-type briefing-type">DEBRIEF</Text><Panel class="card-copy"><Text id="queue-task-2-title" class="card-title">Task</Text><Text id="queue-task-2-description" class="card-description">Class activity</Text></Panel><Panel id="queue-task-2-status" class="task-status-dot"></Panel></Button>
+        <Button id="queue-task-3" class="menu-card"><Text id="queue-task-3-number" class="task-number">04</Text><Text id="queue-task-3-type" class="task-type video-type">PRESENTATION</Text><Panel class="card-copy"><Text id="queue-task-3-title" class="card-title">Task</Text><Text id="queue-task-3-description" class="card-description">Class activity</Text></Panel><Panel id="queue-task-3-status" class="task-status-dot"></Panel></Button>
+        <Button id="queue-task-4" class="menu-card"><Text id="queue-task-4-number" class="task-number">05</Text><Text id="queue-task-4-type" class="task-type challenge-type">CHALLENGE</Text><Panel class="card-copy"><Text id="queue-task-4-title" class="card-title">Task</Text><Text id="queue-task-4-description" class="card-description">Class activity</Text></Panel><Panel id="queue-task-4-status" class="task-status-dot"></Panel></Button>
+      </Panel>
+      <Panel class="scroll-controls"><Button id="task-scroll-up" class="scroll-button">UP</Button><Button id="task-scroll-down" class="scroll-button">DOWN</Button></Panel>
+    </Panel>
+  </Panel>
+  <Panel class="footer-row"><Panel class="footer-actions"><Button id="end-class-button" class="end-class-button">END CLASS</Button><Panel id="end-class-confirm-row" class="end-confirm-row is-hidden"><Button id="end-class-confirm-button" class="end-confirm-button">CONFIRM END</Button><Button id="end-class-cancel-button" class="end-cancel-button">CANCEL</Button></Panel></Panel><Panel class="status-area"><Text id="dashboard-status-text" class="status-text">Select a task or game</Text><Text id="current-mode-text" class="current-mode">Classroom Mode</Text></Panel></Panel>
 </Panel>

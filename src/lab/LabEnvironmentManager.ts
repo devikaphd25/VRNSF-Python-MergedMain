@@ -1,3 +1,7 @@
+/**
+ * Owns the Python-lab scene lifecycle: assets, audio, lighting, systems, and
+ * cleanup when a student moves between the classroom and the lab.
+ */
 import {
   AssetManager,
   AudioSource,
@@ -14,6 +18,7 @@ import {
 import type { Object3D } from "three";
 
 import { socket } from "../network/socket";
+import { hideAllMarkers } from "../components/instructor/seat-markers";
 import {
   CardDispenser,
   NewCardButton,
@@ -127,6 +132,7 @@ export class LabEnvironmentManager {
 
     this.active = true;
     (window as any).isLabActive = true;
+    hideAllMarkers();
     this.enteredAt = Date.now();
     this.completionReported = false;
 

@@ -1,3 +1,4 @@
+/** Animates the dispenser and creates the next Python value card on request. */
 import { type AnimationAction, type AnimationClip, AnimationMixer, AudioSource, AudioUtils, Box3, BoxGeometry, createSystem, type Entity, Group, Hovered, Interactable, LoopOnce, Mesh, MeshStandardMaterial, type Object3D, PanelUI, PlaybackMode, Pressed, Quaternion, Vector3, VisibilityState, } from "@iwsdk/core";
 import { CardDispenser, NewCardButton } from "../components/gameComponents.js";
 import { getCardIndexSignal, getDispenseStateSignal, getLessonStateSignal, getResetEpochSignal, UMES_MAROON, } from "../state/gameState.js";
