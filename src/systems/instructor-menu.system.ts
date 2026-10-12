@@ -1840,6 +1840,14 @@ export class InstructorDashboardSystem extends createSystem({
         type: "GAME",
         title: "Python Puzzle 1",
         description: "Launch the first Python puzzle challenge"
+      },
+      {
+        kind: "game" as const,
+        key: "game:python-puzzle-2",
+        game: "python-puzzle-2" as const,
+        type: "GAME",
+        title: "Python Puzzle 2",
+        description: "Launch the second Python puzzle challenge"
       }
     ];
   }
@@ -1856,6 +1864,7 @@ export class InstructorDashboardSystem extends createSystem({
     if (item.kind === "game") {
       if (item.game === "lab") this.toggleLabActivity();
       else if (item.game === "python-puzzle-1") this.activatePythonPuzzle1();
+      else if (item.game === "python-puzzle-2") this.activatePythonPuzzle2();
       else this.activateTrueFalseChallenge();
       return;
     }
@@ -2207,6 +2216,34 @@ export class InstructorDashboardSystem extends createSystem({
 
     socket.emit("instructorSendAllToDestination", {
       destination: "Game 2",
+    });
+
+    this.setCurrentMode("Lab Mode");
+    this.savedLabStudents = [];
+    this.setLatestResultType("game");
+    this.hasLabResults = false;
+    this.hasObservedActiveLabStudent = false;
+    this.labResultsFinalized = false;
+
+    this.showStatusMessage("Students sent to the castle");
+    this.setDashboardVisible(false);
+    this.setLabMonitorAvailable(false);
+    socket.emit("requestStudentList");
+    this.updateLabMonitor();
+    this.setLabMonitorVisible(true);
+  }
+
+  // ======================================================
+  // PYTHON PUZZLE 2 (CASTLE)
+  // ======================================================
+
+  private activatePythonPuzzle2(): void {
+    if (this.isEndingClass) return;
+
+    console.log("[InstructorDashboard] Activating Python Puzzle 2 (castle)");
+
+    socket.emit("instructorSendAllToDestination", {
+      destination: "Game 3",
     });
 
     this.setCurrentMode("Lab Mode");
