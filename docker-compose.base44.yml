@@ -15,7 +15,7 @@ services:
       - ./.env.base44-defaults
       - /run/base44/app.env
     environment:
-      - BASE44_PREVIEW_MODE=1
+      - BASE44_PREVIEW_MODE
       - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
     command:
       - sh
@@ -31,7 +31,7 @@ services:
 
         npm install
         (npm run dev:server 2>&1 || echo '[base44] Backend failed to start — check Supabase credentials') &
-        exec npm run dev:runtime
+        exec ./node_modules/.bin/vite
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8081/ || exit 1"]
