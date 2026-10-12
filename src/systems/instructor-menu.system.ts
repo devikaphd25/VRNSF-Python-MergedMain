@@ -1848,6 +1848,14 @@ export class InstructorDashboardSystem extends createSystem({
         type: "GAME",
         title: "Python Puzzle 2",
         description: "Launch the second Python puzzle challenge"
+      },
+      {
+        kind: "game" as const,
+        key: "game:python-puzzle-3",
+        game: "python-puzzle-3" as const,
+        type: "GAME",
+        title: "Python Puzzle 3",
+        description: "Launch the forest Python puzzle challenge"
       }
     ];
   }
@@ -1865,6 +1873,7 @@ export class InstructorDashboardSystem extends createSystem({
       if (item.game === "lab") this.toggleLabActivity();
       else if (item.game === "python-puzzle-1") this.activatePythonPuzzle1();
       else if (item.game === "python-puzzle-2") this.activatePythonPuzzle2();
+      else if (item.game === "python-puzzle-3") this.activatePythonPuzzle3();
       else this.activateTrueFalseChallenge();
       return;
     }
@@ -2254,6 +2263,34 @@ export class InstructorDashboardSystem extends createSystem({
     this.labResultsFinalized = false;
 
     this.showStatusMessage("Students sent to the castle");
+    this.setDashboardVisible(false);
+    this.setLabMonitorAvailable(false);
+    socket.emit("requestStudentList");
+    this.updateLabMonitor();
+    this.setLabMonitorVisible(true);
+  }
+
+  // ======================================================
+  // PYTHON PUZZLE 3 (FOREST)
+  // ======================================================
+
+  private activatePythonPuzzle3(): void {
+    if (this.isEndingClass) return;
+
+    console.log("[InstructorDashboard] Activating Python Puzzle 3 (forest)");
+
+    socket.emit("instructorSendAllToDestination", {
+      destination: "Game 4",
+    });
+
+    this.setCurrentMode("Lab Mode");
+    this.savedLabStudents = [];
+    this.setLatestResultType("game");
+    this.hasLabResults = false;
+    this.hasObservedActiveLabStudent = false;
+    this.labResultsFinalized = false;
+
+    this.showStatusMessage("Students sent to the forest");
     this.setDashboardVisible(false);
     this.setLabMonitorAvailable(false);
     socket.emit("requestStudentList");

@@ -3239,6 +3239,18 @@ socket.on(
 
       gameId =
         "python-puzzle-2";
+    } else if (
+      destination ===
+      "Game 4"
+    ) {
+      mode =
+        "Game Mode";
+
+      isGame =
+        true;
+
+      gameId =
+        "python-puzzle-3";
     }
 
     /*

@@ -71,6 +71,7 @@ import { Challenge2Device }
 from "./components/challenge-2.component";
 import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
 import { CastleEnvironmentManager } from "./castle/CastleEnvironmentManager";
+import { ForestEnvironmentManager } from "./forest/ForestEnvironmentManager";
 
 // ============================================================
 // USER ROLE TYPES
@@ -313,9 +314,9 @@ socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
   // server shutdown event, even if an older client has a missing/stale saved
   // room id, so no student remains trapped after the instructor disconnects.
   console.log("[Classroom] Session ended:", data?.message ?? data?.roomId);
-  // The castle/jigsaw game should only end when the user clicks the Exit
-  // button.  Do not reload the page while the castle is active.
-  if ((window as any).isCastleActive) {
+  // The castle/forest jigsaw games should only end when the user clicks the
+  // Exit button.  Do not reload the page while either environment is active.
+  if ((window as any).isCastleActive || (window as any).isForestActive) {
     return;
   }
   localStorage.removeItem("vrUser");
@@ -2519,6 +2520,14 @@ World.create(
         ])
       : null;
 
+    const forestEnvironmentManager = isStudent
+      ? new ForestEnvironmentManager(world, [
+          envMesh,
+          hintEntity?.object3D,
+          raiseHandEntity?.object3D,
+        ])
+      : null;
+
     // ========================================================
     // DEBUGGING REFERENCES
     // ========================================================
@@ -2556,6 +2565,7 @@ World.create(
     (window as any).setInstructorDashboardOpen = setInstructorDashboardOpen;
     (window as any).labEnvironmentManager = labEnvironmentManager;
     (window as any).castleEnvironmentManager = castleEnvironmentManager;
+    (window as any).forestEnvironmentManager = forestEnvironmentManager;
 
     // ========================================================
     // REMOVE STARTUP SCREEN
