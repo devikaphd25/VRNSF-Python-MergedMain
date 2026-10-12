@@ -41,7 +41,7 @@ import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
-const S = 1.1;
+const S = 2.2;
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;

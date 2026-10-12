@@ -41,7 +41,7 @@ import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
 // Mounted on the front wall (inner face at z ≈ +4.8), rotated 180° to face the player at -z.
-const S = 1.1; // global scale factor for the entire puzzle assembly
+const S = 2.2; // global scale factor for the entire puzzle assembly
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;
