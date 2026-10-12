@@ -36,7 +36,7 @@ export default defineConfig({
     host: "0.0.0.0",
   port: 8081,
   strictPort: true,
-  open: "/",
+  open: isBase44Preview ? false : "/",
 
   proxy: {
     "/api": {
