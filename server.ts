@@ -2152,6 +2152,24 @@ socket.on(
           status: "completed",
         });
         session.resultSaved = true;
+
+        io.emit("labResultPersisted", {
+          userId,
+          name: connectedUsers[userId]?.fullName ?? session.studentName,
+          seat: connectedUsers[userId]?.seat ?? session.seat,
+          score: Number(result?.score ?? session.score) || 0,
+          durationSeconds:
+            Number(result?.durationSeconds ?? session.durationSeconds) || 0,
+          correctAnswers:
+            Number(result?.correctAnswers ?? session.correctAnswers) || 0,
+          wrongAnswers:
+            Number(result?.wrongAnswers ?? session.wrongAnswers) || 0,
+          completedExercises:
+            Number(result?.completed ?? result?.completedCards) || 0,
+          totalExercises: Number(result?.total ?? session.totalCards) || 12,
+          accuracy: Number(result?.accuracy ?? session.accuracy) || 0,
+          status: "completed",
+        });
       } catch (error) {
         console.error("[Lab] Could not persist completed result:", error);
         socket.emit("labResultSaveError", {
@@ -2288,22 +2306,38 @@ socket.on(
     const session = labSessions[userId];
     const result = data?.result ?? session?.getProgress();
 
+    connectedUser.score =
+      Number(result?.score) || 0;
+    connectedUser.accuracy =
+      Number(result?.accuracy) || 0;
     connectedUser.correctAnswers =
       Number(result?.correctAnswers) || 0;
     connectedUser.wrongAnswers =
       Number(result?.wrongAnswers) || 0;
     connectedUser.durationSeconds =
       Number(result?.durationSeconds) || 0;
+    connectedUser.completedExercises =
+      Number(result?.completedCards ?? result?.completed) || 0;
+    connectedUser.totalExercises =
+      Number(result?.totalCards ?? result?.total) || 1;
     connectedUser.labReturnReason =
       data?.reason ?? "instructor_return";
 
     if (classroomStudent) {
+      classroomStudent.score =
+        connectedUser.score;
+      classroomStudent.accuracy =
+        connectedUser.accuracy;
       classroomStudent.correctAnswers =
         connectedUser.correctAnswers;
       classroomStudent.wrongAnswers =
         connectedUser.wrongAnswers;
       classroomStudent.durationSeconds =
         connectedUser.durationSeconds;
+      classroomStudent.completedExercises =
+        connectedUser.completedExercises;
+      classroomStudent.totalExercises =
+        connectedUser.totalExercises;
       classroomStudent.labReturnReason =
         connectedUser.labReturnReason;
     }
@@ -3211,6 +3245,30 @@ socket.on(
 
       gameId =
         "python-puzzle-1";
+    } else if (
+      destination ===
+      "Game 3"
+    ) {
+      mode =
+        "Game Mode";
+
+      isGame =
+        true;
+
+      gameId =
+        "python-puzzle-2";
+    } else if (
+      destination ===
+      "Game 4"
+    ) {
+      mode =
+        "Game Mode";
+
+      isGame =
+        true;
+
+      gameId =
+        "python-puzzle-3";
     }
 
     /*
