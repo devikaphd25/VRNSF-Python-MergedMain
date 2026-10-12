@@ -1,0 +1,44 @@
+# Base44 development compose for the UMES VR Classroom.
+# Runs the Vite frontend (port 8081 → host 3000) and the Express/Socket.IO
+# backend (port 3001) together in one container so the Vite proxy target
+# (localhost:3001) works without app-code changes.
+services:
+  app:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "3000:8081"
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    environment:
+      - BASE44_PREVIEW_MODE=1
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+    command:
+      - sh
+      - -ec
+      - |
+        echo "SUPABASE_URL=$$SUPABASE_URL" > .env.server
+        echo "SUPABASE_SECRET_KEY=$$SUPABASE_SECRET_KEY" >> .env.server
+        echo "PORT=3001" >> .env.server
+
+        echo "VITE_SUPABASE_URL=$$VITE_SUPABASE_URL" > .env.development
+        echo "VITE_SUPABASE_ANON_KEY=$$VITE_SUPABASE_ANON_KEY" >> .env.development
+        echo "VITE_PROFESSOR_VERIFICATION_CODE=$$VITE_PROFESSOR_VERIFICATION_CODE" >> .env.development
+
+        npm install
+        (npm run dev:server 2>&1 || echo '[base44] Backend failed to start — check Supabase credentials') &
+        exec npm run dev:runtime
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+
+volumes:
+  node_modules:

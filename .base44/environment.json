@@ -1,0 +1,32 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "VITE_SUPABASE_URL",
+      "description": "Browser-side Supabase project URL (Supabase Dashboard → Project Settings → API → Project URL)",
+      "requiredAtBoot": true
+    },
+    {
+      "name": "VITE_SUPABASE_ANON_KEY",
+      "description": "Browser-side Supabase anon/publishable key (Supabase Dashboard → Project Settings → API → anon public key)",
+      "requiredAtBoot": true
+    },
+    {
+      "name": "VITE_PROFESSOR_VERIFICATION_CODE",
+      "description": "Six-digit PIN that verifies instructor logins (set by the project owner)",
+      "requiredAtBoot": true
+    },
+    {
+      "name": "SUPABASE_URL",
+      "description": "Server-side Supabase project URL (same as VITE_SUPABASE_URL)",
+      "requiredAtBoot": true
+    },
+    {
+      "name": "SUPABASE_SECRET_KEY",
+      "description": "Server-side Supabase service-role/secret key (Supabase Dashboard → Project Settings → API → service_role key)",
+      "requiredAtBoot": true
+    }
+  ]
+}
