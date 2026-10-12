@@ -2152,6 +2152,24 @@ socket.on(
           status: "completed",
         });
         session.resultSaved = true;
+
+        io.emit("labResultPersisted", {
+          userId,
+          name: connectedUsers[userId]?.fullName ?? session.studentName,
+          seat: connectedUsers[userId]?.seat ?? session.seat,
+          score: Number(result?.score ?? session.score) || 0,
+          durationSeconds:
+            Number(result?.durationSeconds ?? session.durationSeconds) || 0,
+          correctAnswers:
+            Number(result?.correctAnswers ?? session.correctAnswers) || 0,
+          wrongAnswers:
+            Number(result?.wrongAnswers ?? session.wrongAnswers) || 0,
+          completedExercises:
+            Number(result?.completed ?? result?.completedCards) || 0,
+          totalExercises: Number(result?.total ?? session.totalCards) || 12,
+          accuracy: Number(result?.accuracy ?? session.accuracy) || 0,
+          status: "completed",
+        });
       } catch (error) {
         console.error("[Lab] Could not persist completed result:", error);
         socket.emit("labResultSaveError", {
