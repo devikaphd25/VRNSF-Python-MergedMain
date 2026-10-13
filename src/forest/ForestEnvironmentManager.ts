@@ -244,6 +244,17 @@ export class ForestEnvironmentManager {
         model.position.z = -center.z * scale;
 
         model.updateMatrixWorld(true);
+
+        // Disable raycasting on all model meshes so the forest geometry
+        // (trees, foliage, etc.) does not intercept rays meant for the
+        // puzzle's interactive blocks and buttons.
+        model.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.isMesh) {
+            mesh.raycast = () => {};
+          }
+        });
+
         this.root.add(model);
         console.log("[Forest] 3D forest model loaded successfully");
       },
