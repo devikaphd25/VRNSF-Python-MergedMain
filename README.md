@@ -86,6 +86,7 @@ Run scripts with `npm run <name>`. `npm install` installs dependencies and is no
 | `npm run dev:down` | Stop the IWSDK-managed development service. Stop a separately running backend or direct Vite process in its own terminal. |
 | `npm run reference:status` | Inspect the status of the IWSDK reference tooling/cache. Optional tooling diagnostic, not an application startup command. |
 | `npm run reference:warmup` | Download and initialize the external IWSDK reference corpus and model caches. Use before reference-tool queries; requires network access for uncached downloads. |
+| `npm run test:puzzle3` | Run Python Puzzle 3 button/ECS logic, real Python execution, and student-session validation regressions. Does not emulate headset input or verify stored instructor scores. Requires Node 22.12+ in the supported Node 22 range (experimental module-mock support). |
 | `npm run typecheck` | Run both client and server TypeScript checks without generating output files. Use before submitting code changes. |
 | `npm run typecheck:client` | Check frontend TypeScript using `tsconfig.json`. |
 | `npm run typecheck:server` | Check backend TypeScript using `tsconfig.server.json`. |

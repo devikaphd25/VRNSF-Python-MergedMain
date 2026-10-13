@@ -72,6 +72,7 @@ from "./components/challenge-2.component";
 import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
 import { CastleEnvironmentManager } from "./castle/CastleEnvironmentManager";
 import { ForestEnvironmentManager } from "./forest/ForestEnvironmentManager";
+import { restoreStoredStudentSession } from "./services/student-session.services";
 
 // ============================================================
 // USER ROLE TYPES
@@ -327,7 +328,7 @@ socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
 if (socket.connected) {
   registerCurrentClassroomUser();
 }
-console.log("[Login] Saved user: none");
+console.log("[Login] Validating any saved student device session before classroom entry.");
 
 
 // ============================================================
@@ -516,6 +517,7 @@ World.create(
 
     const startupMessage = document.getElementById("startup-message");
 
+    currentUser = await restoreStoredStudentSession();
     if (!currentUser) {
       if (startupMessage) startupMessage.style.display = "none";
       const login = await showVRLoginPanel(world, camera);

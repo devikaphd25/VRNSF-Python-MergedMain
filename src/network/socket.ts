@@ -9,13 +9,9 @@ import {
   io
 } from "socket.io-client";
 
-const serverHost =
-  window.location.hostname;
-
-
-
-const socketServerUrl =
-   `http://${serverHost}:3001`;
+// Use the same origin as /api. Vite forwards /socket.io (including WebSocket
+// upgrades) to the backend, preserving HTTPS on headsets and hosted previews.
+const socketServerUrl = window.location.origin;
 
 const urlParams =
   new URLSearchParams(
