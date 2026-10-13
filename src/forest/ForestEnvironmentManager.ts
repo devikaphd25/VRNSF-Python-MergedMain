@@ -13,8 +13,8 @@ import {
   type World,
 } from "@iwsdk/core";
 import type { Object3D } from "three";
-import * as THREE from "three";
-import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { loadForestModel } from "./forestModel.js";
+import { VisibleInteractionSystem } from "./VisibleInteractionSystem.js";
 
 import { socket } from "../network/socket";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
@@ -34,9 +34,6 @@ const FIREFLY_COLOR = 0xfff3a0;
 const ROOM_WIDTH = 10;
 const ROOM_DEPTH = 10;
 
-const FOREST_MODEL_PATH =
-  "/models/forest/Meshy_AI_The_image_features_a__1013151630_texture.fbx";
-
 export class ForestEnvironmentManager {
   private readonly root = new Group();
   private readonly classroomObjects: Object3D[];
@@ -44,6 +41,7 @@ export class ForestEnvironmentManager {
   private savedClassroomVisibility: VisibilityRecord[] = [];
   private active = false;
   private transitionInProgress = false;
+  private readonly modelReady: Promise<void>;
 
   constructor(
     private readonly world: World,
@@ -63,7 +61,10 @@ export class ForestEnvironmentManager {
     setForestRoot(this.root);
     this.installJigsaw();
 
-    this.buildForest();
+    this.modelReady = this.buildForest();
+    void this.modelReady.catch((error) => {
+      console.error("[Forest] Failed to load 3D forest model:", error);
+    });
     this.connectNetwork();
     this.connectExitHandler();
   }
@@ -72,6 +73,8 @@ export class ForestEnvironmentManager {
     this.world
       .registerComponent(ForestJigsawBlock)
       .registerComponent(ForestJigsawButton)
+      // Run before IWSDK input (-4), including the headset controller hit test.
+      .registerSystem(VisibleInteractionSystem, { priority: -5 })
       .registerSystem(ForestJigsawPuzzleSystem);
   }
 
@@ -89,9 +92,14 @@ export class ForestEnvironmentManager {
     if (this.active || this.transitionInProgress) return;
 
     this.transitionInProgress = true;
-    this.performTransition(() => {
+    void this.modelReady.then(() => {
+      this.performTransition(() => {
+        this.transitionInProgress = false;
+        this.enterImmediately();
+      });
+    }).catch((error) => {
       this.transitionInProgress = false;
-      this.enterImmediately();
+      console.error("[Forest] Cannot enter before the forest model is ready:", error);
     });
   }
 
@@ -208,7 +216,7 @@ export class ForestEnvironmentManager {
 
   // ── Forest environment ───────────────────────────────────────
 
-  private buildForest(): void {
+  private buildForest(): Promise<void> {
     // Simple ground plane as a base
     const ground = new Mesh(
       new BoxGeometry(ROOM_WIDTH + 6, 0.1, ROOM_DEPTH + 6),
@@ -219,50 +227,6 @@ export class ForestEnvironmentManager {
     );
     ground.position.y = -0.05;
     this.root.add(ground);
-
-    // Load the 3D forest model
-    const loader = new FBXLoader();
-    loader.load(
-      FOREST_MODEL_PATH,
-      (model: THREE.Group) => {
-        model.name = "ForestModel";
-
-        // Normalize scale to fit within the room
-        const box = new THREE.Box3().setFromObject(model);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const largestDim = Math.max(size.x, size.y, size.z, 0.0001);
-        const targetSize = Math.max(ROOM_WIDTH, ROOM_DEPTH);
-        const scale = targetSize / largestDim;
-
-        model.scale.setScalar(scale);
-
-        // Re-center at origin on the ground
-        model.position.x = -center.x * scale;
-        model.position.y = -box.min.y * scale;
-        model.position.z = -center.z * scale;
-
-        model.updateMatrixWorld(true);
-
-        // Disable raycasting on all model meshes so the forest geometry
-        // (trees, foliage, etc.) does not intercept rays meant for the
-        // puzzle's interactive blocks and buttons.
-        model.traverse((child) => {
-          const mesh = child as THREE.Mesh;
-          if (mesh.isMesh) {
-            mesh.raycast = () => {};
-          }
-        });
-
-        this.root.add(model);
-        console.log("[Forest] 3D forest model loaded successfully");
-      },
-      undefined,
-      (error: unknown) => {
-        console.error("[Forest] Failed to load 3D forest model:", error);
-      },
-    );
 
     // Fireflies (point lights) near the corners for ambiance
     const halfW = ROOM_WIDTH / 2;
@@ -291,6 +255,12 @@ export class ForestEnvironmentManager {
       firefly.position.set(fx, 2.5, fz);
       this.root.add(firefly);
     }
+
+    // Match the full clearing footprint, including the enlarged puzzle props.
+    return loadForestModel(Math.max(ROOM_WIDTH, ROOM_DEPTH) + 6).then((model) => {
+      this.root.add(model);
+      console.log("[Forest] 3D forest model and texture ready.");
+    });
   }
 
   // ── Network ─────────────────────────────────────────────────

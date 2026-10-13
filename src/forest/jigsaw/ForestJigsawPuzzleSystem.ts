@@ -17,6 +17,7 @@ import {
   Grabbed,
   Group,
   Hovered,
+  Interactable,
   Mesh,
   MeshStandardMaterial,
   MovementMode,
@@ -216,6 +217,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       for (const [labelIndex, label] of this.pendingButtonLabels) {
         const doc = docs[labelIndex] as UIKitDocument | undefined;
         if (doc) {
+          doc.position.z = BUTTON_SIZE * 0.38;
           setTextSafe(doc, "label", label);
           this.pendingButtonLabels.delete(labelIndex);
         }
@@ -401,25 +403,23 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       entity.addComponent(ForestJigsawButton, {
         buttonType: config.type,
       });
-      entity.addComponent(RayInteractable);
-
+      // The visible label and physical button share the same input entity.
+      // Controller rays and hand pokes therefore produce Pressed on the entity
+      // carrying ForestJigsawButton, rather than on a separate label root.
+      entity.addComponent(Interactable);
+      entity.addComponent(PanelUI, {
+        config: "./ui/jigsaw-button.json",
+        maxWidth: BUTTON_SIZE * 2.2,
+        maxHeight: BUTTON_SIZE * 0.7,
+      });
+      group.name = `ForestButton-${config.type}`;
       group.position.set(
         BUTTON_X,
         startY - i * BUTTON_SPACING,
         BUTTON_Z,
       );
-
-      const label = this.world.createTransformEntity(undefined, {
-        parent: entity,
-      });
-      label.addComponent(PanelUI, {
-        config: "./ui/jigsaw-button.json",
-        maxWidth: BUTTON_SIZE * 2.2,
-        maxHeight: BUTTON_SIZE * 0.7,
-      });
-      label.object3D!.position.set(0, 0, -BUTTON_SIZE * 0.38);
-      label.object3D!.rotation.y = Math.PI;
-      this.pendingButtonLabels.set(label.index, config.label);
+      group.rotation.y = Math.PI;
+      this.pendingButtonLabels.set(entity.index, config.label);
     }
   }
 
@@ -671,6 +671,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   // ── Button press handling ─────────────────────────────────
 
   private handleButtonPress(button: Entity): void {
+    if (!(window as any).isForestActive) return;
     const buttonType = button.getValue(ForestJigsawButton, "buttonType");
 
     switch (buttonType) {
