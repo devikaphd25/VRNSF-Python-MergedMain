@@ -88,7 +88,7 @@ function createJigsawBlockGeometry(
 
 const SHELF_X = 2.8;
 const SHELF_Z = 1.0;
-const SHELF_ROTATION_Y = -Math.PI / 2;
+const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S);
 const BUTTON_Z = BOARD_CENTER[2];
