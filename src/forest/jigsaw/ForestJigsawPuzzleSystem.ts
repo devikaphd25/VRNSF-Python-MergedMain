@@ -179,6 +179,10 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       if (slot >= 0) {
         block.setValue(ForestJigsawBlock, "slotIndex", -1);
       }
+      // Reset rotation so the block faces the board while held,
+      // making it easy to align with board slots.
+      block.object3D!.rotation.set(0, 0, 0);
+      block.object3D!.updateMatrixWorld(true);
     });
 
     this.queries.heldBlocks.subscribe("disqualify", (block) => {
