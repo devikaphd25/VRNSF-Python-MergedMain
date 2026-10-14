@@ -103,8 +103,11 @@ export class Challenge2System extends createSystem({
   private challengeStartedAt = 0;
   private challengeDurationSeconds = 180;
   private lastCountdownSecond = -1;
-  // Index of the current item in CHALLENGE_2_ITEMS.
+  private items = [...CHALLENGE_2_ITEMS];
+  // Index of the current item in this.items.
   private currentIndex = 0;
+  private entryPending = false;
+  private entryVersion = 0;
   // Server session ID used to associate every student's drop with the
   // instructor-started Challenge 2 run.
   private challengeId?: string;
@@ -249,7 +252,9 @@ export class Challenge2System extends createSystem({
     id?: string;
     durationSeconds?: number;
     startedAt?: number;
+    items?: Array<(typeof CHALLENGE_2_ITEMS)[number]>;
   }): void => {
+    if(payload.items?.length)this.items=payload.items;
     this.challengeId = payload?.id;
     this.challengeDurationSeconds = Number(payload?.durationSeconds) || 180;
     this.challengeStartedAt = Number(payload?.startedAt) || Date.now();
@@ -272,7 +277,7 @@ export class Challenge2System extends createSystem({
       !payload.expectedCategory ||
       this.personalMistakes.has(payload.itemId)
     ) return;
-    const item = CHALLENGE_2_ITEMS.find(entry => entry.id === payload.itemId);
+    const item = this.items.find(entry => entry.id === payload.itemId);
     this.personalMistakes.set(payload.itemId, {
       itemId: payload.itemId,
       itemName: item?.name ?? payload.itemId,
@@ -388,6 +393,23 @@ export class Challenge2System extends createSystem({
 
   /** Open Challenge 2 and show its first device. */
   private startChallenge2 = (): void => {
+    if (this.active || this.entryPending) return;
+    const transition = (window as any).performActivityEntrance as
+      ((action: () => void) => Promise<void>) | undefined;
+    if (!transition) {
+      this.startChallenge2Immediately();
+      return;
+    }
+    this.entryPending = true;
+    const version = ++this.entryVersion;
+    void transition(() => {
+      if (version === this.entryVersion) this.startChallenge2Immediately();
+    }).finally(() => {
+      if (version === this.entryVersion) this.entryPending = false;
+    });
+  };
+
+  private startChallenge2Immediately = (): void => {
     if (this.active) return;
     this.active = true;
     this.advancing = false;
@@ -405,6 +427,8 @@ export class Challenge2System extends createSystem({
 
   /** Close Challenge 2 and restore the normal classroom/UI state. */
   private stopChallenge2 = (): void => {
+    this.entryVersion += 1;
+    this.entryPending = false;
     if (!this.active && !this.root?.visible) return;
     this.active = false;
     this.advancing = false;
@@ -564,7 +588,7 @@ export class Challenge2System extends createSystem({
 
   /** Remove the previous device and spawn the next question item. */
   private showCurrentItem(): void {
-    const item = CHALLENGE_2_ITEMS[this.currentIndex];
+    const item = this.items[this.currentIndex];
     if (!item) {
       this.finishChallenge();
       return;
@@ -573,7 +597,7 @@ export class Challenge2System extends createSystem({
     this.disposeDevice();
     this.advancing = false;
     this.updateStatus(
-      `${item.name}  -  ${this.currentIndex + 1} / ${CHALLENGE_2_ITEMS.length}`,
+      `${item.name}  -  ${this.currentIndex + 1} / ${this.items.length}`,
       "Grab the device and drop it into the correct box."
     );
     this.device = this.createDevice(item, this.currentIndex);
@@ -821,7 +845,7 @@ export class Challenge2System extends createSystem({
 
     // Report every valid box drop to the server. The server independently
     // validates the item/category pair and forwards progress to the instructor.
-    const currentItem = CHALLENGE_2_ITEMS[this.currentIndex];
+    const currentItem = this.items[this.currentIndex];
     if (this.challengeId && currentItem) {
       socket.emit("challenge2ItemAnswer", {
         challengeId: this.challengeId,
@@ -834,7 +858,7 @@ export class Challenge2System extends createSystem({
       droppedIn.setHighlighted(true);
       this.updateStatus(
         "Incorrect - try again",
-        CHALLENGE_2_ITEMS[this.currentIndex]?.feedback ?? "Choose another box.",
+        this.items[this.currentIndex]?.feedback ?? "Choose another box.",
         "#fca5a5"
       );
       window.setTimeout(() => {
@@ -849,7 +873,7 @@ export class Challenge2System extends createSystem({
     this.keepCurrentDeviceInBox();
     this.updateStatus(
       "Correct!",
-      CHALLENGE_2_ITEMS[this.currentIndex]?.feedback ?? "Correct category.",
+      this.items[this.currentIndex]?.feedback ?? "Correct category.",
       "#86efac"
     );
     window.setTimeout(() => {
@@ -876,7 +900,7 @@ export class Challenge2System extends createSystem({
       Challenge2Device,
       "expectedCategory"
     ) as Challenge2Category;
-    const totalForBox = CHALLENGE_2_ITEMS.filter(
+    const totalForBox = this.items.filter(
       item => item.category === category
     ).length;
     const placedInBox = this.completedDevices.filter(entity =>
@@ -933,7 +957,7 @@ export class Challenge2System extends createSystem({
     this.advancing = false;
     this.updateStatus(
       "Challenge complete!",
-      `${CHALLENGE_2_ITEMS.length} devices classified.`,
+      `${this.items.length} devices classified.`,
       "#86efac"
     );
     window.dispatchEvent(new CustomEvent("challenge2:complete"));

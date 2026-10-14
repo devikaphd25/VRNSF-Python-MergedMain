@@ -1,6 +1,6 @@
 /**
  * VR login and classroom-entry system.
- * Goal: show Professor/Student controls, validate the instructor PIN, register
+ * Goal: show Professor/Student controls, look up the course code on the server, register
  * a persistent device user, create/join the active room, and then hand the
  * authenticated identity to src/index.ts. Supports mouse and controller rays.
  */
@@ -213,7 +213,7 @@ export class VRLoginSystem extends createSystem({
   private finish(result: LoginCompletion): void {
     this.stopWaiting();
     localStorage.setItem("vrUser", JSON.stringify(result.user));
-    localStorage.setItem("vrClassroomSession", JSON.stringify({
+    sessionStorage.setItem("vrClassroomSession", JSON.stringify({
       roomId: result.roomId,
       participantId: result.participantId ?? null,
       currentSlide: result.currentSlide ?? 0,
@@ -278,10 +278,10 @@ export class VRLoginSystem extends createSystem({
       setClass(studentButton, "role-segment-selected", false);
       [pinLabel, pinRow, keypad, confirmButton].forEach((item) => setClass(item, "is-hidden", false));
       title.setProperties({ text: "Create or Join a Classroom" });
-      (pinLabel as UIKit.Text).setProperties({ text: "Enter the 6-digit Professor PIN" });
+      (pinLabel as UIKit.Text).setProperties({ text: "Enter the 6-digit course code" });
       (confirmButton as UIKit.Text).setProperties({ text: "Create Classroom" });
       positionLoginLogo("instructor");
-      setStatus("Professor verification is required");
+      setStatus("The course code selects your course");
     };
 
     const tryStudentJoin = async (): Promise<void> => {
@@ -364,16 +364,9 @@ export class VRLoginSystem extends createSystem({
         return;
       }
 
-      const professorPin = import.meta.env.VITE_PROFESSOR_VERIFICATION_CODE;
-      if (!professorPin || this.enteredPin !== professorPin) {
-        setStatus("The Professor PIN is incorrect", true);
-        return;
-      }
-
       this.busy = true;
       try {
         setStatus("Creating classroom...");
-        const session = await ClassroomSessionService.create();
         // Keep the local instructor identity separate from the student
         // identity. This is especially important when both roles are tested
         // in different tabs of the same browser, because those tabs share
@@ -385,6 +378,7 @@ export class VRLoginSystem extends createSystem({
           displayName: "Instructor",
           seat: null,
         });
+        const session = await ClassroomSessionService.create(user.id, this.enteredPin);
         this.finish({ user, roomId: session.room_id });
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Could not create classroom.", true);

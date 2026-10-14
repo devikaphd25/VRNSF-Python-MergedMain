@@ -1,133 +1,145 @@
 # UMES VR Classroom
 
-UMES VR Classroom is a synchronous WebXR learning environment built with the Meta Immersive Web SDK, Three.js, Socket.IO, and Supabase. It provides a shared virtual classroom for instructors and students, an integrated Python learning lab, classroom challenges, persistent seating, and instructor result tracking.
+A shared browser/Quest classroom with videos, three challenges, debrief images,
+a Python puzzle, and a computer hardware display room.
 
-## Database setup
+## Project layout
 
-The repository now contains a **complete fresh-install SQL path**. You do not need pre-existing Supabase classroom tables.
+Work from the repository root, the folder containing this README and `package.json`.
+The classroom and Python puzzle are integrated into one application. The old
+nested `VR-learning-main/` copy has been removed; do not upload another complete
+project folder inside this repository.
 
-### Fresh Supabase project — run in this exact order
-
-Open **Supabase → SQL Editor** and run:
-
-1. `supabase/00-base-schema.sql`
-   - creates `rooms`, `participants`, `quiz_questions`, and `quiz_responses`;
-   - creates the core classroom/quiz RPC functions used by the browser.
-2. `supabase/room-code-migration.sql`
-   - adds persistent device IDs/seats;
-   - creates `create_room()` and `join_latest_active_room()`.
-3. `supabase/app-data-migration.sql`
-   - creates `app_users` and `game_results`;
-   - links participants to persistent users.
-4. `supabase/weekly-content-migration.sql`
-   - creates `learning_weeks`, `week_lessons`, and `week_activities`;
-   - creates the three Week 1 lesson shells and the week-level game.
-5. `supabase/w1-1-five-parts-content-update.sql`
-6. `supabase/w1-1-d2-loading-classification-update.sql`
-7. `supabase/w1-1-d3-language-ladder-update.sql`
-
-Do not reverse the order. On a new Supabase project, `00-base-schema.sql` must be first.
-
-### Tables
-
-| Table | Purpose |
+| Location | Contents |
 | --- | --- |
-| `rooms` | Classroom sessions and presentation/quiz state. |
-| `participants` | Instructor/students in a room, device identity, and seat. |
-| `quiz_questions` | Multiple-choice challenge questions. |
-| `quiz_responses` | Student answers and grading results. |
-| `app_users` | Persistent application identities. |
-| `game_results` | Persistent lab/game results. |
-| `learning_weeks` | Curriculum weeks. |
-| `week_lessons` | Lessons belonging to each week. |
-| `week_activities` | Presentation, challenge, game, and briefing activities. |
+| `src/` | Browser and Quest classroom, instructor dashboards, avatars and activities. |
+| `src/castle/` | Python puzzle room, block interaction and Python execution. |
+| `src/lab/` | Optional card game implementation. |
+| `server.ts`, `server/` | Class coordination, activity events and database access. |
+| `ui/` | UIKitML interface source files, including the puzzle controls. |
+| `public/` | Required models, textures and audio; compiled UI is generated during build. |
+| `supabase/` | Current schema, optional Week1 content and course-code migration. |
+| `tests/` | Automated checks; database integration tests are opt-in. |
 
-### Environment files
+The puzzle opens from the instructor dashboard's `python-puzzle` activity. It uses
+the shared class session, live progress monitor, instructor stop/return controls,
+and game result storage. Preserve these connections when editing the puzzle files.
+Python execution loads Pyodide from its CDN, so the puzzle needs internet access.
 
-Copy `.env.template` to the local environment files required by the project. Never commit real Supabase secrets.
+When contributing, clone the repository, create a branch, and edit the existing
+folders above. Submit a pull request instead of uploading a ZIP's parent folder.
 
-Browser-safe values belong in `.env.development`:
+## Use the existing new Supabase project
 
-```env
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_KEY
-VITE_PROFESSOR_VERIFICATION_CODE=YOUR_SIX_DIGIT_PIN
+1. Install Node 22.12+ (or Node 24) and run `npm ci`.
+2. Copy `.env.template` to `.env.server`. Enter the new project's root URL and
+   server secret key, shared privately by the project owner. Do not include `/rest/v1`.
+3. Copy `.env.development.example` to `.env.development`. Course codes are stored in Supabase, not this environment file.
+4. Run `npm run dev:server` in one terminal and `npm run dev:runtime` in another.
+5. Open `https://localhost:8081`. On a Quest, use the computer's LAN address on
+   port 8081. Both devices must reach that computer; trust the development certificate.
+6. Enter as Professor and use the course’s six-digit access code to create a session, then join as Student on other devices.
+
+No Supabase key is needed in the browser. Browser requests and Socket.IO use the
+same HTTPS origin; Vite proxies them to port 3001. For deployment, configure the
+same `/api` and `/socket.io` reverse proxy (including WebSocket upgrades), or set
+`VITE_SERVER_URL` for sockets. API requests still use `/api` on the site's origin.
+Environment files are ignored by Git. Never put a server secret in a `VITE_` variable.
+A course code selects the curriculum; it is not account authentication.
+
+For the existing database, run `supabase/02-course-access-codes.sql` once.
+It adds a unique, six-digit `courses.access_code` and assigns `123456` to CSDP-120.
+For other courses, set another six-digit value in their `access_code` column.
+Keep the column as text so a leading zero is preserved. Restart the Node server
+and refresh the browser after updating this code.
+
+The instructor's entered code is looked up by the server. The resulting course
+and week are stored in `class_sessions`. Each dashboard request uses that session,
+so changing a server environment value cannot silently swap an existing class's
+content. An unknown code shows an error and creates no session. Students continue
+to join the live class automatically; they do not need the instructor's course code.
+
+This deployment supports one live class at a time. End it before selecting another
+course. This prevents broadcasts and students from mixing between simultaneous classes.
+
+The new account already contains tables and Week1 content. **Do not run the fresh
+schema against that existing database.** Changing the local connection does not
+delete or modify the old Supabase project.
+
+## Create a separate empty Supabase project
+
+Run these files in SQL Editor, in order:
+
+1. `supabase/00-schema.sql`: the 11 application tables.
+2. `supabase/01-week1-content.sql`: course, Week1, 19 activities and 12 questions.
+
+Create a Storage bucket named `course-media` (private is supported). Upload the
+media using the exact paths referenced by `activities.file_path`:
+
+```
+course-media/
+  csdp-120/week1/videos/1_Video.mp4
+  csdp-120/week1/videos/2_Video.mp4
+  csdp-120/week1/videos/3_Video_small.mp4
+  csdp-120/week1/videos/4_Video.mp4 ... 11_Video.mp4
+  csdp-120/week1/images/five-parts-of-every-computer-debrief.png
+  csdp-120/week1/images/loading-and-classification-debrief.png
+  csdp-120/week1/images/language-ladder-and-translators-debrief.png
 ```
 
-Server-only values belong in `.env.server`:
+Lesson videos are not included in Git. A path in the database looks like
+`supabase://course-media/csdp-120/week1/videos/1_Video.mp4`. The server creates
+expiring playback links. Uploading a file alone does not create an activity:
+add a row to `activities`, with its title, type and unique order within the week.
+RLS is intentionally not enabled in this prototype schema, as requested.
 
-```env
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SECRET_KEY=YOUR_SERVER_SECRET_KEY
-```
+## What comes from the database
 
-## Run locally
-
-Use a Node.js version supported by `package.json` (for example, Node.js 22.12+ within version 22). Complete the database and environment setup above, then run these commands from the repository root:
-
-```bash
-npm install
-npm run dev:full
-```
-
-**Use `npm run dev:full` for normal classroom development.** It starts both the IWSDK-managed Vite frontend and the Node/Socket.IO backend. Open the frontend URL printed in the terminal. The backend uses port 3001 by default; the Vite configuration proxies `/api` and `/socket.io` to it.
-
-### What each npm script does
-
-Run scripts with `npm run <name>`. `npm install` installs dependencies and is not a package script.
-
-| Command | Purpose / when to use it |
+| Tables | Purpose |
 | --- | --- |
-| `npm run dev:full` | Start the frontend and backend together in one terminal. Recommended for running the complete classroom locally. |
-| `npm run dev` | Start the frontend through the IWSDK development manager in the foreground. Run the backend separately when using classroom features. |
-| `npm run dev:runtime` | Start Vite directly. Use when you specifically need the frontend without the IWSDK CLI lifecycle manager. Does not start the backend. |
-| `npm run dev:server` | Start the Node/Express/Socket.IO backend from `server.ts`, loading `.env.server` and using `tsx` to run TypeScript. Requires the configured Supabase connection. |
-| `npm run dev:status` | Check the status of the IWSDK-managed development service. This does not check the separate classroom backend. |
-| `npm run dev:down` | Stop the IWSDK-managed development service. Stop a separately running backend or direct Vite process in its own terminal. |
-| `npm run reference:status` | Inspect the status of the IWSDK reference tooling/cache. Optional tooling diagnostic, not an application startup command. |
-| `npm run reference:warmup` | Download and initialize the external IWSDK reference corpus and model caches. Use before reference-tool queries; requires network access for uncached downloads. |
-| `npm run typecheck` | Run both client and server TypeScript checks without generating output files. Use before submitting code changes. |
-| `npm run typecheck:client` | Check frontend TypeScript using `tsconfig.json`. |
-| `npm run typecheck:server` | Check backend TypeScript using `tsconfig.server.json`. |
-| `npm run build` | Create the frontend production bundle in `dist/` using Vite. Does not start the app or replace the separate TypeScript checks. |
-| `npm run preview` | Serve the frontend build locally for inspection after `npm run build`. Classroom features still require the backend and appropriate environment configuration. This is a local preview, not a production deployment command. |
+| `courses`, `weeks` | Course selected by courses.access_code; WEEK_NUMBER selects the week (default 1). |
+| `activities` | Dashboard titles, order, media paths and which activity implementation to launch. |
+| `users` | Name, role and device identity; no password login. |
+| `class_sessions` | Instructor, week, current activity, start/end times. |
+| `participants` | Student membership and seat for one class session. |
+| `challenge_questions` | Grouped questions, options and grading answers for each challenge. |
+| `challenge_results`, `challenge_responses` | One summary per student attempt, plus its question answers. |
+| `game_results`, `game_responses` | One summary per game attempt, plus submissions and a `__summary__` metrics record. |
 
-### Run frontend and backend separately
+Activity keys: `true_false`, `drag_drop`, `multiple_choice`, `python-puzzle`,
+`display-room`. Video/debrief rows use `file_path`; they do not need a key.
+The optional card game implementation remains in the project and can be shown
+by adding a game activity with key `variable-sorting`.
 
-Use two terminals when you want separate logs or need to restart the backend independently. This is an alternative to `dev:full`; do not run both approaches at the same time.
+The dashboard follows `activity_order` without regrouping tasks. Current Week1:
+11 videos, 3 challenges, 3 debriefs, Python Puzzle, Display Room. Edit the ordering
+in Supabase to interleave videos and challenges later; order numbers must be unique.
 
-Terminal 1:
+Gameplay, rooms, 3D models and UI behavior remain in the TypeScript project.
+The server keeps live timers/video position in memory and replays the current
+activity to late arrivals. Restarting the server requires a new/restarted activity.
+Each deployment should run one coordinating Node server for seat/attempt allocation.
+Quest identity persists in that browser's local storage; clearing it changes the
+identity. Desktop tabs deliberately have separate identities for classroom testing.
 
-```bash
-npm run dev
+Challenge completion and instructor stop save summary + answer rows; unanswered
+questions are stored as null. Retries reuse an attempt. Failed result saves retain
+server-local snapshots in `data/pending-challenge-results/` or
+`data/pending-game-results/`. Keep those folders private; they are not tracked by Git.
+
+## Checks
+
 ```
-
-Terminal 2:
-
-```bash
-npm run dev:server
-```
-
-Stop foreground commands with **Ctrl+C**. The backend script does not watch for file changes: after editing server code or `.env.server`, stop and restart `dev:server` (or restart `dev:full` if you started both together). Refresh the instructor and student pages after a backend restart.
-
-### Check changes and preview a build
-
-```bash
 npm run typecheck
 npm run build
-npm run preview
+npm test
 ```
 
-`preview` uses Vite's production mode by default. Ensure the required browser environment values are available for the production build (for example, in `.env.production`); values stored only in `.env.development` are for development mode.
+`npm run test:database` runs opt-in tests against the configured database. It creates
+a temporary course/users, verifies joins, media, challenges and game results, then
+removes its own records. The existing curriculum and student results are preserved.
 
-## Current workflow
-
-1. Instructor selects **Professor** and enters the configured verification PIN.
-2. The application creates the active classroom.
-3. Students select **Student** and join the latest active room.
-4. Each headset receives a persistent identity, name, and fixed seat.
-5. The instructor can run classroom activities, monitor students/results, return students from the lab, and end the class.
-
-## Important database note
-
-The SQL files in `supabase/` are designed so a teammate can reproduce the database from an empty Supabase project. If the hosted database contains experimental tables/functions, do not rely on them unless their definitions are committed to this folder.
+The welcome narration is generated with
+`node --env-file=.env.server --import tsx scripts/generate-welcome-audio.ts CSDP-120` on macOS
+(with `ffmpeg` installed). It reads activity counts from the selected database week;
+regenerate after changing the curriculum. Playback uses the generated MP3.

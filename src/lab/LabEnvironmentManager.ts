@@ -72,10 +72,12 @@ export class LabEnvironmentManager {
   private readonly playerObject: Object3D;
   private savedClassroomVisibility: VisibilityRecord[] = [];
   private active = false;
+  private returnInProgress = false;
   private enteredAt = 0;
   private completionReported = false;
   private progressTimer: number | null = null;
   private transitionInProgress = false;
+  private entryVersion = 0;
 
   constructor(
     private readonly world: World,
@@ -119,9 +121,14 @@ export class LabEnvironmentManager {
     }
 
     this.transitionInProgress = true;
-    this.performTransition(() => {
-      this.transitionInProgress = false;
-      this.enterImmediately();
+    const version = ++this.entryVersion;
+    const transition = (window as any).performActivityEntrance as
+      ((action: () => void) => Promise<void>) | undefined;
+    const enter = () => {
+      if (version === this.entryVersion) this.enterImmediately();
+    };
+    void (transition ? transition(enter) : Promise.resolve(enter())).finally(() => {
+      if (version === this.entryVersion) this.transitionInProgress = false;
     });
   }
 
@@ -164,15 +171,26 @@ export class LabEnvironmentManager {
   }
 
   returnToClassroom(reason = "instructor_return"): void {
-    if (!this.active || this.transitionInProgress) {
-      return;
-    }
-
+    // Stop may arrive through several network events; animate the return only once.
+    if (this.returnInProgress) return;
+    ++this.entryVersion;
+    this.transitionInProgress = false;
+    if (!this.active) return;
+    this.returnInProgress = true;
     this.transitionInProgress = true;
-    this.performTransition(() => {
-      this.transitionInProgress = false;
-      this.returnImmediately(reason);
-    });
+    const transition = (window as any).performActivityEntrance as
+      ((action: () => void) => Promise<void>) | undefined;
+    const finish = () => this.returnImmediately(reason);
+    // Reuse the 2D astronauts/window animation, then restore the classroom seat.
+    void (transition ? transition(finish) : Promise.resolve().then(finish))
+      .catch(error => {
+        console.error("[Game return] Animation failed; restoring classroom", error);
+        finish();
+      })
+      .finally(() => {
+        this.returnInProgress = false;
+        this.transitionInProgress = false;
+      });
   }
 
   private returnImmediately(reason: string): void {

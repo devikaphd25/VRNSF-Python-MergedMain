@@ -1,3 +1,4 @@
+import { STUDENT_RESULT_AUTO_CLOSE_MS } from "../config/student-results";
 /**
  * Student Quick Challenge UI and interaction system.
  * Goal: receive the selected lesson question, collect one answer by mouse/ray,
@@ -87,6 +88,7 @@ export class QuickChallengeSystem extends createSystem({
   }> | null = null;
   private correctCount = 0;
   private showingResult = false;
+  private resultAutoCloseTimer?: number;
   private selectedIndex: number | null = null;
   private timer?: number;
   private submitted = false;
@@ -259,6 +261,7 @@ export class QuickChallengeSystem extends createSystem({
     }
 
     this.buttonsConnected = true;
+    if (this.challenge) this.renderCurrentView();
 
     for (let index = 0; index < 4; index += 1) {
       this.bindSpatialButton(
@@ -329,6 +332,7 @@ export class QuickChallengeSystem extends createSystem({
       return;
     }
 
+    window.clearTimeout(this.resultAutoCloseTimer);
     this.challenge = payload;
     this.questions =
       Array.isArray(payload.questions) && payload.questions.length > 0
@@ -349,7 +353,7 @@ export class QuickChallengeSystem extends createSystem({
   };
 
   private isFivePartsChallenge(): boolean {
-    return this.challenge?.challengeType === "five-parts" && this.questions.length > 1;
+    return ["five-parts", "database-series"].includes(this.challenge?.challengeType ?? "") && this.questions.length > 0;
   }
 
   private isSummaryView(): boolean {
@@ -529,10 +533,18 @@ export class QuickChallengeSystem extends createSystem({
     this.selectedIndex = index;
     if (this.isFivePartsChallenge()) {
       this.selections[this.questionIndex] = index;
+      socket.emit("quickChallengeDraft", { quizId: this.challenge.id, answers: this.selections });
     }
     this.setFeedback("");
     this.updateSelection();
     this.updateSubmitButton();
+  }
+
+  private scheduleResultAutoClose(): void {
+    window.clearTimeout(this.resultAutoCloseTimer);
+    this.resultAutoCloseTimer = window.setTimeout(
+      () => this.setVisible(false), STUDENT_RESULT_AUTO_CLOSE_MS
+    );
   }
 
   private closeResult = (): void => {
@@ -596,6 +608,7 @@ export class QuickChallengeSystem extends createSystem({
     }
 
     this.submitted = true;
+    this.scheduleResultAutoClose();
     this.stopTimer();
     if (Number.isFinite(result.responseTimeSeconds)) {
       this.responseTimeSeconds = Number(result.responseTimeSeconds);
@@ -648,6 +661,7 @@ export class QuickChallengeSystem extends createSystem({
       return;
     }
 
+    this.scheduleResultAutoClose();
     this.setText("quiz-result-status", "TIME'S UP");
     this.setText("quiz-result-answer", "");
     this.setText("quiz-result-time", "Time taken: —");
@@ -850,6 +864,7 @@ export class QuickChallengeSystem extends createSystem({
   }
 
   private setVisible(visible: boolean): void {
+    if (!visible) window.clearTimeout(this.resultAutoCloseTimer);
     const entity = (window as any).quickChallengeEntity;
 
     this.setOtherStudentUiDisabled(visible);
@@ -973,6 +988,7 @@ export class QuickChallengeSystem extends createSystem({
   }
 
   destroy(): void {
+    window.clearTimeout(this.resultAutoCloseTimer);
     this.stopTimer();
     this.setOtherStudentUiDisabled(false);
     this.renderer.domElement.removeEventListener(

@@ -14,12 +14,8 @@ export type LabStatus = "working" | "completed" | "incomplete" | "instructor_ret
 
 export interface AppUserRow {
   id: number | string;
-  username: string;
-  password_hash: string | null;
   full_name: string;
   role: UserRole;
-  seat: string | null;
-  location: UserLocation;
   device_id: string | null;
 }
 
@@ -31,7 +27,6 @@ export interface AppUser {
   seat: string | null;
   location: UserLocation;
   deviceId: string | null;
-  passwordHash: string | null;
 }
 
 export interface ClassroomStudent {
@@ -80,6 +75,7 @@ export interface RoomRecord {
 }
 
 export interface QuickChallengeQuestion {
+  id?: string;
   prompt: string;
   options: string[];
   correctIndex: number;
@@ -98,6 +94,7 @@ export interface QuickChallengeStudentProgress {
 }
 
 export interface QuickChallenge {
+  activityId?: number;
   id: string;
   roomId: string;
   question: string;
@@ -116,6 +113,7 @@ export interface QuickChallenge {
     answeredAt: number;
     responseTimeSeconds: number;
   }>;
+  responseParticipants?: Map<string, string>;
   studentProgress: Map<string, QuickChallengeStudentProgress>;
   timeout: NodeJS.Timeout | null;
 }
@@ -146,6 +144,9 @@ export interface Challenge2StudentProgress {
 }
 
 export interface Challenge2Session {
+  activityId: number;
+  questions: Array<{ id: number; options: any; correct_answer: { category: Challenge2Category } }>;
+  participants: Map<string, string>;
   id: string;
   roomId: string;
   durationSeconds: number;

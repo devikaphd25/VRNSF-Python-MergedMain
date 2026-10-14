@@ -1,6 +1,6 @@
 /**
  * Hardcoded Lesson 1 Five Parts true/false items.
- * Demo content is local so the classroom can run without quiz_questions rows.
+ * Demo content is local so the classroom can run without challenge_questions rows.
  */
 export const TRUE_FALSE_OPTIONS = ["True", "False"] as const;
 export const FIVE_PARTS_DURATION_SECONDS = 300;

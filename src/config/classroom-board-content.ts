@@ -1,10 +1,20 @@
 /**
  * Text shown on the classroom board while the projector is idle.
- * Edit this file when the course, week, or status wording changes.
+ * Course and week labels are filled from the active class's database content.
  */
 export const CLASSROOM_BOARD_CONTENT = {
-  courseName: "CSDP 120",
-  weekLabel: "Week 1",
+  courseName: "UMES Classroom",
+  weekLabel: "",
   studentsLabel: "Students online",
   instructorLabel: "Instructor",
-} as const;
+};
+
+export function setClassroomBoardCourse(content: {
+  courseCode: string;
+  weekNumber: number;
+  weekTitle: string;
+}): void {
+  CLASSROOM_BOARD_CONTENT.courseName = content.courseCode;
+  CLASSROOM_BOARD_CONTENT.weekLabel = content.weekTitle || `Week ${content.weekNumber}`;
+  window.dispatchEvent(new Event("classroom-course-changed"));
+}

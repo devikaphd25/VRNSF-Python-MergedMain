@@ -71,3 +71,14 @@ coverage/
 public/gltf/generated/
 public/glxf/
 public/ui/
+
+# Student result recovery snapshots (server-local only)
+data/pending-challenge-results/
+
+# Share examples, never credentials or temporary database exports.
+!.env.development.example
+tmp/
+data/pending-game-results/
+
+# Prevent another complete project copy from being uploaded inside this repository.
+/VR-learning-main/
