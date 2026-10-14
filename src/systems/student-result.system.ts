@@ -1,3 +1,4 @@
+import { STUDENT_RESULT_AUTO_CLOSE_MS } from "../config/student-results";
 /**
  * Student result-panel system.
  * Goal: display final Python-lab or challenge outcomes after return, provide a
@@ -35,6 +36,7 @@ export class StudentResultSystem extends createSystem({
     ]
   }
 }) {
+  private autoCloseTimer?: number;
   private document?: UIKitDocument;
   private boardViewDocument?: UIKitDocument;
   private lastCloseActivation = 0;
@@ -44,6 +46,8 @@ export class StudentResultSystem extends createSystem({
   private connectedBoardViewRoot?: object;
   private isLeftTriggerPressed = false;
   private boardViewActive = false;
+  private boardButtonRequested = true;
+  private boardButtonApplied: boolean | undefined;
   private resultWasVisible = false;
   private savedPlayerPosition = new THREE.Vector3();
   private savedPlayerQuaternion = new THREE.Quaternion();
@@ -248,7 +252,7 @@ export class StudentResultSystem extends createSystem({
   private activateBoardView = (event?: any): void => {
     event?.stopPropagation?.();
     event?.stopImmediatePropagation?.();
-    if (!(window as any).isStudentBoardViewAvailable) return;
+    if (this.isGameActive() || !(window as any).isStudentBoardViewAvailable) return;
     const now = performance.now();
     if (now - this.lastBoardViewActivation < 250) return;
     this.lastBoardViewActivation = now;
@@ -299,19 +303,33 @@ export class StudentResultSystem extends createSystem({
     (this.boardViewDocument as any)?.requestUpdate?.();
   }
 
+  private isGameActive(): boolean {
+    const state = window as any;
+    return Boolean(state.isLabActive || state.isPuzzleActive || state.isCastleActive);
+  }
+
   private setBoardViewButtonVisible(visible: boolean): void {
+    this.boardButtonRequested = visible;
+    this.syncBoardButton();
+  }
+
+  // Keep classroom Screen navigation unavailable while either game owns the player.
+  private syncBoardButton(): void {
+    const visible = this.boardButtonRequested && !this.isGameActive();
     (window as any).isStudentBoardViewAvailable = visible;
     (window as any).refreshStudentBoardButton?.();
     const entity = (window as any).studentBoardViewButtonEntity;
     if (!entity?.object3D) return;
+    if (this.boardButtonApplied === visible) return;
+    this.boardButtonApplied = visible;
     entity.object3D.visible = visible;
     entity.object3D.pointerEvents = visible ? "auto" : "none";
     entity.object3D.traverse((object: any) => {
       object.pointerEvents = visible ? "auto" : "none";
       object.pointerEventsOrder = 71000;
     });
+    entity.removeComponent(RayInteractable);
     if (visible) {
-      entity.removeComponent(RayInteractable);
       entity.addComponent(RayInteractable);
       requestAnimationFrame(() => this.connectBoardViewButton());
     }
@@ -354,6 +372,10 @@ export class StudentResultSystem extends createSystem({
   }
 
   private setVisible(visible: boolean): void {
+    window.clearTimeout(this.autoCloseTimer);
+    this.autoCloseTimer = visible
+      ? window.setTimeout(this.closeResult, STUDENT_RESULT_AUTO_CLOSE_MS)
+      : undefined;
     (window as any).isStudentResultOpen = visible;
 
     // The board status is a transparent canvas. Hide it while the student's
@@ -430,6 +452,7 @@ export class StudentResultSystem extends createSystem({
   }
 
   update(): void {
+    this.syncBoardButton();
     // A control mounted on the left controller cannot reliably be targeted by
     // that controller's own ray. Treat its physical trigger as a direct click,
     // while retaining mouse and right-controller ray interaction.
@@ -450,6 +473,7 @@ export class StudentResultSystem extends createSystem({
   }
 
   destroy(): void {
+    window.clearTimeout(this.autoCloseTimer);
     delete (window as any).toggleStudentBoardView;
     delete (window as any).closeStudentResultForRoomTransition;
     (window as any).isStudentBoardViewAvailable = false;

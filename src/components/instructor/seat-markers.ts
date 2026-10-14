@@ -1,4 +1,9 @@
-/** Creates lightweight 3D labels that show occupied seat names to instructors. */
+import { SeatAvatarPoseDriver } from "./seat-avatar-pose";
+import type { SeatAvatarPose } from "../../../shared/seat-avatar-tracking";
+import { Box3, Group } from "three";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { AssetManager } from "@iwsdk/core";
+/** Creates seated alien models and name labels seen by other participants. */
 
 import {
   Sprite,
@@ -10,6 +15,7 @@ import {
 
 import { socket } from "../../network/socket";
 
+// Hide your own seated copy: first-person-avatar.ts supplies your visible arms in VR.
 function isLocalStudent(studentId: string): boolean {
   return !(window as any).isInstructor && studentId === socket.id;
 }
@@ -20,10 +26,26 @@ interface Student {
   seat: string;
   mode: string;
   isDemo?: boolean;
+  handRaised?: boolean;
 }
 
 // Store markers by student ID
-const markers = new Map<string, Sprite>();
+type SeatMarker = Group & { material: SpriteMaterial };
+const markers = new Map<string, SeatMarker>();
+// One independent bone animator per student, keyed by the server socket ID.
+const poseDrivers = new Map<string, SeatAvatarPoseDriver>();
+// The tracking system delivers incoming movement to the correct student here.
+export function applySeatAvatarPose(id: string, pose: SeatAvatarPose | null): void {
+  poseDrivers.get(id)?.setPose(pose);
+}
+export function setSeatAvatarHandRaised(id: string, raised: boolean): void {
+  poseDrivers.get(id)?.setRaised(raised);
+}
+export function updateSeatAvatarPoses(delta: number): void {
+  for (const [id, driver] of poseDrivers) {
+    if (markers.get(id)?.visible) driver.update(delta);
+  }
+}
 let playerRef: any = null;
 let stagePosition = new Vector3(0, 0, 0);
 let isFacingStage = false;
@@ -55,68 +77,19 @@ function roundedRect(
 function createTexture(name: string, mode: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
-  canvas.height = 512;
-
+  canvas.height = 96;
   const ctx = canvas.getContext("2d")!;
-
-  ctx.clearRect(0, 0, 512, 512);
-
-  const color =
-    mode === "Presentation Mode"
-      ? "#22c55e"
-      : "#2196f3";
-
-  if (markerTheme === "astronaut") {
-    if (astronautImage.complete && astronautImage.naturalWidth > 0) {
-      ctx.drawImage(astronautImage, 126, 10, 260, 260);
-    }
-
-    // A simple holographic base provides position without adding geometry.
-    ctx.strokeStyle = "rgba(34, 211, 238, 0.9)";
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.ellipse(256, 275, 102, 25, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(103, 232, 249, 0.45)";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.ellipse(256, 275, 72, 16, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  } else {
-    // Original lightweight classroom avatar.
-    ctx.beginPath();
-    ctx.arc(256, 150, 90, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-    ctx.lineWidth = 12;
-    ctx.strokeStyle = color;
-    ctx.stroke();
-    ctx.fillStyle = "#555";
-    ctx.beginPath();
-    ctx.arc(256, 140, 38, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(256, 205, 55, Math.PI, 0);
-    ctx.fill();
-  }
-
-  // name box
   ctx.fillStyle = "#111827";
-  roundedRect(ctx, 100, 315, 312, 76, 20);
-  if (markerTheme === "astronaut") {
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "#22d3ee";
-    ctx.stroke();
-  }
-
+  roundedRect(ctx, 2, 2, 508, 92, 18);
+  ctx.strokeStyle = mode === "Presentation Mode" ? "#22c55e" : "#38bdf8";
+  ctx.lineWidth = 4;
+  ctx.stroke();
   ctx.fillStyle = "white";
   ctx.font = "bold 34px Arial";
   ctx.textAlign = "center";
-
-  // ✅ Show actual name (not ID)
-  const displayName = name.length > 8 ? name.substring(0, 8) + "..." : name;
-  ctx.fillText(displayName, 256, 363);
-
+  ctx.textBaseline = "middle";
+  const displayName = name.length > 22 ? name.substring(0, 21) + "..." : name;
+  ctx.fillText(displayName, 256, 48, 470);
   return new CanvasTexture(canvas);
 }
 
@@ -176,7 +149,7 @@ export function updateMarkerVisibility(player: any) {
 
   markers.forEach((marker, studentId) => {
     marker.visible =
-      !((window as any).isLabActive) && !isLocalStudent(studentId) &&
+      !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId) &&
       !markersSuppressed &&
       (
         markersForcedVisible ||
@@ -223,7 +196,7 @@ export function updateSeatMarkers(
       toRemove.push(id);
     }
   });
-  toRemove.forEach(id => markers.delete(id));
+  toRemove.forEach(id => { markers.delete(id); poseDrivers.delete(id); });
 
   // Update or create markers
   realStudents.forEach(student => {
@@ -246,13 +219,30 @@ export function updateSeatMarkers(
     if (!marker) {
       const texture = createTexture(displayName, student.mode);
 
-      marker = new Sprite(
-        new SpriteMaterial({
-          map: texture,
-          transparent: true,
-          depthTest: false,  // ✅ Always render on top
-        })
-      );
+      const material = new SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+      marker = Object.assign(new Group(), { material });
+      marker.name = `StudentSeatAlien-${student.id}`;
+      const label = new Sprite(material);
+      label.scale.set(1.15, 1.15 * 96 / 512, 1);
+      label.position.y = -0.17;
+      marker.add(label);
+      const asset = AssetManager.getGLTF("studentSeatAlien");
+      if (asset) {
+        // Clone the skeleton too, so animating one student does not move every avatar.
+        const alien = cloneSkeleton(asset.scene);
+        const bounds = new Box3().setFromObject(alien);
+        const size = bounds.getSize(new Vector3());
+        // Normalize the model size; the outer marker scale below also affects final size.
+        alien.scale.multiplyScalar(1.3 / Math.max(size.y, size.x, size.z, 0.001));
+        alien.updateMatrixWorld(true);
+        bounds.setFromObject(alien);
+        const center = bounds.getCenter(new Vector3());
+        alien.position.add(new Vector3(-center.x, -bounds.min.y, -center.z));
+        alien.name = "SeatAlienModel";
+        alien.traverse(object => { object.pointerEvents = "none"; });
+        marker.add(alien);
+        poseDrivers.set(student.id, new SeatAvatarPoseDriver(alien));
+      }
 
       marker.scale.set(0.65, 0.65, 0.65);
       marker.userData.studentId = student.id;
@@ -274,12 +264,20 @@ export function updateSeatMarkers(
       console.log(`[SeatMarkers] ✅ Created marker for ${displayName}`);
     }
 
+    if (marker.userData.displayName !== displayName || marker.userData.mode !== student.mode) {
+      marker.material.map?.dispose();
+      marker.material.map = createTexture(displayName, student.mode);
+    }
     marker.userData.displayName = displayName;
     marker.userData.mode = student.mode;
+    poseDrivers.get(student.id)?.setRaised(Boolean(student.handRaised));
+    const alien = marker.getObjectByName("SeatAlienModel");
+    if (alien) seat.getWorldQuaternion(alien.quaternion);
 
+    // Seat placement: +0.50 raises the marker above the seat anchor.
     marker.position.set(
       pos.x,
-      pos.y + 0.75,
+      pos.y + 0.50,
       pos.z
     );
   });
@@ -296,7 +294,7 @@ export function updateSeatMarkers(
 export function showAllMarkers() {
   markersSuppressed = false;
   markers.forEach((marker, studentId) => {
-    marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
+    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
   });
   console.log("[SeatMarkers] All markers forced visible");
 }
@@ -327,7 +325,7 @@ export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
   if (arrivals.length === 0) return Promise.resolve();
 
   arrivals.forEach(({ marker, start, destinationScale }) => {
-    marker.visible = !((window as any).isLabActive) && !isLocalStudent(String(marker.userData.studentId));
+    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(String(marker.userData.studentId));
     marker.position.copy(start);
     marker.scale.copy(destinationScale).multiplyScalar(0.72);
   });
@@ -372,7 +370,7 @@ export function setSeatMarkersForcedVisible(forced: boolean): void {
   if (forced) {
     markersSuppressed = false;
     markers.forEach((marker, studentId) => {
-      marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
+      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
     });
   } else if (playerRef) {
     updateMarkerVisibility(playerRef);
@@ -403,7 +401,7 @@ export function setSeatMarkersSuppressed(suppressed: boolean) {
     updateMarkerVisibility(playerRef);
   } else {
     markers.forEach((marker, studentId) => {
-      marker.visible = !((window as any).isLabActive) && !isLocalStudent(studentId);
+      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
     });
   }
 
@@ -426,6 +424,7 @@ export function clearAllSeatMarkers(scene: Object3D) {
     }
   });
   markers.clear();
+  poseDrivers.clear();
   console.log("[SeatMarkers] All markers cleared");
 }
 

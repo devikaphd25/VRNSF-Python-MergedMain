@@ -1,3 +1,4 @@
+import { instructorContentUrl } from "../services/classroom-session.services";
 /**
  * Instructor dashboard and live-monitor system.
  * Goal: render paged lesson activities, launch synchronized presentation,
@@ -23,6 +24,8 @@ import {
   replaceInstructorLessons,
   InstructorTaskAction
 } from "../config/instructor-menu-content";
+
+import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation";
 
 type InstructorMode =
   | "Classroom Mode"
@@ -208,6 +211,7 @@ export class InstructorDashboardSystem extends createSystem({
   private quizMonitorPage = 0;
   private readonly quizMonitorPageSize = 10;
   private quizMonitorFinished = false;
+  private puzzleRoomOpen = false;
   private quizSeriesType?: string;
   private quizSeriesTotal = 1;
   private challenge2FinalResults?: any;
@@ -836,7 +840,7 @@ export class InstructorDashboardSystem extends createSystem({
 
   private async loadInstructorMenuContent(): Promise<void> {
     try {
-      const response = await fetch("/api/instructor-content");
+      const response = await fetch(instructorContentUrl());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       replaceInstructorLessons(await response.json());
@@ -1827,11 +1831,11 @@ export class InstructorDashboardSystem extends createSystem({
       },
       {
         kind: "game" as const,
-        key: "game:true-false",
-        game: "true-false" as const,
+        key: "game:python-puzzle",
+        game: "python-puzzle" as const,
         type: "GAME",
-        title: "True or False",
-        description: "Launch a quick true-or-false class challenge"
+        title: this.puzzleRoomOpen ? "Return from Puzzle" : "Python Puzzle",
+        description: this.puzzleRoomOpen ? "Return students to the classroom" : "Enter the empty puzzle environment"
       }
     ];
   }
@@ -1847,7 +1851,12 @@ export class InstructorDashboardSystem extends createSystem({
     this.renderLessonPage();
     if (item.kind === "game") {
       if (item.game === "lab") this.toggleLabActivity();
-      else this.activateTrueFalseChallenge();
+      else {
+        this.puzzleRoomOpen = !this.puzzleRoomOpen;
+        socket.emit("instructorLaunchPythonPuzzle", { returnToClass: !this.puzzleRoomOpen });
+        this.renderLessonPage();
+        this.showStatusMessage(this.puzzleRoomOpen ? "Students entered the empty puzzle room." : "Students returned from the puzzle room.");
+      }
       return;
     }
     this.activeLessonPage = item.lessonIndex;
@@ -1903,6 +1912,10 @@ export class InstructorDashboardSystem extends createSystem({
         task => task.action === "briefing"
       );
       this.pendingBriefingAssetPath = briefing?.assetPath ?? undefined;
+      if (DEBRIEF_IN_CLASSROOM_ONLY) {
+        this.launchBriefingMode("classroom");
+        return;
+      }
       this.setDashboardVisible(false);
       this.setDebriefViewChoiceVisible(true);
       this.showStatusMessage("Choose classroom or 360 room");
@@ -2105,6 +2118,7 @@ export class InstructorDashboardSystem extends createSystem({
   private launchBriefingMode(
     debriefView: "classroom" | "immersive360"
   ): void {
+    if (DEBRIEF_IN_CLASSROOM_ONLY) debriefView = "classroom";
     const assetPath = this.pendingBriefingAssetPath;
     const activationTime = performance.now();
     if (activationTime - this.lastPresentationActivationAt < 1800) return;

@@ -1,8 +1,11 @@
+import { instructorContentUrl } from "../services/classroom-session.services";
+import { setClassroomBoardCourse } from "../config/classroom-board-content";
+import { createClassroomBoardFrame } from "../components/classroom-board-frame";
 /**
  * Synchronized presentation, video, briefing, and Mission Review renderer.
  * Goal: show instructor-controlled media to every participant, maintain video
  * state/timing, render debrief data screens, and coordinate the door transition.
- * Data arrives from week_activities and debriefReviewData Socket.IO events.
+ * Data arrives from activities and debriefReviewData Socket.IO events.
  */
 import {
   createSystem,
@@ -34,6 +37,7 @@ import {
   setSeatMarkersSuppressed,
   showAllMarkers
 } from "../components/instructor/seat-markers";
+import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation";
 import { DebriefDoorTransition } from "./debrief-door-transition";
 
 type DebriefReviewData = {
@@ -62,10 +66,12 @@ export class PresentationSystem extends createSystem({
   }
 }) {
   private studentControlsDocument?: UIKitDocument;
+  private databaseGameCount = 0;
   private studentHandRaised = false;
   private sideHandModel?: Object3D;
   private lastHandClickAt = 0;
   private sideScreensInitialized = false;
+  private classroomBoardFrame?: Object3D;
   private isPresentationMode = false;
   private savedSeatPosition = new Vector3();
   private savedSeatQuaternion = new Quaternion();
@@ -82,6 +88,7 @@ export class PresentationSystem extends createSystem({
   private videoAudioSource?: MediaElementAudioSourceNode;
   private lastDrawnVideoTime = -1;
   private controlsEnabledAt = 0;
+  private pendingPlaybackCommand?: { command?: string; currentTime?: number; sentAt?: number };
   private pendingVideoPath?: string;
   private pendingImagePath?: string;
   private presentationMediaType: "video" | "image" = "video";
@@ -218,7 +225,7 @@ export class PresentationSystem extends createSystem({
         return;
       }
       if (data.mediaType === "image") {
-        this.debriefView = data.debriefView ?? "classroom";
+        this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : data.debriefView ?? "classroom";
         this.setImageSource(data.assetPath);
       } else this.setVideoSource(data.assetPath);
       if (!this.isPresentationMode) {
@@ -241,7 +248,7 @@ export class PresentationSystem extends createSystem({
     if (!data.assetPath) return;
     console.log("[PresentationSystem] Shared content received", data);
     if (data.mediaType === "image") {
-      this.debriefView = data.debriefView ?? "classroom";
+      this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : data.debriefView ?? "classroom";
       this.setImageSource(data.assetPath);
     } else this.setVideoSource(data.assetPath);
     this.enterPresentationMode();
@@ -286,7 +293,7 @@ export class PresentationSystem extends createSystem({
     assetPath?: string,
     debriefView: DebriefView = "classroom"
   ): void {
-    this.debriefView = debriefView;
+    this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : debriefView;
     if (assetPath) this.setImageSource(assetPath);
     this.enterPresentationMode();
   }
@@ -444,11 +451,10 @@ export class PresentationSystem extends createSystem({
     const object = (window as any).instructorVideoControlsObject;
     if (!object) return;
     object.visible = visible;
-    // Briefing controls sit directly below the image and slightly in front of
-    // it. Video controls retain their established, comfortable position.
+    // Classroom media controls sit in front of the first row.
     const isBriefing = this.presentationMediaType === "image";
-    const isClassroomBriefing = isBriefing && this.debriefView === "classroom";
-    if (visible && isClassroomBriefing) {
+    const isClassroomPresentation = !isBriefing || this.debriefView === "classroom";
+    if (visible && isClassroomPresentation) {
       // Place controls in the open space between the first row and stage. This
       // avoids XR camera timing differences and keeps them above the floor.
       const bottomBezel = this.world.scene.getObjectByName(
@@ -490,7 +496,7 @@ export class PresentationSystem extends createSystem({
     }
     // Debrief actions are intentionally larger for comfortable headset-ray
     // targeting. Restore the original scale whenever video mode is active.
-    object.scale.setScalar(isClassroomBriefing ? 1.15 : isBriefing ? 1.55 : 1);
+    object.scale.setScalar(isClassroomPresentation ? 1.15 : isBriefing ? 1.55 : 1);
     object.updateMatrixWorld(true);
     if (visible) {
       this.updateControlsForMedia();
@@ -504,7 +510,11 @@ export class PresentationSystem extends createSystem({
     currentTime?: number;
     sentAt?: number;
   }): void => {
-    if (!this.videoElement) return;
+    if (!this.videoElement || this.videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      this.pendingPlaybackCommand = data;
+      return;
+    }
+    this.pendingPlaybackCommand = undefined;
 
     const requestedTime = Number(data?.currentTime);
     if (Number.isFinite(requestedTime)) {
@@ -512,7 +522,10 @@ export class PresentationSystem extends createSystem({
         data.command === "play" && Number.isFinite(data.sentAt)
           ? Math.max(0, (Date.now() - Number(data.sentAt)) / 1000)
           : 0;
-      const synchronizedTime = requestedTime + networkDelay;
+      const synchronizedTime = Math.min(
+        requestedTime + networkDelay,
+        Number.isFinite(this.videoElement.duration) ? this.videoElement.duration : Infinity
+      );
       if (Math.abs(this.videoElement.currentTime - synchronizedTime) > 0.2) {
         this.videoElement.currentTime = synchronizedTime;
       }
@@ -533,6 +546,7 @@ export class PresentationSystem extends createSystem({
       (this.pendingVideoPath === assetPath && this.presentationMediaType === "video")
     ) return;
     this.presentationMediaType = "video";
+    this.debriefView = "classroom";
     this.setDebriefReviewVisible(false);
     if (this.presentationScreen) {
       this.presentationScreen.position.z = 6.2;
@@ -541,6 +555,7 @@ export class PresentationSystem extends createSystem({
     this.annotationDrawing = false;
     this.setMarkerRayColor(false);
     this.setAnnotationLaserVisible(false);
+    this.pendingPlaybackCommand = undefined;
     this.pendingVideoPath = assetPath;
     this.pendingImagePath = undefined;
 
@@ -587,6 +602,7 @@ export class PresentationSystem extends createSystem({
         this.videoElement?.pause();
         this.drawCurrentVideoFrame();
         this.applyVideoTexture();
+        if (this.pendingPlaybackCommand) this.onVideoPlaybackCommand(this.pendingPlaybackCommand);
       },
       { once: true }
     );
@@ -631,8 +647,15 @@ export class PresentationSystem extends createSystem({
     }
 
     const image = new Image();
+    // Supabase is a different origin. Request CORS before src so drawing this
+    // image does not taint the canvas and break its WebGL texture upload.
+    image.crossOrigin = "anonymous";
     image.onload = () => {
+      if (this.pendingImagePath !== assetPath || this.presentationMediaType !== "image") return;
       if (!this.videoCanvas || !this.videoContext) return;
+      // Reset the bitmap's origin-clean state after any earlier non-CORS image.
+      this.videoCanvas.width = 1280;
+      this.videoCanvas.height = 720;
       const context = this.videoContext;
       const width = this.videoCanvas.width;
       const height = this.videoCanvas.height;
@@ -654,8 +677,12 @@ export class PresentationSystem extends createSystem({
         this.setClassroomProjectorDebriefVisible(true);
       }
     };
-    image.onerror = error => {
-      console.error("[PresentationSystem] Briefing image failed to load", error);
+    image.onerror = () => {
+      if (this.pendingImagePath !== assetPath || this.presentationMediaType !== "image") return;
+      // Allow selecting the same debrief again after a temporary load failure.
+      this.pendingImagePath = undefined;
+      console.error("[PresentationSystem] Debrief image could not load. Reopen the dashboard and try again.");
+      window.dispatchEvent(new CustomEvent("debrief-image-load-failed"));
     };
     image.src = assetPath;
     this.updateControlsForMedia();
@@ -979,14 +1006,14 @@ export class PresentationSystem extends createSystem({
     const height = this.videoCanvas.height;
     context.save();
     context.clearRect(0, 0, width, height);
-    // The plane is viewed from its back face, so mirror the canvas once here
-    // to make the final displayed video read normally.
+    // Flip video horizontally to compensate for the projector's mirrored view.
     context.translate(width, 0);
     context.scale(-1, 1);
     context.drawImage(this.videoElement, 0, 0, width, height);
     context.restore();
     this.lastDrawnVideoTime = this.videoElement.currentTime;
     if (this.videoTexture) this.videoTexture.needsUpdate = true;
+    if (this.classroomProjectorTexture) this.classroomProjectorTexture.needsUpdate = true;
   }
 
   private applyVideoTexture(): void {
@@ -1074,9 +1101,12 @@ export class PresentationSystem extends createSystem({
 
   private async loadSideScreenTasks(): Promise<void> {
     try {
-      const response = await fetch("/api/instructor-content");
+      const response = await fetch(instructorContentUrl());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      replaceInstructorLessons(await response.json());
+      const content = await response.json();
+      setClassroomBoardCourse(content);
+      this.databaseGameCount = (content.activities ?? []).filter((a: any) => a.activityType === "game").length;
+      replaceInstructorLessons(content);
       this.redrawDebriefScreens();
     } catch (error) {
       console.warn("[Side screens] Using configured fallback activities", error);
@@ -1248,6 +1278,7 @@ export class PresentationSystem extends createSystem({
       // screens form a clear, shallow C instead of visually stacking.
       screen.position.set(side === "left" ? -5.75 : 5.75, 3.0, 6.35);
       screen.rotation.y = Math.PI + (side === "left" ? -0.44 : 0.44);
+      screen.add(createClassroomBoardFrame(3.8, 4.2));
       screen.visible = false;
       screen.renderOrder = 20;
       this.world.scene.add(screen);
@@ -1271,11 +1302,12 @@ export class PresentationSystem extends createSystem({
   ): void {
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    context.fillStyle = "#050b16";
+    const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    background.addColorStop(0, "#102337");
+    background.addColorStop(1, "#050c17");
+    context.fillStyle = background;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#1689b7";
-    context.lineWidth = 6;
-    context.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+    // Physical trim supplies the border; a second canvas outline looks doubled.
     if (kind === "errors") {
       // Students get an interactive panel here; instructors see an explanation.
       if ((window as any).isInstructor) {
@@ -1297,8 +1329,7 @@ export class PresentationSystem extends createSystem({
     const rows = [
       { label: "VIDEOS", count: tasks.filter(task => task.action === "presentation").length, color: "#38bdf8" },
       { label: "CHALLENGES", count: tasks.filter(task => task.action === "challenge").length, color: "#fbbf24" },
-      // The dashboard offers Variable Sorting and True or False as its two games.
-      { label: "GAMES", count: 2, color: "#34d399" },
+      { label: "GAMES", count: this.databaseGameCount, color: "#34d399" },
       { label: "DEBRIEF ROOMS", count: tasks.filter(task => task.action === "briefing").length, color: "#a78bfa" }
     ];
     rows.forEach((row, index) => {
@@ -1372,6 +1403,40 @@ export class PresentationSystem extends createSystem({
       .applyMatrix4(projector.matrixWorld);
     const bottom = new Vector3(localCenter.x, bounds.min.y, localCenter.z)
       .applyMatrix4(projector.matrixWorld);
+    if (!this.classroomBoardFrame && projector.parent) {
+      const boardWidth = edgeA.distanceTo(edgeB);
+      const boardHeight = top.distanceTo(bottom);
+      const frame = createClassroomBoardFrame(boardWidth, boardHeight);
+      // Two narrow recessed bridges cover the pale wall at the screen joints.
+      // They stop outside the display aperture and follow classroom visibility.
+      const gap = boardHeight * 0.18;
+      for (const side of [-1, 1]) {
+        const bridge = new Mesh(
+          new BoxGeometry(gap + boardHeight * 0.16, boardHeight * 1.1, 0.05),
+          new MeshBasicMaterial({ color: 0x071321, toneMapped: false })
+        );
+        bridge.name = side < 0 ? "BoardBackingLeft" : "BoardBackingRight";
+        bridge.position.set(side * (boardWidth / 2 + gap / 2), 0, -0.075);
+        bridge.pointerEvents = "none";
+        frame.add(bridge);
+      }
+      frame.position.copy(center).addScaledVector(towardViewer, 0.025);
+      frame.lookAt(center.clone().add(towardViewer));
+      this.world.scene.add(frame);
+      // Follow the classroom's visibility and transforms during activities.
+      projector.parent.attach(frame);
+      this.classroomBoardFrame = frame;
+      // The new casing replaces the old pale rectangular surround visually.
+      // Keep its geometry available for existing control-placement anchors.
+      for (const name of ["ScreenBezel_Top", "ScreenBezel_Bottom", "ScreenBezel_Left", "ScreenBezel_Right"]) {
+        const oldBezel = this.world.scene.getObjectByName(name);
+        if (oldBezel) oldBezel.visible = false;
+      }
+    }
+    // Leave room for the rounded frames between the three screens.
+    const frameGap = top.distanceTo(bottom) * 0.18;
+    edgeA.addScaledVector(screenRight, -frameGap);
+    edgeB.addScaledVector(screenRight, frameGap);
     const classroomPanelScale = top.distanceTo(bottom) / 4.2;
     this.debriefLeftScreen.scale.setScalar(classroomPanelScale);
     this.debriefRightScreen.scale.setScalar(classroomPanelScale);
@@ -1426,7 +1491,7 @@ export class PresentationSystem extends createSystem({
   private shouldShowClassroomSideScreens(): boolean {
     const state = window as any;
     if (this.transitionInProgress || state.isQuickChallengeOpen ||
-        state.isChallenge2Open || state.isLabActive) return false;
+        state.isChallenge2Open || state.isLabActive || state.isPuzzleActive) return false;
     if (this.isPresentationMode || state.isPresentationActive) {
       return this.presentationMediaType === "image";
     }
@@ -1437,6 +1502,10 @@ export class PresentationSystem extends createSystem({
     const visible = this.shouldShowClassroomSideScreens();
     if (this.debriefLeftScreen) this.debriefLeftScreen.visible = visible;
     if (this.debriefRightScreen) this.debriefRightScreen.visible = visible;
+    for (const name of ["BoardBackingLeft", "BoardBackingRight"]) {
+      const bridge = this.classroomBoardFrame?.getObjectByName(name);
+      if (bridge) bridge.visible = visible && this.debriefView === "classroom";
+    }
   }
 
   private setDebriefReviewVisible(visible: boolean): void {
@@ -1487,9 +1556,8 @@ export class PresentationSystem extends createSystem({
       return;
     }
 
-    // Both debrief destinations use the doorway. The selected view only
-    // controls what is revealed after the doorway finishes.
-    const transition = this.presentationMediaType === "image"
+    // Retain the doorway implementation, but classroom debriefs do not travel.
+    const transition = !DEBRIEF_IN_CLASSROOM_ONLY && this.presentationMediaType === "image"
       ? (action: () => void) => {
           const viewer = this.renderer.xr.isPresenting
             ? this.renderer.xr.getCamera()
@@ -1535,7 +1603,7 @@ export class PresentationSystem extends createSystem({
 
     if (!this.isPresentationMode) {
       const useImmersiveRoom =
-        this.presentationMediaType === "video" ||
+        this.presentationMediaType === "image" &&
         this.debriefView === "immersive360";
       // Set the destination state first so closing a student result does not
       // briefly restore the classroom-board overlay during the transition.
@@ -1563,10 +1631,7 @@ export class PresentationSystem extends createSystem({
         setSeatMarkersSuppressed(false);
         showAllMarkers();
       }
-      this.setClassroomDebriefDimmed(
-        this.presentationMediaType === "image" &&
-        this.debriefView === "classroom"
-      );
+      this.setClassroomDebriefDimmed(!useImmersiveRoom);
       this.setClassroomUiVisible(false);
       if (this.blackRoom) this.blackRoom.visible = useImmersiveRoom;
       if (this.presentationScreen) {
@@ -1579,20 +1644,16 @@ export class PresentationSystem extends createSystem({
 
       this.renderer.setClearColor(useImmersiveRoom ? 0x000000 : 0x87ceeb, 1);
 
-      // Both debrief choices use the established presentation viewing point.
-      // The classroom choice differs only in keeping the dimmed classroom and
-      // targeting its real projector instead of revealing the 360 room.
-      if (!useImmersiveRoom) {
-        // Instructor and students share the same first-row center viewing
-        // position for the in-class debrief.
-        this.positionInstructorAtFirstRowCenter();
-      } else {
-        this.player.position.set(0, 1.0, -1.8);
-      }
-      if (useImmersiveRoom) {
-        this.player.quaternion.set(0, 1, 0, 0);
-      } else {
-        this.facePlayerTowardClassroomProjector();
+      // Students keep their assigned seat and viewing direction. Only the
+      // instructor moves to the presentation viewing point.
+      if ((window as any).isInstructor) {
+        if (useImmersiveRoom) {
+          this.player.position.set(0, 1.0, -1.8);
+          this.player.quaternion.set(0, 1, 0, 0);
+        } else {
+          this.positionInstructorAtFirstRowCenter();
+          this.facePlayerTowardClassroomProjector();
+        }
       }
       if ((window as any).isInstructor && instructorMesh) {
         instructorMesh.visible = false;
@@ -1607,7 +1668,7 @@ export class PresentationSystem extends createSystem({
       this.setControlsVisible(true);
       this.updatePlayPauseLabel(false);
       (window as any).refreshInstructorMenuButton?.();
-      console.log("🎬 Entered Cinema Presentation Mode");
+      console.log("🎬 Entered Presentation Mode", { useImmersiveRoom });
       socket.emit("modeChanged", "Presentation Mode");
     } else {
       this.player.position.copy(this.savedSeatPosition);
@@ -1634,6 +1695,7 @@ export class PresentationSystem extends createSystem({
       this.setClassroomProjectorDebriefVisible(false);
       this.setDebriefReviewVisible(false);
       this.videoElement?.pause();
+      this.pendingPlaybackCommand = undefined;
 
       this.renderer.setClearColor(0x87ceeb, 1);
 
@@ -1774,9 +1836,10 @@ export class PresentationSystem extends createSystem({
       (window as any).isInstructor
         ? (window as any).raiseHandEntity?.object3D
         : null,
-      // These tier caps are created directly under the world scene instead
-      // of under classroomMesh, so hide them explicitly in presentation mode.
-      this.world.scene.getObjectByName("NASA_Sealed_Tier_Ends"),
+      // Hide the separate tier caps only when leaving the classroom.
+      this.presentationMediaType === "image" && this.debriefView === "immersive360"
+        ? this.world.scene.getObjectByName("NASA_Sealed_Tier_Ends")
+        : null,
     ].filter(Boolean);
 
     if (!visible) {

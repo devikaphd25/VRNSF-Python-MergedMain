@@ -16,7 +16,9 @@
     "typecheck": "npm run typecheck:client && npm run typecheck:server",
     "typecheck:client": "tsc -p tsconfig.json --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --import tsx --test tests/*.test.ts tests/*.test.mjs",
+    "test:database": "node --env-file=.env.server tests/new-database.integration.mjs"
   },
   "dependencies": {
     "@iwsdk/core": "0.4.2",

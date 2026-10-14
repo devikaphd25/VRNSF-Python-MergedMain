@@ -15,7 +15,7 @@ const serverHost =
 
 
 const socketServerUrl =
-   `http://${serverHost}:3001`;
+   import.meta.env.VITE_SERVER_URL || window.location.origin;
 
 const urlParams =
   new URLSearchParams(

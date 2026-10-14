@@ -477,6 +477,8 @@ export class SeatSystem extends createSystem({
       true
     );
 
+    window.dispatchEvent(new CustomEvent("classroomSeatReady"));
+
     console.log(
       `[SeatSystem] Moved ${this.studentName} to database seat ${seatName}`,
       {

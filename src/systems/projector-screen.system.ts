@@ -70,6 +70,10 @@ export class ProjectorScreenSystem extends createSystem({
         this.redrawBoardStatus();
     };
 
+    private handleCourseChanged = (): void => {
+        this.redrawBoardStatus();
+    };
+
     private handleChallengeEnd = (payload: { finalResults?: unknown }): void => {
         if (!payload?.finalResults) return;
         this.challengeResults = payload.finalResults as BoardChallengeResults;
@@ -84,11 +88,13 @@ export class ProjectorScreenSystem extends createSystem({
         console.log(`[ProjectorScreenSystem] isInstructor: ${this.isInstructor}`);
 
         socket.on("studentList", this.handleStudentList);
+        window.addEventListener("classroom-course-changed", this.handleCourseChanged);
         socket.on("challenge2Started", this.handleChallengeStart);
         socket.on("challenge2StartedForInstructor", this.handleChallengeStart);
         socket.on("challenge2Ended", this.handleChallengeEnd);
         socket.emit("requestStudentList");
         this.cleanupFuncs.push(() => {
+            window.removeEventListener("classroom-course-changed", this.handleCourseChanged);
             socket.off("studentList", this.handleStudentList);
             socket.off("challenge2Started", this.handleChallengeStart);
             socket.off("challenge2StartedForInstructor", this.handleChallengeStart);
