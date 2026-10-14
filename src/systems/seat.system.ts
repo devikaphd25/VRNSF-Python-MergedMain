@@ -375,6 +375,13 @@ export class SeatSystem extends createSystem({
   private moveToExactSeat(
     seatName: string
   ): boolean {
+    const state = window as any;
+    // XR sessionstart and delayed seat replies must not move the player away
+    // from an active game. restoreClassroomSeat places them after game exit.
+    if (state.isLabActive || state.isCastleActive || state.isForestActive) {
+      return true;
+    }
+
     const classroom =
       (window as any)
         .classroomMesh as

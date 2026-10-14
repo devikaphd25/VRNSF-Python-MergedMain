@@ -47,14 +47,48 @@ start. Provide them via the Base44 secrets dashboard:
 | `SUPABASE_URL` | Server-side Supabase project URL (same as above) |
 | `SUPABASE_SECRET_KEY` | Server-side Supabase service-role key |
 
-### Known sandbox limitation
+### Classroom connection and verification
 
-The browser Socket.IO client (`src/network/socket.ts`) connects directly to
-`http://${window.location.hostname}:3001`, bypassing the Vite proxy. In the
-sandbox, port 3001 is not publicly exposed at the same hostname, so
-real-time features will not connect until the user provides real Supabase
-credentials and the backend is reachable. The Vite proxy still handles
-`/api` requests correctly.
+- Startup assets live in `src/config/classroom-assets.ts`. Both `classroom2`
+  and `nasaSeatSource` must remain **critical**: IWSDK resolves `World.create`
+  before background assets finish, while classroom construction immediately
+  uses the NASA source after login/session restoration. The model exists in
+  the repo; treating it as background caused a misleading missing-model error.
+  Run `node --experimental-test-module-mocks --import tsx --test tests/classroom-startup.test.ts`
+  inside the app container for loading-policy and GLB-integrity regressions.
+  A rendered login panel verifies startup only, not student/headset entry.
+- Castle/forest puzzle entities must use `createCastleEntity` or
+  `createForestEntity` with the environment's ECS parent. `Object3D.add` alone
+  is overwritten by IWSDK's first TransformSystem update, detaching blocks,
+  buttons, instructions and feedback from the environment visibility toggle.
+- Connect the classroom socket only after all environment managers and global
+  classroom references are installed. Registering earlier exposes a student to
+  instructor launch/seat events before their game listeners exist. Seat retries
+  and XR `sessionstart` restoration must leave active game origins alone; the
+  normal `restoreClassroomSeat` event places the student after game exit.
+  `node --experimental-test-module-mocks --import tsx --test tests/puzzle-loading.test.ts`
+  verifies all three puzzle launch listeners and parenting with real ECS
+  transforms, plus the seat guard. It does not emulate instructor/headset input.
+- Socket.IO uses the page's origin; Vite forwards `/socket.io` (including
+  WebSocket upgrades) and `/api` to port 3001. This works locally and under
+  HTTPS without a sandbox-specific application dependency.
+- Saved **student** sessions resume through read-only `/api/device-session`:
+  the server checks the device/user match, participant membership and active
+  room. Saved instructor display data does not bypass the Professor PIN.
+  Desktop identity stays per-tab; a new tab without the same device ID cannot
+  resume another tab's identity.
+- `npm run test:puzzle3` runs isolated button/ECS wiring and session tests plus
+  the real Pyodide 0.27 compiler. The ECS adapter is not XR-controller emulation;
+  controller targeting, forest entry/exit and stored instructor scores still
+  need an active classroom and headset verification.
+- Pyodide error messages can be empty after redirecting stderr. Read the stderr
+  buffer for the traceback. Run each submitted program in its own globals dict
+  so prior attempts cannot supply missing variables.
+- The connected Supabase project currently lacks `public.week_lessons`:
+  `/api/instructor-content` returns 500. Apply the existing
+  `supabase/weekly-content-migration.sql` in Supabase SQL Editor (then the
+  Week 1 content updates in README order); a service-role REST key alone
+  cannot execute SQL migrations. Do not mask this error as verified curriculum.
 
 ## Useful commands
 

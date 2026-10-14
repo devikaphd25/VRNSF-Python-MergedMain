@@ -13,6 +13,7 @@
     "reference:status": "iwsdk reference status",
     "reference:warmup": "iwsdk reference warmup",
     "build": "vite build",
+    "test:puzzle3": "node --experimental-test-module-mocks --import tsx --test tests/*.test.ts",
     "typecheck": "npm run typecheck:client && npm run typecheck:server",
     "typecheck:client": "tsc -p tsconfig.json --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
@@ -41,6 +42,7 @@
     "@types/ws": "^8.18.1",
     "tsx": "^4.23.9",
     "typescript": "^5.5.0",
+    "pyodide": "0.27.0",
     "vite": "^7.1.4",
     "vite-plugin-mkcert": "^1.17.0"
   },

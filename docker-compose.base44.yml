@@ -29,12 +29,32 @@ services:
         echo "VITE_SUPABASE_ANON_KEY=$$VITE_SUPABASE_ANON_KEY" >> .env.development
         echo "VITE_PROFESSOR_VERIFICATION_CODE=$$VITE_PROFESSOR_VERIFICATION_CODE" >> .env.development
 
-        npm install
-        (npm run dev:server 2>&1 || echo '[base44] Backend failed to start — check Supabase credentials') &
+        npm ci
+        node --env-file=.env.server --import tsx --watch server.ts &
         exec ./node_modules/.bin/vite
     restart: on-failure
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8081/ || exit 1"]
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          (async () => {
+            for (const [name, url, method] of [
+              ['Frontend', 'http://localhost:8081/', 'GET'],
+              ['Backend', 'http://localhost:3001/api/device-login', 'OPTIONS']
+            ]) {
+              try {
+                const response = await fetch(url, { method, signal: AbortSignal.timeout(2000) });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                if (name === 'Backend' && !(await response.text()).includes('POST'))
+                  throw new Error('Device login route is unavailable');
+              } catch (error) {
+                console.error(name + ' health check failed: ' + error.message);
+                process.exitCode = 1;
+              }
+            }
+          })();
       interval: 15s
       timeout: 5s
       retries: 6

@@ -34,14 +34,14 @@ import { ExtrudeGeometry, Shape } from "three";
 
 import { JigsawBlock, JigsawButton } from "./jigsawComponents.js";
 import { PUZZLE_LINES, SHUFFLED_ORDER, EXPECTED_OUTPUT } from "./puzzleData.js";
-import { attachToCastleRoot } from "./castleRoot.js";
+import { attachToCastleRoot, createCastleEntity } from "./castleRoot.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runPython } from "./pythonRunner.js";
 import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
 // Mounted on the front wall (inner face at z ≈ +4.8), rotated 180° to face the player at -z.
-const S = 1.1; // global scale factor for the entire puzzle assembly
+const S = 2.2; // global scale factor for the entire puzzle assembly
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;
@@ -315,7 +315,7 @@ export class JigsawPuzzleSystem extends createSystem({
       );
       group.add(body);
 
-      const block = this.world.createTransformEntity(group);
+      const block = createCastleEntity(this.world, group);
       attachToCastleRoot(group);
       block.addComponent(JigsawBlock, {
         lineId: line.id,
@@ -405,7 +405,7 @@ export class JigsawPuzzleSystem extends createSystem({
       base.position.y = -BUTTON_SIZE * 0.34;
       group.add(base);
 
-      const entity = this.world.createTransformEntity(group);
+      const entity = createCastleEntity(this.world, group);
       attachToCastleRoot(group);
       entity.addComponent(JigsawButton, {
         buttonType: config.type,
@@ -531,7 +531,7 @@ export class JigsawPuzzleSystem extends createSystem({
     boardBacking.lookAt(0, 1.3 * S, -1.0);
     attachToCastleRoot(boardBacking);
 
-    const instructionsEntity = this.world.createTransformEntity();
+    const instructionsEntity = createCastleEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/jigsaw-instructions.json",
       maxWidth: 0.6875 * S,
@@ -549,7 +549,7 @@ export class JigsawPuzzleSystem extends createSystem({
   // ── Feedback panel ────────────────────────────────────────
 
   private createFeedbackPanel(): void {
-    const entity = this.world.createTransformEntity();
+    const entity = createCastleEntity(this.world);
     entity.addComponent(PanelUI, {
       config: "./ui/jigsaw-feedback.json",
       maxWidth: 1.2 * S,

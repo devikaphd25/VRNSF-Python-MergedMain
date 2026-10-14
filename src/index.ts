@@ -11,8 +11,6 @@
 import {
   ACESFilmicToneMapping,
   AssetManager,
-  AssetManifest,
-  AssetType,
   DomeGradient,
   EnvironmentType,
   IBLTexture,
@@ -72,6 +70,8 @@ from "./components/challenge-2.component";
 import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
 import { CastleEnvironmentManager } from "./castle/CastleEnvironmentManager";
 import { ForestEnvironmentManager } from "./forest/ForestEnvironmentManager";
+import { restoreStoredStudentSession } from "./services/student-session.services";
+import { classroomAssets } from "./config/classroom-assets";
 
 // ============================================================
 // USER ROLE TYPES
@@ -87,96 +87,6 @@ interface VRUser {
   seat?: string | null;
   loginTime?: string;
 }
-
-// ============================================================
-// ASSETS
-// ============================================================
-
-const assets: AssetManifest = {
-  classroom2: {
-    url: "./gltf/classroom2/theater_classroom2.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  nasaSeatSource: {
-    url: "./gltf/classroom2/vrclass-nasa-classroom.glb",
-    type: AssetType.GLTF,
-    priority: "background"
-  },
-
-  sunsetHDR: {
-    url: "./hdr/venice_sunset_1k.hdr",
-    type: AssetType.HDRTexture,
-    priority: "critical"
-  },
-
-  raiseHandIcon: {
-    url: "./gltf/icons/raise-hand1.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  labEnvironmentModel: {
-    url: "./python-type-lab-models/lab-environment.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  tableModel: {
-    url: "./python-type-lab-models/table.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  cardModel: {
-    url: "./python-type-lab-models/card.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  intBinModel: {
-    url: "./python-type-lab-models/bin-int.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  floatBinModel: {
-    url: "./python-type-lab-models/bin-float.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  boolBinModel: {
-    url: "./python-type-lab-models/bin-bool.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  strBinModel: {
-    url: "./python-type-lab-models/bin-str.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  newCardButtonModel: {
-    url: "./python-type-lab-models/new-card-button.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  resetButtonModel: {
-    url: "./python-type-lab-models/reset-button.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  dispenserModel: {
-    url: "./python-type-lab-models/card-dispenser-animation.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  }
-};
 
 // ============================================================
 // LOGIN HELPERS
@@ -327,7 +237,7 @@ socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
 if (socket.connected) {
   registerCurrentClassroomUser();
 }
-console.log("[Login] Saved user: none");
+console.log("[Login] Validating any saved student device session before classroom entry.");
 
 
 // ============================================================
@@ -337,7 +247,7 @@ console.log("[Login] Saved user: none");
 World.create(
   document.getElementById("scene-container") as HTMLDivElement,
   {
-    assets,
+    assets: classroomAssets,
     xr: {
       sessionMode: SessionMode.ImmersiveVR,
       offer: "always",
@@ -516,6 +426,7 @@ World.create(
 
     const startupMessage = document.getElementById("startup-message");
 
+    currentUser = await restoreStoredStudentSession();
     if (!currentUser) {
       if (startupMessage) startupMessage.style.display = "none";
       const login = await showVRLoginPanel(world, camera);
@@ -529,7 +440,6 @@ World.create(
     (window as any).vrUser = activeUser;
     (window as any).isInstructor = isInstructor;
     (window as any).isStudent = isStudent;
-    connectSocketForUser(activeUser);
 
     if (startupMessage) {
       startupMessage.textContent = isInstructor
@@ -2580,6 +2490,10 @@ World.create(
     envMesh.updateMatrixWorld(true);
     renderer.render(scene, camera);
     disposeVRLoginResources();
+
+    // Register only after every student game listener and scene is ready.
+    // Otherwise an instructor launch can arrive while setup is still running.
+    connectSocketForUser(activeUser);
 
     console.log(`[Index] ✅ Application initialized for ${activeUser.role}: ${activeUser.username}`);
   })

@@ -7,11 +7,60 @@ import express from "express";
 import { supabaseAdmin } from "../services/supabase-admin.service.js";
 import {
   getAppUserByUsername,
+  getAppUserByDeviceId,
   upsertDeviceAppUser,
 } from "../services/app-data.repository.js";
 import type { UserRole } from "../types.js";
 
 const router = express.Router();
+
+// Read-only resume: a saved name/role is not enough. Match the permanent
+// device user, the student's participant record, and an active classroom.
+// Instructor sessions deliberately keep the existing PIN login flow.
+router.post("/device-session", async (req, res) => {
+  const deviceId = String(req.body?.deviceId ?? "").trim();
+  const userId = Number(req.body?.userId);
+  const roomId = String(req.body?.roomId ?? "").trim();
+  const participantId = String(req.body?.participantId ?? "").trim();
+  if (!deviceId || !Number.isInteger(userId) || userId <= 0 || !roomId || !participantId) {
+    return res.status(400).json({ success: false, message: "Invalid device session." });
+  }
+
+  const user = getAppUserByDeviceId(deviceId);
+  if (!user || user.id !== userId || user.role !== "student") {
+    return res.status(401).json({ success: false, message: "Please join the classroom again." });
+  }
+
+  try {
+    const [roomResult, participantResult] = await Promise.all([
+      supabaseAdmin.from("rooms").select("id,current_slide")
+        .eq("id", roomId).eq("is_active", true).maybeSingle(),
+      supabaseAdmin.from("participants").select("id,seat")
+        .eq("id", participantId).eq("room_id", roomId)
+        .eq("device_id", deviceId).eq("user_id", userId)
+        .eq("role", "student").maybeSingle(),
+    ]);
+    if (roomResult.error || participantResult.error) {
+      return res.status(503).json({ success: false, message: "Could not check the classroom session." });
+    }
+    if (!roomResult.data || !participantResult.data) {
+      return res.status(401).json({ success: false, message: "Please join the classroom again." });
+    }
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        role: user.role,
+        seat: participantResult.data.seat,
+      },
+      session: { roomId, participantId, currentSlide: roomResult.data.current_slide },
+    });
+  } catch {
+    return res.status(503).json({ success: false, message: "Could not check the classroom session." });
+  }
+});
 
 router.post("/device-login", async (req, res) => {
   try {
