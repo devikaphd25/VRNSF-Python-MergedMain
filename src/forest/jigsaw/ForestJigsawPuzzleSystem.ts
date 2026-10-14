@@ -95,8 +95,9 @@ const BUTTON_Z = BOARD_CENTER[2];
 const BUTTON_SPACING = 0.24 * S;
 const BUTTON_SIZE = 0.14 * S;
 
-const OWL_X = -2.5 * S;
-const OWL_Z = 2.0 * S;
+const BIRD_X = -3.5 * S;
+const BIRD_Z = 1.5 * S;
+const BIRD_Y = 2.0 * S;
 
 // ── Forest Colours ─────────────────────────────────────────────
 const BLOCK_COLOR = 0x8b6f47;      // wood brown
@@ -171,7 +172,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     this.buildBoard();
     this.createBlocks();
     this.createButtons();
-    this.createOwl();
+    this.createBird();
     this.createFeedbackPanel();
 
     this.queries.heldBlocks.subscribe("qualify", (block) => {
@@ -437,195 +438,149 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Owl with instructions board ─────────────────────────
+  // ── Bird holding instructions board ───────────────────────
 
-  private createOwl(): void {
-    const owl = new Group();
+  private createBird(): void {
+    const bird = new Group();
 
     const bodyMat = new MeshStandardMaterial({
-      color: 0x8b6f47,
-      roughness: 0.85,
+      color: 0x2a6db5,
+      roughness: 0.7,
     });
     const bellyMat = new MeshStandardMaterial({
-      color: 0xd4b896,
-      roughness: 0.85,
+      color: 0xe8a838,
+      roughness: 0.75,
     });
-    const eyeMat = new MeshStandardMaterial({
-      color: 0xffd700,
-      roughness: 0.4,
-      emissive: 0xffd700,
-      emissiveIntensity: 0.2,
+    const wingMat = new MeshStandardMaterial({
+      color: 0x1a4f8a,
+      roughness: 0.7,
     });
     const beakMat = new MeshStandardMaterial({
-      color: 0xd4651f,
-      roughness: 0.6,
+      color: 0xe8a838,
+      roughness: 0.5,
     });
-    const tuftMat = new MeshStandardMaterial({
-      color: 0x6b5a3a,
-      roughness: 0.85,
+    const eyeMat = new MeshStandardMaterial({
+      color: 0x1a1a1a,
+      roughness: 0.3,
+    });
+    const eyeWhiteMat = new MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.3,
     });
 
-    // Body (round)
+    // Body (oval)
     const body = new Mesh(
-      new SphereGeometry(0.3 * S, 16, 16),
+      new SphereGeometry(0.28 * S, 16, 16),
       bodyMat,
     );
-    body.position.y = 1.2 * S;
-    body.scale.y = 1.2;
-    owl.add(body);
+    body.scale.set(1, 1.3, 1.4);
+    bird.add(body);
 
-    // Belly patch
+    // Belly patch (lighter underside)
     const belly = new Mesh(
-      new SphereGeometry(0.2 * S, 12, 12),
+      new SphereGeometry(0.22 * S, 12, 12),
       bellyMat,
     );
-    belly.position.set(0, 1.15 * S, -0.15 * S);
-    belly.scale.y = 1.3;
-    owl.add(belly);
+    belly.position.set(0, -0.04 * S, -0.08 * S);
+    belly.scale.set(0.9, 1.1, 1.2);
+    bird.add(belly);
 
-    // Eyes (two large golden spheres)
-    const leftEye = new Mesh(
-      new SphereGeometry(0.1 * S, 12, 12),
-      eyeMat,
+    // Head (smaller sphere on top)
+    const head = new Mesh(
+      new SphereGeometry(0.18 * S, 14, 14),
+      bodyMat,
     );
-    leftEye.position.set(-0.12 * S, 1.42 * S, -0.22 * S);
-    owl.add(leftEye);
+    head.position.set(0, 0.32 * S, 0.08 * S);
+    bird.add(head);
 
-    const rightEye = new Mesh(
-      new SphereGeometry(0.1 * S, 12, 12),
-      eyeMat,
+    // Eyes — white spheres with black pupils
+    const leftEyeWhite = new Mesh(
+      new SphereGeometry(0.06 * S, 10, 10),
+      eyeWhiteMat,
     );
-    rightEye.position.set(0.12 * S, 1.42 * S, -0.22 * S);
-    owl.add(rightEye);
+    leftEyeWhite.position.set(-0.09 * S, 0.35 * S, 0.16 * S);
+    bird.add(leftEyeWhite);
 
-    // Pupils
-    const pupilMat = new MeshStandardMaterial({ color: 0x1a1a1a });
+    const rightEyeWhite = new Mesh(
+      new SphereGeometry(0.06 * S, 10, 10),
+      eyeWhiteMat,
+    );
+    rightEyeWhite.position.set(0.09 * S, 0.35 * S, 0.16 * S);
+    bird.add(rightEyeWhite);
+
     const leftPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
+      new SphereGeometry(0.03 * S, 8, 8),
+      eyeMat,
     );
-    leftPupil.position.set(-0.12 * S, 1.42 * S, -0.3 * S);
-    owl.add(leftPupil);
+    leftPupil.position.set(-0.09 * S, 0.35 * S, 0.21 * S);
+    bird.add(leftPupil);
 
     const rightPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
+      new SphereGeometry(0.03 * S, 8, 8),
+      eyeMat,
     );
-    rightPupil.position.set(0.12 * S, 1.42 * S, -0.3 * S);
-    owl.add(rightPupil);
+    rightPupil.position.set(0.09 * S, 0.35 * S, 0.21 * S);
+    bird.add(rightPupil);
 
-    // Beak
-    const beak = new Mesh(
-      new ConeGeometry(0.06 * S, 0.12 * S, 8),
+    // Beak — the bird holds the board in its beak
+    const upperBeak = new Mesh(
+      new ConeGeometry(0.05 * S, 0.14 * S, 8),
       beakMat,
     );
-    beak.position.set(0, 1.3 * S, -0.3 * S);
-    beak.rotation.x = Math.PI;
-    owl.add(beak);
+    upperBeak.position.set(0, 0.28 * S, 0.24 * S);
+    upperBeak.rotation.x = -Math.PI / 2;
+    bird.add(upperBeak);
 
-    // Ear tufts
-    const leftTuft = new Mesh(
-      new ConeGeometry(0.06 * S, 0.15 * S, 8),
-      tuftMat,
+    const lowerBeak = new Mesh(
+      new ConeGeometry(0.04 * S, 0.1 * S, 8),
+      beakMat,
     );
-    leftTuft.position.set(-0.2 * S, 1.55 * S, -0.05 * S);
-    owl.add(leftTuft);
+    lowerBeak.position.set(0, 0.22 * S, 0.22 * S);
+    lowerBeak.rotation.x = -Math.PI / 2;
+    bird.add(lowerBeak);
 
-    const rightTuft = new Mesh(
-      new ConeGeometry(0.06 * S, 0.15 * S, 8),
-      tuftMat,
-    );
-    rightTuft.position.set(0.2 * S, 1.55 * S, -0.05 * S);
-    owl.add(rightTuft);
-
-    // Wings (flat ellipsoids on the sides)
-    const wingMat = new MeshStandardMaterial({
-      color: 0x6b5a3a,
-      roughness: 0.85,
-    });
+    // Wings (spread for floating look)
     const leftWing = new Mesh(
-      new SphereGeometry(0.15 * S, 8, 8),
+      new SphereGeometry(0.2 * S, 10, 10),
       wingMat,
     );
-    leftWing.position.set(-0.3 * S, 1.15 * S, -0.05 * S);
-    leftWing.scale.set(0.5, 1.2, 0.6);
-    owl.add(leftWing);
+    leftWing.position.set(-0.3 * S, 0.05 * S, 0);
+    leftWing.scale.set(0.25, 0.7, 1.0);
+    leftWing.rotation.z = 0.3;
+    bird.add(leftWing);
 
     const rightWing = new Mesh(
-      new SphereGeometry(0.15 * S, 8, 8),
+      new SphereGeometry(0.2 * S, 10, 10),
       wingMat,
     );
-    rightWing.position.set(0.3 * S, 1.15 * S, -0.05 * S);
-    rightWing.scale.set(0.5, 1.2, 0.6);
-    owl.add(rightWing);
+    rightWing.position.set(0.3 * S, 0.05 * S, 0);
+    rightWing.scale.set(0.25, 0.7, 1.0);
+    rightWing.rotation.z = -0.3;
+    bird.add(rightWing);
 
-    // Branch the owl sits on
-    const branchMat = new MeshStandardMaterial({
-      color: 0x4a3a1a,
-      roughness: 0.9,
-    });
-    const branch = new Mesh(
-      new CylinderGeometry(0.05 * S, 0.06 * S, 0.8 * S, 8),
-      branchMat,
+    // Tail feathers
+    const tail = new Mesh(
+      new ConeGeometry(0.12 * S, 0.3 * S, 8),
+      wingMat,
     );
-    branch.position.set(0, 0.85 * S, 0);
-    branch.rotation.z = Math.PI / 2;
-    owl.add(branch);
+    tail.position.set(0, 0, -0.3 * S);
+    tail.rotation.x = Math.PI / 2;
+    bird.add(tail);
 
-    // Feet
-    const footMat = new MeshStandardMaterial({ color: 0xd4651f });
-    const leftFoot = new Mesh(
-      new CylinderGeometry(0.03 * S, 0.03 * S, 0.1 * S, 6),
-      footMat,
-    );
-    leftFoot.position.set(-0.08 * S, 0.85 * S, 0);
-    owl.add(leftFoot);
+    // Position the bird floating on the right side, facing the user
+    bird.position.set(BIRD_X, BIRD_Y, BIRD_Z);
+    bird.lookAt(0, BIRD_Y, -1.0);
+    attachToForestRoot(bird);
 
-    const rightFoot = new Mesh(
-      new CylinderGeometry(0.03 * S, 0.03 * S, 0.1 * S, 6),
-      footMat,
-    );
-    rightFoot.position.set(0.08 * S, 0.85 * S, 0);
-    owl.add(rightFoot);
-
-    owl.position.set(OWL_X, 0, OWL_Z);
-    owl.lookAt(0, 1.3 * S, -1.0);
-    attachToForestRoot(owl);
-
-    // Instructions board hung on a tree — positioned between the owl and
-    // the player, facing the player directly.
-    const boardX = OWL_X + 0.3 * S;
-    const boardZ = OWL_Z - 0.6 * S;
-    const boardY = 1.3 * S;
-
-    // Tree trunk behind the board to hang it on
-    const treeTrunk = new Mesh(
-      new CylinderGeometry(0.28 * S, 0.35 * S, 4.5 * S, 12),
-      new MeshStandardMaterial({
-        color: 0x5a3a1a,
-        roughness: 0.95,
-      }),
-    );
-    treeTrunk.position.set(boardX, 2.0 * S, boardZ + 0.2 * S);
-    treeTrunk.lookAt(boardX, 2.0 * S, -1.0);
-    attachToForestRoot(treeTrunk);
-
-    // Branch sticking out to hold the board
-    const boardBranch = new Mesh(
-      new CylinderGeometry(0.04 * S, 0.05 * S, 0.5 * S, 8),
-      new MeshStandardMaterial({
-        color: 0x4a3a1a,
-        roughness: 0.9,
-      }),
-    );
-    boardBranch.position.set(boardX, boardY + 0.55 * S, boardZ + 0.08 * S);
-    boardBranch.rotation.x = Math.PI / 2;
-    boardBranch.lookAt(boardX, boardY + 0.55 * S, -1.0);
-    attachToForestRoot(boardBranch);
+    // ── Instructions board held in the bird's beak ──────────
+    // The board hangs just below the beak, facing the user.
+    const boardX = BIRD_X;
+    const boardZ = BIRD_Z + 0.05 * S;
+    const boardY = BIRD_Y - 0.75 * S;
 
     // Board backing panel
     const boardBacking = new Mesh(
-      new BoxGeometry(0.75 * S, 1.0 * S, 0.03 * S),
+      new BoxGeometry(0.85 * S, 1.15 * S, 0.03 * S),
       new MeshStandardMaterial({
         color: 0xf5f0e6,
         roughness: 0.9,
@@ -636,21 +591,24 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     boardBacking.lookAt(0, boardY, -1.0);
     attachToForestRoot(boardBacking);
 
-    // Rope/nail at top of board attaching it to the tree
-    const nailMat = new MeshStandardMaterial({ color: 0x8a7a5a, roughness: 0.7 });
-    const nail = new Mesh(
-      new CylinderGeometry(0.015 * S, 0.015 * S, 0.08 * S, 6),
-      nailMat,
+    // Small rope/string from beak to board top
+    const stringMat = new MeshStandardMaterial({
+      color: 0x8a7a5a,
+      roughness: 0.8,
+    });
+    const string = new Mesh(
+      new CylinderGeometry(0.008 * S, 0.008 * S, 0.4 * S, 6),
+      stringMat,
     );
-    nail.position.set(boardX, boardY + 0.48 * S, boardZ + 0.01 * S);
-    nail.lookAt(0, boardY + 0.48 * S, -1.0);
-    attachToForestRoot(nail);
+    string.position.set(boardX, boardY + 0.6 * S, boardZ);
+    attachToForestRoot(string);
 
+    // PanelUI for the instruction text
     const instructionsEntity = createForestEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-instructions.json",
-      maxWidth: 0.6875 * S,
-      maxHeight: 0.9375 * S,
+      maxWidth: 0.78 * S,
+      maxHeight: 1.08 * S,
     });
     instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
     instructionsEntity.object3D!.rotation.y = Math.atan2(
@@ -665,7 +623,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     this.pendingInstructions = {
       "instructions-title": "Python Puzzle 3",
       "instructions-body":
-        "The guest list is given below. Ask for a name with input().\nIf the name is on the list, print Welcome, NAME!\nOtherwise print Sorry, NAME is not on the list.\nFinish by printing the guest count with len().",
+        "The guest list is given below. Ask for a name with input().\nIf the name is on the list, print Welcome, NAME!\n— otherwise print Sorry, NAME is not on the list.\nFinish by printing the guest count with len().\nRun it twice: once with a name on the list, once with a name that is not.",
       "instructions-given": "Given:  guests = ['Ava', 'Ben', 'Cai', 'Dee', 'Eli']",
       "instructions-expected-label": "Sample Run:",
       "instructions-expected": "Name: Cai\nWelcome, Cai!\nGuests on list: 5",
