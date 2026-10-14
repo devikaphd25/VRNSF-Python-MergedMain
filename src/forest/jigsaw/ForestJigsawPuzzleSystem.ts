@@ -86,8 +86,8 @@ function createJigsawBlockGeometry(
   return geo;
 }
 
-const SHELF_X = -2.5 * S;
-const SHELF_Z = 3.0;
+const SHELF_X = -2.8;
+const SHELF_Z = 1.0;
 const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S);
