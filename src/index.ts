@@ -11,8 +11,6 @@
 import {
   ACESFilmicToneMapping,
   AssetManager,
-  AssetManifest,
-  AssetType,
   DomeGradient,
   EnvironmentType,
   IBLTexture,
@@ -73,6 +71,7 @@ import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
 import { CastleEnvironmentManager } from "./castle/CastleEnvironmentManager";
 import { ForestEnvironmentManager } from "./forest/ForestEnvironmentManager";
 import { restoreStoredStudentSession } from "./services/student-session.services";
+import { classroomAssets } from "./config/classroom-assets";
 
 // ============================================================
 // USER ROLE TYPES
@@ -88,96 +87,6 @@ interface VRUser {
   seat?: string | null;
   loginTime?: string;
 }
-
-// ============================================================
-// ASSETS
-// ============================================================
-
-const assets: AssetManifest = {
-  classroom2: {
-    url: "./gltf/classroom2/theater_classroom2.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  nasaSeatSource: {
-    url: "./gltf/classroom2/vrclass-nasa-classroom.glb",
-    type: AssetType.GLTF,
-    priority: "background"
-  },
-
-  sunsetHDR: {
-    url: "./hdr/venice_sunset_1k.hdr",
-    type: AssetType.HDRTexture,
-    priority: "critical"
-  },
-
-  raiseHandIcon: {
-    url: "./gltf/icons/raise-hand1.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  labEnvironmentModel: {
-    url: "./python-type-lab-models/lab-environment.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  tableModel: {
-    url: "./python-type-lab-models/table.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  cardModel: {
-    url: "./python-type-lab-models/card.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  intBinModel: {
-    url: "./python-type-lab-models/bin-int.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  floatBinModel: {
-    url: "./python-type-lab-models/bin-float.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  boolBinModel: {
-    url: "./python-type-lab-models/bin-bool.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  strBinModel: {
-    url: "./python-type-lab-models/bin-str.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  newCardButtonModel: {
-    url: "./python-type-lab-models/new-card-button.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  resetButtonModel: {
-    url: "./python-type-lab-models/reset-button.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  },
-
-  dispenserModel: {
-    url: "./python-type-lab-models/card-dispenser-animation.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
-  }
-};
 
 // ============================================================
 // LOGIN HELPERS
@@ -338,7 +247,7 @@ console.log("[Login] Validating any saved student device session before classroo
 World.create(
   document.getElementById("scene-container") as HTMLDivElement,
   {
-    assets,
+    assets: classroomAssets,
     xr: {
       sessionMode: SessionMode.ImmersiveVR,
       offer: "always",

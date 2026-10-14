@@ -49,6 +49,14 @@ start. Provide them via the Base44 secrets dashboard:
 
 ### Classroom connection and verification
 
+- Startup assets live in `src/config/classroom-assets.ts`. Both `classroom2`
+  and `nasaSeatSource` must remain **critical**: IWSDK resolves `World.create`
+  before background assets finish, while classroom construction immediately
+  uses the NASA source after login/session restoration. The model exists in
+  the repo; treating it as background caused a misleading missing-model error.
+  Run `node --experimental-test-module-mocks --import tsx --test tests/classroom-startup.test.ts`
+  inside the app container for loading-policy and GLB-integrity regressions.
+  A rendered login panel verifies startup only, not student/headset entry.
 - Socket.IO uses the page's origin; Vite forwards `/socket.io` (including
   WebSocket upgrades) and `/api` to port 3001. This works locally and under
   HTTPS without a sandbox-specific application dependency.
