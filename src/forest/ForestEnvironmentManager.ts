@@ -13,7 +13,7 @@ import {
   type World,
 } from "@iwsdk/core";
 import type { Object3D } from "three";
-import { loadForestModel } from "./forestModel.js";
+import { buildProceduralForest } from "./proceduralForest.js";
 import { VisibleInteractionSystem } from "./VisibleInteractionSystem.js";
 
 import { socket } from "../network/socket";
@@ -256,14 +256,13 @@ export class ForestEnvironmentManager {
       this.root.add(firefly);
     }
 
-    // Match the full clearing footprint, including the enlarged puzzle props.
-    return loadForestModel(Math.max(ROOM_WIDTH, ROOM_DEPTH) + 6).then((model) => {
-      // Push the forest scenery back so the puzzle assembly near the player
-      // sits in an open clearing instead of being occluded by tree meshes.
-      model.position.z += 4;
-      this.root.add(model);
-      console.log("[Forest] 3D forest model and texture ready.");
-    });
+    // Procedural forest with a clearing in the centre for the puzzle assembly.
+    const footprint = Math.max(ROOM_WIDTH, ROOM_DEPTH) + 6;
+    const clearing = 3.5; // keep trees/bushes away from the puzzle area
+    const forest = buildProceduralForest(footprint, clearing);
+    this.root.add(forest);
+    console.log("[Forest] Procedural forest ready.");
+    return Promise.resolve();
   }
 
   // ── Network ─────────────────────────────────────────────────
