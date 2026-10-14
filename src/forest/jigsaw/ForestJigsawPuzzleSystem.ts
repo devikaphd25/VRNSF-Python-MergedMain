@@ -42,7 +42,7 @@ import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
-const S = 2.2;
+const S = 3.96;
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;
@@ -131,6 +131,10 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private feedbackEntityIndex = -1;
   private feedbackDoc: UIKitDocument | null = null;
   private pendingFeedback: { title: string; body: string } | null = null;
+  private instructionsEntity: Entity | null = null;
+  private instructionsEntityIndex = -1;
+  private instructionsDoc: UIKitDocument | null = null;
+  private pendingInstructions: Record<string, string> | null = null;
   private pendingBlockText: Map<number, string> = new Map();
   private pendingButtonLabels: Map<number, string> = new Map();
   private leaves: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
@@ -231,6 +235,22 @@ export class ForestJigsawPuzzleSystem extends createSystem({
           this.feedbackDoc = doc;
         }
       }
+
+      if (this.instructionsEntityIndex >= 0 && !this.instructionsDoc) {
+        const doc = docs[this.instructionsEntityIndex] as
+          | UIKitDocument
+          | undefined;
+        if (doc) {
+          this.instructionsDoc = doc;
+        }
+      }
+    }
+
+    if (this.instructionsDoc && this.pendingInstructions) {
+      for (const [id, text] of Object.entries(this.pendingInstructions)) {
+        setTextSafe(this.instructionsDoc, id, text);
+      }
+      this.pendingInstructions = null;
     }
 
     if (this.feedbackDoc && this.pendingFeedback) {
@@ -578,8 +598,38 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     owl.lookAt(0, 1.3 * S, -1.0);
     attachToForestRoot(owl);
 
-    // Standalone instructions board — positioned between the owl and the
-    // player, facing the player directly.
+    // Instructions board hung on a tree — positioned between the owl and
+    // the player, facing the player directly.
+    const boardX = OWL_X + 0.3 * S;
+    const boardZ = OWL_Z - 0.6 * S;
+    const boardY = 1.3 * S;
+
+    // Tree trunk behind the board to hang it on
+    const treeTrunk = new Mesh(
+      new CylinderGeometry(0.28 * S, 0.35 * S, 4.5 * S, 12),
+      new MeshStandardMaterial({
+        color: 0x5a3a1a,
+        roughness: 0.95,
+      }),
+    );
+    treeTrunk.position.set(boardX, 2.0 * S, boardZ + 0.2 * S);
+    treeTrunk.lookAt(boardX, 2.0 * S, -1.0);
+    attachToForestRoot(treeTrunk);
+
+    // Branch sticking out to hold the board
+    const boardBranch = new Mesh(
+      new CylinderGeometry(0.04 * S, 0.05 * S, 0.5 * S, 8),
+      new MeshStandardMaterial({
+        color: 0x4a3a1a,
+        roughness: 0.9,
+      }),
+    );
+    boardBranch.position.set(boardX, boardY + 0.55 * S, boardZ + 0.08 * S);
+    boardBranch.rotation.x = Math.PI / 2;
+    boardBranch.lookAt(boardX, boardY + 0.55 * S, -1.0);
+    attachToForestRoot(boardBranch);
+
+    // Board backing panel
     const boardBacking = new Mesh(
       new BoxGeometry(0.75 * S, 1.0 * S, 0.03 * S),
       new MeshStandardMaterial({
@@ -588,11 +638,19 @@ export class ForestJigsawPuzzleSystem extends createSystem({
         side: DoubleSide,
       }),
     );
-    const boardX = OWL_X + 0.3 * S;
-    const boardZ = OWL_Z - 0.6 * S;
-    boardBacking.position.set(boardX, 1.3 * S, boardZ);
-    boardBacking.lookAt(0, 1.3 * S, -1.0);
+    boardBacking.position.set(boardX, boardY, boardZ);
+    boardBacking.lookAt(0, boardY, -1.0);
     attachToForestRoot(boardBacking);
+
+    // Rope/nail at top of board attaching it to the tree
+    const nailMat = new MeshStandardMaterial({ color: 0x8a7a5a, roughness: 0.7 });
+    const nail = new Mesh(
+      new CylinderGeometry(0.015 * S, 0.015 * S, 0.08 * S, 6),
+      nailMat,
+    );
+    nail.position.set(boardX, boardY + 0.48 * S, boardZ + 0.01 * S);
+    nail.lookAt(0, boardY + 0.48 * S, -1.0);
+    attachToForestRoot(nail);
 
     const instructionsEntity = createForestEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
@@ -600,12 +658,24 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       maxWidth: 0.6875 * S,
       maxHeight: 0.9375 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, 1.3 * S, boardZ - 0.02 * S);
+    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
     instructionsEntity.object3D!.rotation.y = Math.atan2(
       0 - boardX,
       -1.0 - boardZ,
     );
     attachToForestRoot(instructionsEntity.object3D!);
+    this.instructionsEntity = instructionsEntity;
+    this.instructionsEntityIndex = instructionsEntity.index;
+
+    // Queue the instruction text to be set once the PanelUI document loads
+    this.pendingInstructions = {
+      "instructions-title": "Python Puzzle 3",
+      "instructions-body":
+        "The guest list is given below. Ask for a name with input().\nIf the name is on the list, print Welcome, NAME!\nOtherwise print Sorry, NAME is not on the list.\nFinish by printing the guest count with len().",
+      "instructions-given": "Given:  guests = ['Ava', 'Ben', 'Cai', 'Dee', 'Eli']",
+      "instructions-expected-label": "Sample Run:",
+      "instructions-expected": "Name: Cai\nWelcome, Cai!\nGuests on list: 5",
+    };
   }
 
   // ── Feedback panel ────────────────────────────────────────
@@ -975,6 +1045,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       button.dispose();
     }
     this.feedbackEntity?.dispose();
+    this.instructionsEntity?.dispose();
     for (const leaf of this.leaves) {
       leaf.mesh.parent?.remove(leaf.mesh);
     }
