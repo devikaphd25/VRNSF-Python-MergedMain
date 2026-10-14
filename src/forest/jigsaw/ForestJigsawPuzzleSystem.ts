@@ -43,7 +43,7 @@ import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
 const S = 2.2;
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 2.5];
+const BOARD_CENTER: [number, number, number] = [0, 1.4, 3.5];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;
 const SLOT_HEIGHT = 0.14 * S;
@@ -86,8 +86,9 @@ function createJigsawBlockGeometry(
   return geo;
 }
 
-const SHELF_X = 2.5 * S;
-const SHELF_Z = 2.3;
+const SHELF_X = -2.5 * S;
+const SHELF_Z = 3.0;
+const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S);
 const BUTTON_Z = BOARD_CENTER[2];
@@ -281,18 +282,6 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private buildBoard(): void {
     const boardGroup = new Group();
 
-    // Large tree trunk behind the board
-    const trunkMat = new MeshStandardMaterial({
-      color: 0x5a3a1a,
-      roughness: 0.95,
-    });
-    const trunk = new Mesh(
-      new CylinderGeometry(0.9 * S, 1.1 * S, 5.5 * S, 12),
-      trunkMat,
-    );
-    trunk.position.set(0, 2.5 * S, BOARD_CENTER[2] + 0.15 * S);
-    boardGroup.add(trunk);
-
     // Board panel (wooden plank)
     const boardMat = new MeshStandardMaterial({
       color: BOARD_COLOR,
@@ -369,6 +358,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
 
       const home = this.homePositions.get(origIdx)!;
       group.position.set(home[0], home[1], home[2]);
+      group.rotation.y = SHELF_ROTATION_Y;
 
       this.blockEntities.set(origIdx, block);
       this.blockMaterials.set(origIdx, bodyMat);
@@ -1019,7 +1009,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     const origIdx = block.getValue(ForestJigsawBlock, "originalIndex") ?? 0;
     const home = this.homePositions.get(origIdx)!;
     block.object3D!.position.set(home[0], home[1], home[2]);
-    block.object3D!.rotation.set(0, 0, 0);
+    block.object3D!.rotation.set(0, SHELF_ROTATION_Y, 0);
     block.object3D!.updateMatrixWorld(true);
     this.setBlockText(block);
   }
