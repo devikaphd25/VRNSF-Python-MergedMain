@@ -42,8 +42,8 @@ import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
-const S = 3.96;
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
+const S = 2.8;
+const BOARD_CENTER: [number, number, number] = [0, 1.4, 2.5];
 const BOARD_WIDTH = 1.4 * S;
 const BOARD_HEIGHT = 1.0 * S;
 const SLOT_HEIGHT = 0.14 * S;
@@ -87,7 +87,7 @@ function createJigsawBlockGeometry(
 }
 
 const SHELF_X = 2.5 * S;
-const SHELF_Z = 4.6;
+const SHELF_Z = 2.3;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S);
 const BUTTON_Z = BOARD_CENTER[2];
@@ -95,7 +95,7 @@ const BUTTON_SPACING = 0.24 * S;
 const BUTTON_SIZE = 0.14 * S;
 
 const OWL_X = -2.5 * S;
-const OWL_Z = 3.5 * S;
+const OWL_Z = 2.0 * S;
 
 // ── Forest Colours ─────────────────────────────────────────────
 const BLOCK_COLOR = 0x8b6f47;      // wood brown
@@ -687,7 +687,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       maxWidth: 1.2 * S,
       maxHeight: 0.6 * S,
     });
-    entity.object3D!.position.set(0, 2.3 * S, 4.8);
+    entity.object3D!.position.set(0, 2.3 * S, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToForestRoot(entity.object3D!);
     this.feedbackEntity = entity;

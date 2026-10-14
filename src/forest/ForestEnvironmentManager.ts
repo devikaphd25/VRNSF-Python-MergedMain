@@ -258,6 +258,9 @@ export class ForestEnvironmentManager {
 
     // Match the full clearing footprint, including the enlarged puzzle props.
     return loadForestModel(Math.max(ROOM_WIDTH, ROOM_DEPTH) + 6).then((model) => {
+      // Push the forest scenery back so the puzzle assembly near the player
+      // sits in an open clearing instead of being occluded by tree meshes.
+      model.position.z += 4;
       this.root.add(model);
       console.log("[Forest] 3D forest model and texture ready.");
     });
