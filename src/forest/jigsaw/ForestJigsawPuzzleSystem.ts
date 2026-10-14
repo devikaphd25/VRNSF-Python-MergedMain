@@ -695,7 +695,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     obj.getWorldPosition(this.tmpVec);
 
     const dz = Math.abs(this.tmpVec.z - BOARD_CENTER[2]);
-    if (dz > 1.0) {
+    if (dz > 3.0) {
       this.returnBlockHome(block);
       return;
     }
@@ -703,8 +703,8 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     const dx = this.tmpVec.x - BOARD_CENTER[0];
     const dy = this.tmpVec.y - BOARD_CENTER[1];
     if (
-      Math.abs(dx) > BOARD_WIDTH / 2 + 0.15 * S ||
-      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.15 * S
+      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
+      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
     ) {
       this.returnBlockHome(block);
       return;
