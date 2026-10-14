@@ -56,9 +56,9 @@ export class ForestEnvironmentManager {
 
     this.root.name = "ForestClearingRoot";
     this.root.visible = false;
-    this.world.createTransformEntity(this.root);
+    const rootEntity = this.world.createTransformEntity(this.root);
 
-    setForestRoot(this.root);
+    setForestRoot(this.root, rootEntity);
     this.installJigsaw();
 
     this.modelReady = this.buildForest();

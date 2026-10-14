@@ -63,9 +63,9 @@ export class CastleEnvironmentManager {
 
     this.root.name = "CastleRoomRoot";
     this.root.visible = false;
-    this.world.createTransformEntity(this.root);
+    const rootEntity = this.world.createTransformEntity(this.root);
 
-    setCastleRoot(this.root);
+    setCastleRoot(this.root, rootEntity);
     this.installJigsaw();
 
     this.buildCastle();

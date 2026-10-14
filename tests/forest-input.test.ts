@@ -70,8 +70,8 @@ beforeEach(() => {
   world.activeLevel = { value: world.sceneEntity };
   forest = new THREE.Group();
   world.scene.add(forest);
-  world.createTransformEntity(forest);
-  setForestRoot(forest);
+  const forestEntity = world.createTransformEntity(forest);
+  setForestRoot(forest, forestEntity);
   world.registerSystem(VisibleInteractionSystem, { priority: -5 });
   world.registerSystem(InputSystem, { priority: -4 });
   world.registerSystem(TransformSystem, { priority: 0 });

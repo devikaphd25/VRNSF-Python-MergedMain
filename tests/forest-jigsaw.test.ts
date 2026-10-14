@@ -74,7 +74,7 @@ beforeEach(() => {
     dispatchEvent: (event: Event) => { exits.push(event.type); return true; },
   } as any;
   root = new THREE.Group();
-  setForestRoot(root);
+  setForestRoot(root, new TestEntity(root) as any);
   system = new ForestJigsawPuzzleSystem();
   system.world = {
     createTransformEntity(object = new THREE.Group(), options: any = {}) {

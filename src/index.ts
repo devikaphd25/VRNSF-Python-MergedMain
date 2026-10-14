@@ -440,7 +440,6 @@ World.create(
     (window as any).vrUser = activeUser;
     (window as any).isInstructor = isInstructor;
     (window as any).isStudent = isStudent;
-    connectSocketForUser(activeUser);
 
     if (startupMessage) {
       startupMessage.textContent = isInstructor
@@ -2491,6 +2490,10 @@ World.create(
     envMesh.updateMatrixWorld(true);
     renderer.render(scene, camera);
     disposeVRLoginResources();
+
+    // Register only after every student game listener and scene is ready.
+    // Otherwise an instructor launch can arrive while setup is still running.
+    connectSocketForUser(activeUser);
 
     console.log(`[Index] ✅ Application initialized for ${activeUser.role}: ${activeUser.username}`);
   })

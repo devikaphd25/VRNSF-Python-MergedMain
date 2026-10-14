@@ -36,7 +36,7 @@ import { ExtrudeGeometry, Shape } from "three";
 
 import { ForestJigsawBlock, ForestJigsawButton } from "./forestJigsawComponents.js";
 import { FOREST_PUZZLE_LINES, FOREST_SHUFFLED_ORDER, FOREST_EXPECTED_OUTPUT } from "./forestPuzzleData.js";
-import { attachToForestRoot } from "../forestRoot.js";
+import { attachToForestRoot, createForestEntity } from "../forestRoot.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
@@ -312,7 +312,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       );
       group.add(body);
 
-      const block = this.world.createTransformEntity(group);
+      const block = createForestEntity(this.world, group);
       attachToForestRoot(group);
       block.addComponent(ForestJigsawBlock, {
         lineId: line.id,
@@ -398,7 +398,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       base.position.y = -BUTTON_SIZE * 0.34;
       group.add(base);
 
-      const entity = this.world.createTransformEntity(group);
+      const entity = createForestEntity(this.world, group);
       attachToForestRoot(group);
       entity.addComponent(ForestJigsawButton, {
         buttonType: config.type,
@@ -594,7 +594,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     boardBacking.lookAt(0, 1.3 * S, -1.0);
     attachToForestRoot(boardBacking);
 
-    const instructionsEntity = this.world.createTransformEntity();
+    const instructionsEntity = createForestEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-instructions.json",
       maxWidth: 0.6875 * S,
@@ -611,7 +611,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   // ── Feedback panel ────────────────────────────────────────
 
   private createFeedbackPanel(): void {
-    const entity = this.world.createTransformEntity();
+    const entity = createForestEntity(this.world);
     entity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-feedback.json",
       maxWidth: 1.2 * S,

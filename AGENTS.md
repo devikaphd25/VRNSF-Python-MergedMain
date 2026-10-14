@@ -57,6 +57,18 @@ start. Provide them via the Base44 secrets dashboard:
   Run `node --experimental-test-module-mocks --import tsx --test tests/classroom-startup.test.ts`
   inside the app container for loading-policy and GLB-integrity regressions.
   A rendered login panel verifies startup only, not student/headset entry.
+- Castle/forest puzzle entities must use `createCastleEntity` or
+  `createForestEntity` with the environment's ECS parent. `Object3D.add` alone
+  is overwritten by IWSDK's first TransformSystem update, detaching blocks,
+  buttons, instructions and feedback from the environment visibility toggle.
+- Connect the classroom socket only after all environment managers and global
+  classroom references are installed. Registering earlier exposes a student to
+  instructor launch/seat events before their game listeners exist. Seat retries
+  and XR `sessionstart` restoration must leave active game origins alone; the
+  normal `restoreClassroomSeat` event places the student after game exit.
+  `node --experimental-test-module-mocks --import tsx --test tests/puzzle-loading.test.ts`
+  verifies all three puzzle launch listeners and parenting with real ECS
+  transforms, plus the seat guard. It does not emulate instructor/headset input.
 - Socket.IO uses the page's origin; Vite forwards `/socket.io` (including
   WebSocket upgrades) and `/api` to port 3001. This works locally and under
   HTTPS without a sandbox-specific application dependency.
