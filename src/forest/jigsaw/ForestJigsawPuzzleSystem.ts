@@ -44,14 +44,14 @@ import { socket } from "../../network/socket";
 // ── Layout ────────────────────────────────────────────────────
 const S = 2.2;
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
-const BOARD_WIDTH = 1.4 * S;
-const BOARD_HEIGHT = 1.0 * S;
-const SLOT_HEIGHT = 0.14 * S;
+const BOARD_WIDTH = 1.6 * S;
+const BOARD_HEIGHT = 1.6 * S;
+const SLOT_HEIGHT = 0.17 * S;
 const NUM_SLOTS = 7;
 
-const BLOCK_WIDTH = 1.1 * S;
-const BLOCK_HEIGHT = 0.11 * S;
-const BLOCK_THICKNESS = 0.03 * S;
+const BLOCK_WIDTH = 0.9 * S;
+const BLOCK_HEIGHT = 0.14 * S;
+const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
 const TAB_RADIUS = BLOCK_HEIGHT * 0.35;
 
@@ -142,6 +142,8 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private leaves: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
   private leafAnimation = false;
   private tmpVec = new Vector3();
+  private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
+  private tmpLerp = new Vector3();
 
   // ── Lifecycle ──────────────────────────────────────────────
 
@@ -271,6 +273,28 @@ export class ForestJigsawPuzzleSystem extends createSystem({
         this.pendingFeedback.body,
       );
       this.pendingFeedback = null;
+    }
+
+    // Smoothly lerp blocks toward their target positions (placement / home / indent).
+    for (const [idx, anim] of this.animatingBlocks) {
+      if (anim.entity.hasComponent(Grabbed)) {
+        this.animatingBlocks.delete(idx);
+        continue;
+      }
+      const obj = anim.entity.object3D!;
+      this.tmpLerp.copy(obj.position).lerp(anim.targetPos, 0.15);
+      obj.position.copy(this.tmpLerp);
+      let diff = anim.targetRotY - obj.rotation.y;
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+      obj.rotation.y += diff * 0.15;
+      obj.updateMatrixWorld(true);
+      if (obj.position.distanceTo(anim.targetPos) < 0.01 && Math.abs(diff) < 0.01) {
+        obj.position.copy(anim.targetPos);
+        obj.rotation.set(0, anim.targetRotY, 0);
+        obj.updateMatrixWorld(true);
+        this.animatingBlocks.delete(idx);
+      }
     }
 
     if (!(window as any).isForestActive) return;
@@ -746,12 +770,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     targetBlock.setValue(ForestJigsawBlock, "indent", indent);
 
     const pos = this.slotPositions[slot];
-    targetBlock.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    targetBlock.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(targetBlock.index, {
+      entity: targetBlock,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(targetBlock);
   }
 
@@ -955,13 +978,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     block.setValue(ForestJigsawBlock, "slotIndex", slot);
     const indent = block.getValue(ForestJigsawBlock, "indent") ?? 0;
     const pos = this.slotPositions[slot];
-    block.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    block.object3D!.rotation.set(0, 0, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(block);
   }
 
@@ -970,9 +991,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     block.setValue(ForestJigsawBlock, "indent", 0);
     const origIdx = block.getValue(ForestJigsawBlock, "originalIndex") ?? 0;
     const home = this.homePositions.get(origIdx)!;
-    block.object3D!.position.set(home[0], home[1], home[2]);
-    block.object3D!.rotation.set(0, SHELF_ROTATION_Y, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(home[0], home[1], home[2]),
+      targetRotY: SHELF_ROTATION_Y,
+    });
     this.setBlockText(block);
   }
 
@@ -1002,6 +1025,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       leaf.mesh.parent?.remove(leaf.mesh);
     }
     this.leaves = [];
+    this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();
     this.pendingBlockText.clear();
