@@ -388,7 +388,7 @@ export class CastleEnvironmentManager {
 
   private connectNetwork(): void {
     socket.on("gameChanged", data => {
-      if (data?.gameId === "python-puzzle-1" || data?.gameId === "python-puzzle-2") {
+      if (data?.gameId === "python-puzzle-1") {
         this.enter();
       }
     });

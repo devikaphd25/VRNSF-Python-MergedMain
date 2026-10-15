@@ -70,6 +70,7 @@ from "./components/challenge-2.component";
 import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
 import { CastleEnvironmentManager } from "./castle/CastleEnvironmentManager";
 import { ForestEnvironmentManager } from "./forest/ForestEnvironmentManager";
+import { OceanEnvironmentManager } from "./ocean/OceanEnvironmentManager";
 import { restoreStoredStudentSession } from "./services/student-session.services";
 import { classroomAssets } from "./config/classroom-assets";
 
@@ -2438,6 +2439,14 @@ World.create(
         ])
       : null;
 
+    const oceanEnvironmentManager = isStudent
+      ? new OceanEnvironmentManager(world, [
+          envMesh,
+          hintEntity?.object3D,
+          raiseHandEntity?.object3D,
+        ])
+      : null;
+
     // ========================================================
     // DEBUGGING REFERENCES
     // ========================================================
@@ -2476,6 +2485,7 @@ World.create(
     (window as any).labEnvironmentManager = labEnvironmentManager;
     (window as any).castleEnvironmentManager = castleEnvironmentManager;
     (window as any).forestEnvironmentManager = forestEnvironmentManager;
+    (window as any).oceanEnvironmentManager = oceanEnvironmentManager;
 
     // ========================================================
     // REMOVE STARTUP SCREEN

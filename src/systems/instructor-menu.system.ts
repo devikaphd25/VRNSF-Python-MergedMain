@@ -2249,7 +2249,7 @@ export class InstructorDashboardSystem extends createSystem({
   private activatePythonPuzzle2(): void {
     if (this.isEndingClass) return;
 
-    console.log("[InstructorDashboard] Activating Python Puzzle 2 (castle)");
+    console.log("[InstructorDashboard] Activating Python Puzzle 2 (ocean)");
 
     socket.emit("instructorSendAllToDestination", {
       destination: "Game 3",
@@ -2262,7 +2262,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.hasObservedActiveLabStudent = false;
     this.labResultsFinalized = false;
 
-    this.showStatusMessage("Students sent to the castle");
+    this.showStatusMessage("Students sent to the ocean");
     this.setDashboardVisible(false);
     this.setLabMonitorAvailable(false);
     socket.emit("requestStudentList");
