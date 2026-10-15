@@ -42,9 +42,9 @@ import { socket } from "../../network/socket";
 // ── Layout ────────────────────────────────────────────────────
 // Mounted on the front wall (inner face at z ≈ +4.8), rotated 180° to face the player at -z.
 const S = 2.2; // global scale factor for the entire puzzle assembly
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
+const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
 const BOARD_WIDTH = 1.4 * S;
-const BOARD_HEIGHT = 1.0 * S;
+const BOARD_HEIGHT = 1.6 * S;
 const SLOT_HEIGHT = 0.14 * S;
 const NUM_SLOTS = 7;
 
@@ -99,16 +99,18 @@ function createJigsawBlockGeometry(
   return geo;
 }
 
-const SHELF_X = 2.5 * S;
-const SHELF_Z = 4.6; // slightly in front of the wall so blocks are grabbable
+const SHELF_X = 2.8;
+const SHELF_Z = 1.0;
+const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S); // right side of the board (player's right = -x)
 const BUTTON_Z = BOARD_CENTER[2]; // mounted on wall, same plane as board
 const BUTTON_SPACING = 0.24 * S; // vertical spacing
 const BUTTON_SIZE = 0.14 * S;
 
-const SOLDIER_X = -2.5 * S;
-const SOLDIER_Z = 3.5 * S; // standing on the floor near the wall
+const SOLDIER_X = -3.5 * S;
+const SOLDIER_Z = 1.5 * S; // standing on the floor, left of the player
+const SOLDIER_SCALE = 1.5; // make the soldier larger so it's clearly visible
 
 // ── Colours ──────────────────────────────────────────────────
 const BLOCK_COLOR = 0xd4a76a;
@@ -188,6 +190,9 @@ export class JigsawPuzzleSystem extends createSystem({
       if (slot >= 0) {
         block.setValue(JigsawBlock, "slotIndex", -1);
       }
+      // Reset rotation so the block faces the board while held.
+      block.object3D!.rotation.set(0, 0, 0);
+      block.object3D!.updateMatrixWorld(true);
     });
 
     // Handle block release — snap to nearest slot or return home.
@@ -354,6 +359,7 @@ export class JigsawPuzzleSystem extends createSystem({
 
       const home = this.homePositions.get(origIdx)!;
       group.position.set(home[0], home[1], home[2]);
+      group.rotation.y = SHELF_ROTATION_Y;
 
       this.blockEntities.set(origIdx, block);
       this.blockMaterials.set(origIdx, bodyMat);
@@ -509,6 +515,7 @@ export class JigsawPuzzleSystem extends createSystem({
     soldier.add(rightLeg);
 
     soldier.position.set(SOLDIER_X, 0, SOLDIER_Z);
+    soldier.scale.setScalar(SOLDIER_SCALE);
     soldier.lookAt(0, 1.3 * S, -1.0);
     attachToCastleRoot(soldier);
 
@@ -516,7 +523,7 @@ export class JigsawPuzzleSystem extends createSystem({
     // player, facing the player directly (not parented to the soldier, so the
     // lookAt rotation on the soldier doesn't interfere).
     const boardBacking = new Mesh(
-      new BoxGeometry(0.75 * S, 1.0 * S, 0.03 * S),
+      new BoxGeometry(0.85 * S, 1.15 * S, 0.03 * S),
       new MeshStandardMaterial({
         color: 0xf5f0e6,
         roughness: 0.9,
@@ -524,20 +531,21 @@ export class JigsawPuzzleSystem extends createSystem({
       }),
     );
     // Place toward the player from the soldier, at chest height.
-    const boardX = SOLDIER_X + 0.3 * S;
-    const boardZ = SOLDIER_Z - 0.6 * S;
-    boardBacking.position.set(boardX, 1.3 * S, boardZ);
+    const boardX = SOLDIER_X;
+    const boardZ = SOLDIER_Z + 0.05 * S;
+    const boardY = 1.3 * S;
+    boardBacking.position.set(boardX, boardY, boardZ);
     // Face the player at (0, ~1.3, -1.0)
-    boardBacking.lookAt(0, 1.3 * S, -1.0);
+    boardBacking.lookAt(0, boardY, -1.0);
     attachToCastleRoot(boardBacking);
 
     const instructionsEntity = createCastleEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/jigsaw-instructions.json",
-      maxWidth: 0.6875 * S,
-      maxHeight: 0.9375 * S,
+      maxWidth: 0.78 * S,
+      maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, 1.3 * S, boardZ - 0.02 * S);
+    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
     // PanelUI text faces +z by default; rotate to face the player.
     instructionsEntity.object3D!.rotation.y = Math.atan2(
       0 - boardX,
@@ -555,7 +563,7 @@ export class JigsawPuzzleSystem extends createSystem({
       maxWidth: 1.2 * S,
       maxHeight: 0.6 * S,
     });
-    entity.object3D!.position.set(0, 2.3 * S, 4.8);
+    entity.object3D!.position.set(0, 2.3 * S, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToCastleRoot(entity.object3D!);
     this.feedbackEntity = entity;
@@ -572,7 +580,7 @@ export class JigsawPuzzleSystem extends createSystem({
     // may release the block slightly in front of the wall, so use a generous
     // z tolerance instead of a tight 3D distance from the board centre.
     const dz = Math.abs(this.tmpVec.z - BOARD_CENTER[2]);
-    if (dz > 1.0) {
+    if (dz > 3.0) {
       this.returnBlockHome(block);
       return;
     }
@@ -581,8 +589,8 @@ export class JigsawPuzzleSystem extends createSystem({
     const dx = this.tmpVec.x - BOARD_CENTER[0];
     const dy = this.tmpVec.y - BOARD_CENTER[1];
     if (
-      Math.abs(dx) > BOARD_WIDTH / 2 + 0.15 * S ||
-      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.15 * S
+      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
+      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
     ) {
       this.returnBlockHome(block);
       return;
@@ -897,7 +905,7 @@ export class JigsawPuzzleSystem extends createSystem({
     const origIdx = block.getValue(JigsawBlock, "originalIndex") ?? 0;
     const home = this.homePositions.get(origIdx)!;
     block.object3D!.position.set(home[0], home[1], home[2]);
-    block.object3D!.rotation.set(0, 0, 0);
+    block.object3D!.rotation.set(0, SHELF_ROTATION_Y, 0);
     block.object3D!.updateMatrixWorld(true);
     this.setBlockText(block);
   }
