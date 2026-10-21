@@ -105,6 +105,18 @@ function place(index: number, slot = index) {
 }
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
+/**
+ * Runs the block-movement animation to completion the way the render loop does.
+ * Blocks no longer snap on placement/indent/reset: they lerp toward their target
+ * each frame, so a position assertion must advance the frames first.
+ */
+function settleAnimations() {
+  for (let frame = 0; frame < 600 && system.animatingBlocks.size > 0; frame++) {
+    system.update(1 / 60);
+  }
+  assert.equal(system.animatingBlocks.size, 0, "block movement never settled");
+}
+
 test("All five visible labels share their ray-interactable button owner", () => {
   assert.equal(system.queries.buttons.entities.length, 5);
   for (const entity of system.queries.buttons.entities as TestEntity[]) {
@@ -119,6 +131,7 @@ test("Indent and Dedent modify the last placed block and clamp to zero through t
   place(3);
   press("indent");
   assert.equal(block(3).getValue(ForestJigsawBlock, "indent"), 1);
+  settleAnimations();
   assert.equal(block(3).object3D.position.x, -0.33);
   press("indent"); press("indent");
   assert.equal(block(3).getValue(ForestJigsawBlock, "indent"), 2);
@@ -126,12 +139,14 @@ test("Indent and Dedent modify the last placed block and clamp to zero through t
   assert.equal(block(3).getValue(ForestJigsawBlock, "indent"), 1);
   press("dedent"); press("dedent");
   assert.equal(block(3).getValue(ForestJigsawBlock, "indent"), 0);
+  settleAnimations();
   assert.equal(block(3).object3D.position.x, 0);
 });
 
 test("Reset clears every slot and indentation and restores shelf positions", () => {
   place(3); press("indent"); place(5); press("indent");
   press("reset");
+  settleAnimations();
   for (let index = 0; index < 7; index++) {
     assert.equal(block(index).getValue(ForestJigsawBlock, "slotIndex"), -1);
     assert.equal(block(index).getValue(ForestJigsawBlock, "indent"), 0);

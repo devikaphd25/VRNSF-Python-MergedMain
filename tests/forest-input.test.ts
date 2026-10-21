@@ -77,7 +77,11 @@ beforeEach(() => {
   world.registerSystem(TransformSystem, { priority: 0 });
   world.registerSystem(ForestJigsawPuzzleSystem, { priority: 1 });
   system = world.getSystem(ForestJigsawPuzzleSystem);
-  space = new THREE.Object3D();
+  // A controller ray travels down local -Z. Camera.lookAt aligns -Z, whereas
+  // Object3D.lookAt aligns +Z and would aim this fixture away from the puzzle,
+  // so the ray met the sky dome instead of the buttons.
+  space = new THREE.PerspectiveCamera();
+  world.scene.add(space);
   pointer = createRayPointer(() => world.camera, { current: space }, {});
   tick();
 });
@@ -116,7 +120,9 @@ function press(type: string) {
   assert.ok(intersection?.object, `Ray missed ${type}`);
   let owner: THREE.Object3D | null = intersection.object;
   while (owner && owner !== entity.object3D) owner = owner.parent;
-  assert.equal(owner, entity.object3D, `Ray hit another entity instead of ${type}`);
+  // Compare identity with a boolean: formatting a failed object comparison
+  // walks the whole ECS/scene graph and exhausts memory in the headless runner.
+  assert.equal(owner === entity.object3D, true, `Ray hit another entity instead of ${type}`);
   pointer.down({ timeStamp: performance.now(), button: 0 });
   tick();
   assert.equal(entity.hasComponent(tags.Pressed), true, `${type} never received Pressed`);

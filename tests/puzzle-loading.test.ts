@@ -39,6 +39,8 @@ const { CastleEnvironmentManager } = await import("../src/castle/CastleEnvironme
 const { ForestEnvironmentManager } = await import("../src/forest/ForestEnvironmentManager.ts");
 const { JigsawPuzzleSystem } = await import("../src/castle/jigsaw/JigsawPuzzleSystem.ts");
 const { ForestJigsawPuzzleSystem } = await import("../src/forest/jigsaw/ForestJigsawPuzzleSystem.ts");
+const { OceanEnvironmentManager } = await import("../src/ocean/OceanEnvironmentManager.ts");
+const { OceanJigsawPuzzleSystem } = await import("../src/ocean/jigsaw/OceanJigsawPuzzleSystem.ts");
 const { SeatSystem } = await import("../src/systems/seat.system.ts");
 
 let world: World;
@@ -70,7 +72,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const system of [ForestJigsawPuzzleSystem, JigsawPuzzleSystem, TransformSystem]) {
+  for (const system of [ForestJigsawPuzzleSystem, OceanJigsawPuzzleSystem,
+    JigsawPuzzleSystem, TransformSystem]) {
     world.unregisterSystem(system);
   }
   world.scene.clear();
@@ -90,8 +93,8 @@ function visibleInScene(object: THREE.Object3D): boolean {
   }
   return true;
 }
-function assertPuzzleParenting(system: any, root: THREE.Object3D): void {
-  assert.equal(system.queries.blocks.entities.size, 7);
+function assertPuzzleParenting(system: any, root: THREE.Object3D, blockCount = 7): void {
+  assert.equal(system.queries.blocks.entities.size, blockCount);
   assert.equal(system.queries.buttons.entities.size, 5);
   for (const entity of [...system.queries.blocks.entities, ...system.queries.buttons.entities,
     system.feedbackEntity]) {
@@ -105,28 +108,50 @@ function assertPuzzleParenting(system: any, root: THREE.Object3D): void {
   assert.ok(instructions, "Instructions must share the puzzle's ECS root too");
 }
 
-for (const gameId of ["python-puzzle-1", "python-puzzle-2"]) {
-  test(`${gameId} opens the castle with persistent puzzle parenting after multiple frames`, () => {
-    const manager = new CastleEnvironmentManager(world, [classroom]);
-    tick(); tick();
-    const system: any = world.getSystem(JigsawPuzzleSystem);
-    const root = world.scene.getObjectByName("CastleRoomRoot")!;
-    assertPuzzleParenting(system, root);
-    const block = [...system.queries.blocks.entities][0] as any;
-    assert.equal(visibleInScene(block.object3D), false);
-    receive("gameChanged", { gameId });
-    tick(); tick();
-    assert.equal(manager.isActive(), true);
-    assert.equal(classroom.visible, false);
-    assert.equal(visibleInScene(block.object3D), true);
-    assert.deepEqual(world.player.position.toArray(), [0, 0, -1]);
-    assertPuzzleParenting(system, root);
-    manager.returnToClassroom("student_exit");
-    tick();
-    assert.equal(classroom.visible, true);
-    assert.equal(visibleInScene(block.object3D), false);
-  });
-}
+// "python-puzzle-2" is the ocean scene now, so the castle opens for
+// "python-puzzle-1" only; the ocean has its own test below.
+test("python-puzzle-1 opens the castle with persistent puzzle parenting after multiple frames", () => {
+  const manager = new CastleEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  const system: any = world.getSystem(JigsawPuzzleSystem);
+  const root = world.scene.getObjectByName("CastleRoomRoot")!;
+  assertPuzzleParenting(system, root);
+  const block = [...system.queries.blocks.entities][0] as any;
+  assert.equal(visibleInScene(block.object3D), false);
+  receive("gameChanged", { gameId: "python-puzzle-1" });
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+  assert.equal(classroom.visible, false);
+  assert.equal(visibleInScene(block.object3D), true);
+  assert.deepEqual(world.player.position.toArray(), [0, 0, -1]);
+  assertPuzzleParenting(system, root);
+  manager.returnToClassroom("student_exit");
+  tick();
+  assert.equal(classroom.visible, true);
+  assert.equal(visibleInScene(block.object3D), false);
+});
+
+test("python-puzzle-2 opens the ocean with persistent puzzle parenting after multiple frames", async () => {
+  const manager = new OceanEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  const system: any = world.getSystem(OceanJigsawPuzzleSystem);
+  const root = world.scene.getObjectByName("OceanSceneRoot")!;
+  assertPuzzleParenting(system, root, 10);
+  const block = [...system.queries.blocks.entities][0] as any;
+  assert.equal(visibleInScene(block.object3D), false);
+  receive("gameChanged", { gameId: "python-puzzle-2" });
+  // The ocean only opens once its procedural scene has finished building.
+  await new Promise(resolve => setImmediate(resolve));
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+  assert.equal(classroom.visible, false);
+  assert.equal(visibleInScene(block.object3D), true);
+  assertPuzzleParenting(system, root, 10);
+  manager.returnToClassroom("student_exit");
+  tick();
+  assert.equal(classroom.visible, true);
+  assert.equal(visibleInScene(block.object3D), false);
+});
 
 test("python-puzzle-3 waits for its forest and retains all puzzle entities on entry and exit", async () => {
   const manager = new ForestEnvironmentManager(world, [classroom]);

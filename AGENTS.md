@@ -92,6 +92,11 @@ approved, only the luminance was low.
   must aim local -Z (`Camera.lookAt`, not `Object3D.lookAt`); register TransformSystem
   before scene creation. Compare scene-object identity with boolean assertions:
   failed object equality assertions can exhaust memory formatting the ECS graph.
+  `tests/forest-input.test.ts` drives the same real pointer/InputSystem stack for
+  the forest buttons. A fixture that aims the ray with `Object3D.lookAt` (+Z) does
+  not fail loudly: the ray leaves the button behind and meets the scene's sky dome,
+  and the object-equality assertion it then fails is what exhausts memory and gets
+  the whole file OOM-killed, so the failure otherwise surfaces only as `SIGKILL`.
 - Inside the castle the player enters at (0, 0, -1) facing +z, so world **-x is
   their right** and +x their left: the code blocks' shelf sits at +x, and the
   animated king who holds the instructions board stands at -x, with the board
@@ -105,6 +110,16 @@ approved, only the luminance was low.
   5.06 m — above the castle's 5 m ceiling — so a wrong Python result was never
   visible. Keep the panel inside the walls and clear of the board's code slots;
   the castle board layout test asserts both.
+- Activity → environment: `python-puzzle-1` is the castle, `python-puzzle-2` the
+  ocean, `python-puzzle-3` the forest. Each manager listens only for its own
+  `gameChanged` id, so a test that expects e.g. the castle to open for
+  `python-puzzle-2` is asserting a mapping that no longer exists.
+  `tests/puzzle-loading.test.ts` covers all three, including the ocean, whose
+  `enter()` waits for its procedural scene before it becomes active.
+- Placed, indented and reset blocks move with a per-frame lerp rather than
+  snapping, so a test asserting a settled position must advance the frames first
+  (`tests/forest-jigsaw.test.ts` does this through a `settleAnimations()` helper);
+  the real-ECS suites get the same effect from `world.update()` in their `tick()`.
 - All three activities cut their code blocks from `src/utils/jigsaw-block.ts`:
   each joint between two consecutive lines owns a unique key (knob position and
   which of the two pieces carries it), so complementary cuts meet only where the
