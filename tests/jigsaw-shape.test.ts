@@ -60,8 +60,9 @@ interface CodeLine { id: string; text: string }
 interface Cut { kind: string; offset: number }
 
 // Block layout as shipped by the systems: S is their block scale factor and
-// SLOT_HEIGHT the row pitch on the board, so neighbouring rows always keep one
-// slot gap between their flat edge lines.
+// SLOT_HEIGHT the row pitch of the shelf — the castle's board rows lie flush at
+// one block height instead — so shuffled rows always keep one slot gap between
+// their flat edge lines.
 const S = 2.2;
 const BLOCK_WIDTH = 0.9 * S;
 const BLOCK_HEIGHT = 0.14 * S;

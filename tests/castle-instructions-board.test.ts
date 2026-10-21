@@ -2,8 +2,10 @@
  * The castle instructions board has to be readable in a headset. It hangs off
  * the environment root at the player's right, inside the 10 x 10 room, within
  * the player's forward view, and in front of the king that holds it — it used
- * to sit at x = -7.7, outside the walls and out of sight. This guards the
- * layout in src/castle/jigsaw/JigsawPuzzleSystem.ts.
+ * to sit at x = -7.7, outside the walls and out of sight. The centre board's
+ * code rows are part of the same layout: they used to be pitched wider than a
+ * block, so every placed piece floated in its own slot instead of joining the
+ * program above it. This guards both in src/castle/jigsaw/JigsawPuzzleSystem.ts.
  */
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
@@ -39,6 +41,7 @@ mock.module("../src/components/instructor/seat-markers.ts", {
 });
 const { CastleEnvironmentManager } = await import("../src/castle/CastleEnvironmentManager.ts");
 const { JigsawPuzzleSystem } = await import("../src/castle/jigsaw/JigsawPuzzleSystem.ts");
+const { JigsawBlock } = await import("../src/castle/jigsaw/jigsawComponents.ts");
 
 // CastleEnvironmentManager builds a 10 x 10 room (walls at +/-5) and puts the
 // player rig at (0, 0, -1) facing +z, with the eye about 1.6 m above it. World
@@ -222,6 +225,141 @@ test("the king stands on the floor inside the room instead of clipping the walls
     bounds.min.x > -ROOM_HALF && bounds.max.x < ROOM_HALF &&
     bounds.min.z > -ROOM_HALF && bounds.max.z < ROOM_HALF,
     `the king must stand inside the room, got x ${bounds.min.x}..${bounds.max.x}, z ${bounds.min.z}..${bounds.max.z}`,
+  );
+});
+
+/**
+ * The line the player sees along one edge of a placed piece: the outermost z
+ * layer (the visible face — the inward bevel never reaches it), measured on the
+ * corner columns, which no knob or socket touches.
+ */
+function visibleEdgeLines(body: THREE.Mesh): { top: number; bottom: number } {
+  const position = body.geometry.getAttribute("position");
+  let faceDepth = 0;
+  for (let index = 0; index < position.count; index++) {
+    faceDepth = Math.max(faceDepth, Math.abs(position.getZ(index)));
+  }
+  let halfWidth = 0;
+  for (let index = 0; index < position.count; index++) {
+    if (Math.abs(Math.abs(position.getZ(index)) - faceDepth) < 1e-6) {
+      halfWidth = Math.max(halfWidth, Math.abs(position.getX(index)));
+    }
+  }
+  const edges = { top: -Infinity, bottom: Infinity };
+  for (let index = 0; index < position.count; index++) {
+    if (Math.abs(Math.abs(position.getZ(index)) - faceDepth) > 1e-6) continue;
+    if (Math.abs(Math.abs(position.getX(index)) - halfWidth) > 1e-6) continue;
+    edges.top = Math.max(edges.top, position.getY(index));
+    edges.bottom = Math.min(edges.bottom, position.getY(index));
+  }
+  return edges;
+}
+
+/** The block body mesh the castle system attached for the line at `origIndex`. */
+function blockBody(system: any, origIndex: number): THREE.Mesh {
+  const entity = system.blockEntities.get(origIndex);
+  assert.ok(entity, `Line ${origIndex} must have a block`);
+  const body = entity.object3D.children.find(
+    (child: THREE.Object3D) => (child as THREE.Mesh).isMesh,
+  );
+  assert.ok(body, `Line ${origIndex}'s block must have a body mesh`);
+  return body as THREE.Mesh;
+}
+
+test("placed code blocks meet edge to edge on the centre board", () => {
+  const manager = new CastleEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  receive("gameChanged", { gameId: "python-puzzle-1" });
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+
+  const system: any = world.getSystem(JigsawPuzzleSystem);
+  const slots: THREE.Vector3[] = system.slotPositions;
+  assert.equal(slots.length, 7, "the board must keep its seven code rows");
+
+  // Every row shares the board's centre column.
+  for (const slot of slots) {
+    assert.equal(slot.x, slots[0].x);
+    assert.equal(slot.z, slots[0].z);
+  }
+
+  // Land two blocks on neighbouring rows through the release path a finished
+  // drop runs (the ray gesture itself is covered by castle-input.test.ts).
+  const drop = (origIndex: number, slot: number) => {
+    const entity = system.blockEntities.get(origIndex);
+    assert.ok(entity, `Line ${origIndex} must have a block`);
+    entity.object3D.position.copy(slots[slot]);
+    entity.object3D.updateMatrixWorld(true);
+    system.handleBlockRelease(entity);
+    assert.equal(
+      entity.getValue(JigsawBlock, "slotIndex"),
+      slot,
+      `Line ${origIndex} must snag row ${slot}`,
+    );
+  };
+  drop(0, 0);
+  drop(1, 1);
+  for (let index = 0; index < 80; index++) tick();
+
+  const upper = system.blockEntities.get(0).object3D.getWorldPosition(new THREE.Vector3());
+  const lower = system.blockEntities.get(1).object3D.getWorldPosition(new THREE.Vector3());
+  const upperEdges = visibleEdgeLines(blockBody(system, 0));
+  const lowerEdges = visibleEdgeLines(blockBody(system, 1));
+
+  assert.equal(upper.x, lower.x, "both blocks must sit in the board's column");
+  assert.equal(upper.z, lower.z, "both blocks must sit on the board's plane");
+
+  // The upper piece's bottom edge lands on the lower piece's top edge, instead
+  // of the old slot gap leaving two planks floating apart.
+  const faceGap = upper.y + upperEdges.bottom - (lower.y + lowerEdges.top);
+  assert.ok(
+    Math.abs(faceGap) < 1e-3,
+    `neighbouring placed pieces must stick together, gap=${faceGap}`,
+  );
+
+  // The stack is anchored to the board: the top piece's visible top edge sits on
+  // the board's own top edge.
+  const board = castleRoot().getObjectByName("CastlePuzzleBoard");
+  assert.ok(board, "the castle must have a centre puzzle board");
+  const boardMesh = board!.children[0] as THREE.Mesh;
+  const boardTop =
+    boardMesh.getWorldPosition(new THREE.Vector3()).y +
+    (boardMesh.geometry as THREE.BoxGeometry).parameters.height / 2;
+  assert.ok(
+    Math.abs(slots[0].y + upperEdges.top - boardTop) < 1e-3,
+    `the top row must start at the board's top edge, got ${slots[0].y + upperEdges.top} vs ${boardTop}`,
+  );
+
+  // Every row below pitches by exactly one visible block height, so the whole
+  // program stacks without a gap anywhere.
+  const visibleHeight = upperEdges.top - upperEdges.bottom;
+  for (let index = 0; index + 1 < slots.length; index++) {
+    assert.ok(
+      Math.abs(slots[index].y - slots[index + 1].y - visibleHeight) < 1e-6,
+      `rows ${index}/${index + 1} must pitch one block height apart`,
+    );
+  }
+
+  // The shelf keeps its wider pitch, so a shuffled block's knob still cannot
+  // reach the piece stacked above it while blocks are reordered.
+  const shelfRows = [
+    ...new Set([...system.homePositions.values()].map((home: number[]) => home[1])),
+  ].sort((a, b) => b - a);
+  assert.ok(shelfRows.length >= 2, "the shelf must hold its own rows");
+  const shelfPitch = shelfRows[0] - shelfRows[1];
+  const reach = (origIndex: number) => {
+    const body = blockBody(system, origIndex);
+    const edges = visibleEdgeLines(body);
+    const position = body.geometry.getAttribute("position");
+    let crown = 0;
+    for (let index = 0; index < position.count; index++) {
+      crown = Math.max(crown, position.getY(index) - edges.top, edges.bottom - position.getY(index));
+    }
+    return crown;
+  };
+  assert.ok(
+    shelfPitch > reach(0) + reach(1),
+    `the shelf pitch (${shelfPitch}) must clear two knobs (${reach(0) + reach(1)})`,
   );
 });
 

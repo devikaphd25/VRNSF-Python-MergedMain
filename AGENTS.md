@@ -92,9 +92,18 @@ start. Provide them via the Base44 secrets dashboard:
   which of the two pieces carries it), so complementary cuts meet only where the
   code sequence is right. A block must be built from the cut of its own line
   (`pieceEdges[origIdx]`, not the shelf loop index), and the knob radius must
-  stay under the gap between two board slots (`SLOT_HEIGHT - BLOCK_HEIGHT`), or
-  shuffled blocks poke into their shelf neighbours. `node --experimental-test-module-mocks --import tsx --test tests/jigsaw-shape.test.ts`
-  guards the pattern, the nesting and the extruded geometry.
+  stay under the gap between two **shelf** rows (`SHELF_PITCH - BLOCK_HEIGHT`),
+  or shuffled blocks poke into their shelf neighbours while they are reordered.
+  On the castle's centre board the rows are pitched one block height apart
+  (`BOARD_PITCH = BLOCK_HEIGHT`, since the outward bevel never reaches the
+  visible faces), so placed pieces meet edge to edge and their keyed cuts
+  interlock like a real jigsaw instead of floating in separate slots; the shelf
+  keeps the wider pitch. `node --experimental-test-module-mocks --import tsx --test tests/jigsaw-shape.test.ts`
+  guards the pattern, the nesting and the extruded geometry;
+  `node --experimental-test-module-mocks --import tsx --test tests/castle-instructions-board.test.ts`
+  drops two blocks onto neighbouring board rows and asserts their visible edges
+  meet, that the stack starts at the board's top edge, and that the shelf pitch
+  still clears two knobs.
 - Connect the classroom socket only after all environment managers and global
   classroom references are installed. Registering earlier exposes a student to
   instructor launch/seat events before their game listeners exist. Seat retries

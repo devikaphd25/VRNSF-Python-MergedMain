@@ -45,7 +45,6 @@ const S = 2.2; // global scale factor for the entire puzzle assembly
 const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
 const BOARD_WIDTH = 1.6 * S;
 const BOARD_HEIGHT = 1.6 * S;
-const SLOT_HEIGHT = 0.17 * S;
 const NUM_SLOTS = 7;
 
 const BLOCK_WIDTH = 0.9 * S;
@@ -54,11 +53,22 @@ const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
 const BLOCK_BEVEL = 0.004 * S;
 
+// Row pitch on the shelf: wider than a block, so a shuffled block's knob never
+// reaches the piece stacked above it and blocks can be reordered freely.
+const SHELF_PITCH = 0.17 * S;
+// Row pitch on the board: one block height, so the flat edge lines of two
+// neighbouring pieces meet exactly and their visible faces sit edge to edge.
+// Placed pieces therefore read as one interlocking column instead of planks
+// floating apart; only the hidden mid-depth bevel bulge, which the opaque faces
+// cover, reaches past the seam.
+const BOARD_PITCH = BLOCK_HEIGHT;
+
 // Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
-// and the knob stays shorter than the gap between two slots so a shuffled block
-// never pokes into its neighbour on the shelf.
-const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
-const KNOB_RADIUS = SLOT_GAP * 0.9;
+// and the knob stays shorter than the gap between two shelf rows so a shuffled
+// block never pokes into its neighbour on the shelf. Board rows are flush, so
+// the same key lets true neighbours nest knob into socket.
+const SHELF_GAP = SHELF_PITCH - BLOCK_HEIGHT;
+const KNOB_RADIUS = SHELF_GAP * 0.9;
 
 // The feedback panel (wrong output / Python errors) sits directly on top of the
 // centre board, where the player is already looking. It used to hang at
@@ -179,23 +189,28 @@ export class JigsawPuzzleSystem extends createSystem({
   init() {
     this.tmpVec = new Vector3();
 
-    const startY =
-      BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
+    // The board's top row sits with its visible upper edge on the board's top
+    // edge, and each row below it touches the one above, so the assembled
+    // program forms one joined stack.
+    const boardTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - BOARD_PITCH / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(
         new Vector3(
           BOARD_CENTER[0],
-          startY - i * SLOT_HEIGHT,
+          boardTopY - i * BOARD_PITCH,
           BOARD_CENTER[2],
         ),
       );
     }
 
+    // The shelf keeps its wider pitch, so a shuffled block's knob never reaches
+    // the piece stacked above it.
+    const shelfTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SHELF_PITCH / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = SHUFFLED_ORDER[i];
       this.homePositions.set(origIdx, [
         SHELF_X,
-        startY - i * SLOT_HEIGHT,
+        shelfTopY - i * SHELF_PITCH,
         SHELF_Z,
       ]);
     }
