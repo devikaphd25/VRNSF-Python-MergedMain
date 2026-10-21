@@ -240,7 +240,7 @@ export class ForestEnvironmentManager {
       [halfW - 1.5, halfD - 1.5],
     ];
     for (const [fx, fz] of fireflyPositions) {
-      const light = new PointLight(FIREFLY_COLOR, 1.8, 10, 1.5);
+      const light = new PointLight(FIREFLY_COLOR, 2.6, 12, 1.5);
       light.position.set(fx, 2.5, fz);
       this.root.add(light);
 

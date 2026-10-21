@@ -240,7 +240,7 @@ export class OceanEnvironmentManager {
       [halfW - 1.5, halfD - 1.5],
     ];
     for (const [gx, gz] of glowPositions) {
-      const light = new PointLight(GLOW_COLOR, 1.8, 10, 1.5);
+      const light = new PointLight(GLOW_COLOR, 2.6, 12, 1.5);
       light.position.set(gx, 2.5, gz);
       this.root.add(light);
 

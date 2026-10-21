@@ -293,11 +293,13 @@ World.create(
     player;
 
     const skyLevel = world.activeLevel.value;
+    // Brightened sky stops: the same blue palette, lifted so students read
+    // the room and the sky comfortably instead of a near-black backdrop.
     skyLevel.addComponent(DomeGradient, {
-      sky: [0.04, 0.18, 0.38, 1],
-      equator: [0.18, 0.52, 0.78, 1],
-      ground: [0.015, 0.025, 0.06, 1],
-      intensity: 1.15,
+      sky: [0.15, 0.42, 0.75, 1],
+      equator: [0.38, 0.72, 0.96, 1],
+      ground: [0.10, 0.16, 0.26, 1],
+      intensity: 1.35,
     });
 
     // Configure the renderer and HDR environment before waiting for the VR
@@ -305,7 +307,7 @@ World.create(
     // presenting by the time the user submits the panel.
     renderer.shadowMap.enabled = false;
     renderer.toneMapping = ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.8;
+    renderer.toneMappingExposure = 1.05;
     renderer.xr.enabled = true;
 
     const headsetDebugEnabled =
@@ -421,7 +423,7 @@ World.create(
 
     skyLevel.addComponent(IBLTexture, {
       src: "sunsetHDR",
-      intensity: 0.9,
+      intensity: 1.05,
       rotation: [0, Math.PI / 4, 0]
     });
 
@@ -475,13 +477,13 @@ World.create(
     // from every viewing direction.
     const classroomFillLight = new THREE.HemisphereLight(
       0xbadfff,
-      0x101827,
-      0.82
+      0x1b2738,
+      1.05
     );
     classroomFillLight.name = "ClassroomBalancedFill";
     envMesh.add(classroomFillLight);
 
-    const classroomStageLight = new THREE.DirectionalLight(0xffead0, 0.9);
+    const classroomStageLight = new THREE.DirectionalLight(0xffead0, 1.05);
     classroomStageLight.name = "ClassroomStageKey";
     classroomStageLight.position.set(2.5, 6.5, 3.8);
     classroomStageLight.castShadow = false;

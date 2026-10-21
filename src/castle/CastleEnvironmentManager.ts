@@ -301,7 +301,7 @@ export class CastleEnvironmentManager {
       [halfW - 1.5, halfD - 1.5],
     ];
     for (const [tx, tz] of torchPositions) {
-      const torch = new PointLight(TORCH_COLOR, 2.5, 12, 1.8);
+      const torch = new PointLight(TORCH_COLOR, 3.6, 14, 1.6);
       torch.position.set(tx, WALL_HEIGHT - 1.2, tz);
       this.root.add(torch);
 

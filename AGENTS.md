@@ -47,6 +47,24 @@ start. Provide them via the Base44 secrets dashboard:
 | `SUPABASE_URL` | Server-side Supabase project URL (same as above) |
 | `SUPABASE_SECRET_KEY` | Server-side Supabase service-role key |
 
+### Scene brightness
+
+Scene brightness is spread over four places and must be tuned in step, since
+every value multiplies the same ACES pass:
+
+- `src/index.ts` — the `DomeGradient` sky stops and `intensity`, the
+  `IBLTexture` intensity, and `renderer.toneMappingExposure` (0.8 was too dark
+  for students; 1.05 with the current lighter sky stops is the readable
+  baseline). These apply to the classroom and to every room.
+- The classroom's `ClassroomBalancedFill` hemisphere and `ClassroomStageKey`
+  directional lights (also `src/index.ts`).
+- Each room's corner `PointLight`: castle torches, forest fireflies, ocean
+  glows. Those rooms have no other local light, so raising those intensities
+  (or the global exposure) is what removes their gloom.
+
+Brighten by raising intensity/exposure and keeping the hues — the palette was
+approved, only the luminance was low.
+
 ### Classroom connection and verification
 
 - Startup assets live in `src/config/classroom-assets.ts`. Both `classroom2`
