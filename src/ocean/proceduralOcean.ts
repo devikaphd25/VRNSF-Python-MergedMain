@@ -39,7 +39,11 @@ export function buildProceduralOcean(footprint: number, clearing: number): Group
   floor.position.y = -0.08;
   group.add(floor);
 
-  // Water volume (semi-transparent blue box surrounding the scene)
+  // Water volume (semi-transparent blue box surrounding the scene).
+  // The player stands *inside* this box, so it must never write depth: its
+  // inner faces are in front of everything and would depth-reject the rest of
+  // the scene (including the puzzle and the celebration bubbles), which shows
+  // as a black screen once the headset renders from inside the volume.
   const water = new Mesh(
     new BoxGeometry(footprint + 6, 8, footprint + 6),
     new MeshStandardMaterial({
@@ -47,6 +51,7 @@ export function buildProceduralOcean(footprint: number, clearing: number): Group
       transparent: true,
       opacity: 0.15,
       roughness: 0.1,
+      depthWrite: false,
       side: 2, // DoubleSide
     }),
   );
