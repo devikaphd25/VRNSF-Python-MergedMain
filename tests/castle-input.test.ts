@@ -37,6 +37,8 @@ mock.module("../src/network/socket.ts", {
 const { JigsawPuzzleSystem } = await import("../src/castle/jigsaw/JigsawPuzzleSystem.ts");
 const { JigsawBlock, JigsawButton } = await import("../src/castle/jigsaw/jigsawComponents.ts");
 const { CastleVisibleInteractionSystem } = await import("../src/castle/CastleVisibleInteractionSystem.ts");
+const { VisibleInteractionSystem } = await import("../src/forest/VisibleInteractionSystem.ts");
+const { OceanVisibleInteractionSystem } = await import("../src/ocean/OceanVisibleInteractionSystem.ts");
 const { setCastleRoot } = await import("../src/castle/jigsaw/castleRoot.ts");
 
 type Harness = {
@@ -52,10 +54,14 @@ let active: Harness | null = null;
 const originalWindow = globalThis.window;
 
 /** Builds the real castle puzzle on top of the real pointer/input stack. */
-function build({ guard }: { guard: boolean }): Harness {
+function build({ guard, allEnvironments = false, initiallyHidden = false }: {
+  guard: boolean;
+  allEnvironments?: boolean;
+  initiallyHidden?: boolean;
+}): Harness {
   const exits: string[] = [];
   const world: any = new World();
-  const pointerHolder: { pointer?: ReturnType<typeof createRayPointer> } = {};
+  emissions.length = 0;
 
   globalThis.window = {
     isCastleActive: true,
@@ -81,26 +87,37 @@ function build({ guard }: { guard: boolean }): Harness {
     TwoHandsGrabbable, JigsawBlock, JigsawButton]) {
     world.registerComponent(component);
   }
+  // Match World.create: transforms must be attached before building the scene
+  // hierarchy, otherwise parent setters cannot record the entities' ECS roots.
+  world.registerSystem(TransformSystem, { priority: 0 });
   world.sceneEntity = world.createTransformEntity(world.scene, { persistent: true });
   world.activeLevel = { value: world.sceneEntity };
   const castle = new THREE.Group();
+  castle.visible = !initiallyHidden;
   world.scene.add(castle);
   setCastleRoot(castle, world.createTransformEntity(castle));
 
   if (guard) world.registerSystem(CastleVisibleInteractionSystem, { priority: -5 });
+  if (allEnvironments) {
+    for (const systemClass of [VisibleInteractionSystem, OceanVisibleInteractionSystem]) {
+      if (!world.hasSystem(systemClass)) {
+        world.registerSystem(systemClass, { priority: -5 });
+      }
+    }
+  }
   world.registerSystem(InputSystem, { priority: -4 });
   world.registerSystem(GrabSystem, { priority: -3 });
-  world.registerSystem(TransformSystem, { priority: 0 });
   world.registerSystem(JigsawPuzzleSystem, { priority: 1 });
 
-  const space = new THREE.Object3D();
+  // A controller ray travels down local -Z. Camera.lookAt aligns -Z, whereas
+  // Object3D.lookAt aligns +Z and would aim this fixture away from the puzzle.
+  const space = new THREE.PerspectiveCamera();
   world.scene.add(space);
-  pointerHolder.pointer = createRayPointer(() => world.camera, { current: space }, {});
+  const pointer = createRayPointer(() => world.camera, { current: space }, {});
 
   active = {
-    world, castle, space, exits,
+    world, castle, space, exits, pointer,
     system: world.getSystem(JigsawPuzzleSystem),
-    pointer: pointerHolder.pointer,
   };
   tick();
   return active;
@@ -109,6 +126,18 @@ function build({ guard }: { guard: boolean }): Harness {
 afterEach(() => {
   if (!active) return;
   active.pointer.exit({ timeStamp: performance.now() });
+  // Detach input listeners while the entities are still alive.
+  for (const entity of [...active.world.getSystem(InputSystem).queries.rayInteractables.entities]) {
+    entity.removeComponent(tags.RayInteractable);
+  }
+  for (const entity of [...active.world.getSystem(GrabSystem).queries.distanceGrabbables.entities]) {
+    entity.removeComponent(DistanceGrabbable);
+  }
+  for (const systemClass of [JigsawPuzzleSystem, GrabSystem, InputSystem,
+    CastleVisibleInteractionSystem, VisibleInteractionSystem,
+    OceanVisibleInteractionSystem, TransformSystem]) {
+    active.world.unregisterSystem(systemClass);
+  }
   active.world.scene.clear();
   active = null;
   globalThis.window = originalWindow;
@@ -151,7 +180,7 @@ function press(type: string) {
   const entity = button(type);
   const intersection = pointAt(entity.object3D);
   assert.ok(intersection?.object, `Ray missed ${type}`);
-  assert.equal(ownerOf(entity, intersection), entity.object3D, `Ray hit another entity instead of ${type}`);
+  assert.ok(ownerOf(entity, intersection) === entity.object3D, `Ray hit another entity instead of ${type}`);
   active!.pointer.down({ timeStamp: performance.now(), button: 0 });
   tick();
   assert.equal(entity.hasComponent(tags.Pressed), true, `${type} never received Pressed`);
@@ -168,12 +197,18 @@ function press(type: string) {
 function addHiddenClassroomBlocker(near: THREE.Object3D): any {
   const { world } = active!;
   const classroom = new THREE.Group();
-  world.scene.add(classroom);
+  const classroomEntity = world.createTransformEntity(classroom);
   const blocker = world.createTransformEntity(new THREE.Mesh(
     new THREE.BoxGeometry(2, 2, 0.1), new THREE.MeshBasicMaterial(),
-  )).addComponent(tags.RayInteractable);
+  ), { parent: classroomEntity }).addComponent(tags.RayInteractable);
+  // UIKit labels may explicitly opt back into hits; hiding only the parent
+  // pointerEvents is insufficient unless traversal into children stops too.
+  const label = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.1), new THREE.MeshBasicMaterial());
+  label.pointerEvents = "auto";
+  label.pointerEventsOrder = 60001;
+  label.position.z = -0.1;
+  blocker.object3D.add(label);
   tick();
-  classroom.add(blocker.object3D);
   blocker.object3D.pointerEventsOrder = 60000;
   blocker.object3D.position.copy(near.getWorldPosition(new THREE.Vector3()));
   blocker.object3D.position.z -= 1;
@@ -203,7 +238,7 @@ test("Without the castle interaction guard a hidden classroom control steals the
   const blocker = addHiddenClassroomBlocker(reset.object3D);
 
   const intersection = pointAt(reset.object3D);
-  assert.equal(ownerOf(blocker, intersection), blocker.object3D, "Blocker was not the nearest hit");
+  assert.ok(ownerOf(blocker, intersection) === blocker.object3D, "Blocker was not the nearest hit");
   active!.pointer.down({ timeStamp: performance.now(), button: 0 });
   tick();
   assert.equal(blocker.hasComponent(tags.Pressed), true);
@@ -225,14 +260,16 @@ test("The castle interaction guard gives the puzzle the ray back", () => {
   assert.equal(active!.system.pendingFeedback.title, "Reset");
 });
 
-test("A real ray grabs a puzzle block and the guard never blocks visible blocks", () => {
+test("A real ray grabs a puzzle block behind a hidden classroom HUD control", () => {
   build({ guard: true });
   const block = [...active!.system.queries.blocks.entities][0] as any;
+  const blocker = addHiddenClassroomBlocker(block.object3D);
+  assert.equal(blocker.object3D.pointerEvents, "none");
   assert.equal(block.object3D.pointerEvents, "auto");
 
   const intersection = pointAt(block.object3D);
   assert.ok(intersection?.object, "Ray missed the puzzle block");
-  assert.equal(ownerOf(block, intersection), block.object3D, "Ray hit another entity instead of a block");
+  assert.ok(ownerOf(block, intersection) === block.object3D, "Ray hit another entity instead of a block");
 
   active!.pointer.down({ timeStamp: performance.now(), button: 0 });
   tick();
@@ -240,6 +277,52 @@ test("A real ray grabs a puzzle block and the guard never blocks visible blocks"
   active!.pointer.up({ timeStamp: performance.now(), button: 0 });
   tick();
   assert.equal(block.hasComponent(Grabbed), false, "Block stayed grabbed");
+});
+
+test("All environment guards restore Castle input after its initially hidden scene opens", () => {
+  build({ guard: true, allEnvironments: true, initiallyHidden: true });
+  assert.equal(active!.world.getSystems().filter((system: any) =>
+    system instanceof CastleVisibleInteractionSystem ||
+    system instanceof VisibleInteractionSystem ||
+    system instanceof OceanVisibleInteractionSystem,
+  ).length, 1, "All environments must share exactly one visibility guard");
+  const reset = button("reset");
+  assert.equal(reset.object3D.pointerEvents, "none");
+  assert.equal(reset.object3D.intersectChildren, false);
+
+  active!.castle.visible = true;
+  tick();
+  assert.notEqual(reset.object3D.pointerEvents, "none", "Another guard restored an already-disabled state");
+  assert.notEqual(reset.object3D.intersectChildren, false);
+  press("reset");
+  assert.equal(active!.system.pendingFeedback.title, "Reset");
+});
+
+test("Returning to the classroom restores HUD hits, and entering Castle disables them again", () => {
+  build({ guard: true, allEnvironments: true });
+  const blocker = addHiddenClassroomBlocker(button("reset").object3D);
+  const classroom = blocker.object3D.parent;
+  assert.ok(classroom);
+
+  active!.castle.visible = false;
+  classroom.visible = true;
+  tick();
+  assert.equal(blocker.object3D.pointerEvents, "auto");
+  assert.equal(blocker.object3D.intersectChildren, undefined);
+  const hit = pointAt(blocker.object3D);
+  assert.ok(hit?.object && ownerOf(blocker, hit) === blocker.object3D);
+  active!.pointer.down({ timeStamp: performance.now(), button: 0 });
+  tick();
+  assert.equal(blocker.hasComponent(tags.Pressed), true);
+  active!.pointer.up({ timeStamp: performance.now(), button: 0 });
+  tick();
+  assert.equal(blocker.hasComponent(tags.Pressed), false);
+
+  classroom.visible = false;
+  active!.castle.visible = true;
+  tick();
+  press("reset");
+  assert.equal(blocker.hasComponent(tags.Pressed), false);
 });
 
 test("Hidden castle puzzle entities are not hit, and work again when the castle is visible", () => {

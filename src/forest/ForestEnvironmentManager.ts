@@ -70,11 +70,13 @@ export class ForestEnvironmentManager {
   }
 
   private installJigsaw(): void {
+    // Castle, forest and ocean share the same guard and saved input settings.
+    if (!this.world.hasSystem(VisibleInteractionSystem)) {
+      this.world.registerSystem(VisibleInteractionSystem, { priority: -5 });
+    }
     this.world
       .registerComponent(ForestJigsawBlock)
       .registerComponent(ForestJigsawButton)
-      // Run before IWSDK input (-4), including the headset controller hit test.
-      .registerSystem(VisibleInteractionSystem, { priority: -5 })
       .registerSystem(ForestJigsawPuzzleSystem);
   }
 

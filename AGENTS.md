@@ -61,6 +61,19 @@ start. Provide them via the Base44 secrets dashboard:
   `createForestEntity` with the environment's ECS parent. `Object3D.add` alone
   is overwritten by IWSDK's first TransformSystem update, detaching blocks,
   buttons, instructions and feedback from the environment visibility toggle.
+- All three environment visibility guards re-export the **same class** from
+  `src/systems/visible-interaction.system.ts`. Register it once per world at
+  priority -5 (before InputSystem at -4). Separate guards save each other's
+  disabled settings and leave puzzle rays permanently disabled after entry.
+  Hidden roots need both `pointerEvents = "none"` and `intersectChildren = false`
+  because UIKit children can explicitly opt back into pointer hits.
+  `node --experimental-test-module-mocks --import tsx --test tests/castle-input.test.ts`
+  covers all five buttons, block grabbing behind a hidden HUD, initially hidden
+  scenes with all environments installed, and HUD restoration/re-entry. It
+  uses the real SDK input/grab stack, not headset hardware. Test ray origins
+  must aim local -Z (`Camera.lookAt`, not `Object3D.lookAt`); register TransformSystem
+  before scene creation. Compare scene-object identity with boolean assertions:
+  failed object equality assertions can exhaust memory formatting the ECS graph.
 - Connect the classroom socket only after all environment managers and global
   classroom references are installed. Registering earlier exposes a student to
   instructor launch/seat events before their game listeners exist. Seat retries

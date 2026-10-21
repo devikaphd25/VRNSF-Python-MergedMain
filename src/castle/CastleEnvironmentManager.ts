@@ -75,12 +75,14 @@ export class CastleEnvironmentManager {
   }
 
   private installJigsaw(): void {
+    // One shared guard must own the original input settings across environments.
+    // Run before IWSDK input (-4), including headset controller hit tests.
+    if (!this.world.hasSystem(CastleVisibleInteractionSystem)) {
+      this.world.registerSystem(CastleVisibleInteractionSystem, { priority: -5 });
+    }
     this.world
       .registerComponent(JigsawBlock)
       .registerComponent(JigsawButton)
-      // Run before IWSDK input (-4), including the headset controller hit test,
-      // so hidden classroom HUD controls cannot outrank the puzzle blocks.
-      .registerSystem(CastleVisibleInteractionSystem, { priority: -5 })
       .registerSystem(JigsawPuzzleSystem);
   }
 

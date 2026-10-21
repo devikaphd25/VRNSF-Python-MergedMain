@@ -70,10 +70,13 @@ export class OceanEnvironmentManager {
   }
 
   private installJigsaw(): void {
+    // Castle, forest and ocean share the same guard and saved input settings.
+    if (!this.world.hasSystem(OceanVisibleInteractionSystem)) {
+      this.world.registerSystem(OceanVisibleInteractionSystem, { priority: -5 });
+    }
     this.world
       .registerComponent(OceanJigsawBlock)
       .registerComponent(OceanJigsawButton)
-      .registerSystem(OceanVisibleInteractionSystem, { priority: -5 })
       .registerSystem(OceanJigsawPuzzleSystem);
   }
 
