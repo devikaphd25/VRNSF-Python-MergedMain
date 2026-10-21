@@ -59,6 +59,13 @@ const BLOCK_BEVEL = 0.004 * S;
 const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
 const KNOB_RADIUS = SLOT_GAP * 0.9;
 
+// The feedback panel (wrong output / Python errors) sits directly on top of the
+// centre board, where the player is already looking. It used to hang at
+// 2.3 * S = 5.06 m, far above the board and out of the player's view.
+const FEEDBACK_HEIGHT = 0.6 * S;
+const FEEDBACK_Y =
+  BOARD_CENTER[1] + BOARD_HEIGHT / 2 + FEEDBACK_HEIGHT / 2 + 0.06 * S;
+
 const SHELF_X = 2.8;
 const SHELF_Z = 1.0;
 const SHELF_ROTATION_Y = Math.PI / 2;
@@ -621,9 +628,9 @@ export class OceanJigsawPuzzleSystem extends createSystem({
     entity.addComponent(PanelUI, {
       config: "./ui/ocean-jigsaw-feedback.json",
       maxWidth: 1.2 * S,
-      maxHeight: 0.6 * S,
+      maxHeight: FEEDBACK_HEIGHT,
     });
-    entity.object3D!.position.set(0, 2.3 * S, BOARD_CENTER[2]);
+    entity.object3D!.position.set(0, FEEDBACK_Y, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToOceanRoot(entity.object3D!);
     this.feedbackEntity = entity;

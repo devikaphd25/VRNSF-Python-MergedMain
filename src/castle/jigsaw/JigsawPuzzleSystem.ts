@@ -59,6 +59,14 @@ const BLOCK_BEVEL = 0.004 * S;
 const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
 const KNOB_RADIUS = SLOT_GAP * 0.9;
 
+// The feedback panel (wrong output / Python errors) sits directly on top of the
+// centre board, where the player is already looking. It used to hang at
+// 2.3 * S = 5.06 m, above the room's 5 m ceiling, so a wrong result was never
+// visible.
+const FEEDBACK_HEIGHT = 0.6 * S;
+const FEEDBACK_Y =
+  BOARD_CENTER[1] + BOARD_HEIGHT / 2 + FEEDBACK_HEIGHT / 2 + 0.06 * S;
+
 /**
  * Builds a limb segment running from `from` to `to` in the parent's local
  * space. The cylinder's axis is rotated onto +z so a plain `lookAt` can aim the
@@ -309,6 +317,7 @@ export class JigsawPuzzleSystem extends createSystem({
 
   private buildBoard(): void {
     const boardGroup = new Group();
+    boardGroup.name = "CastlePuzzleBoard";
 
     const boardMat = new MeshStandardMaterial({
       color: BOARD_COLOR,
@@ -660,9 +669,9 @@ export class JigsawPuzzleSystem extends createSystem({
     entity.addComponent(PanelUI, {
       config: "./ui/jigsaw-feedback.json",
       maxWidth: 1.2 * S,
-      maxHeight: 0.6 * S,
+      maxHeight: FEEDBACK_HEIGHT,
     });
-    entity.object3D!.position.set(0, 2.3 * S, BOARD_CENTER[2]);
+    entity.object3D!.position.set(0, FEEDBACK_Y, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToCastleRoot(entity.object3D!);
     this.feedbackEntity = entity;

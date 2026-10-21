@@ -48,6 +48,9 @@ const ROOM_HALF = 5;
 const WALL_HEIGHT = 5;
 const EYE = new THREE.Vector3(0, 1.6, -1);
 const FORWARD = new THREE.Vector3(0, 0, 1);
+// The feedback panel is sized 1.2 * S wide and 0.6 * S tall (S = 2.2), so half
+// of it reaches 0.3 * S above and below its centre.
+const PANEL_HALF_HEIGHT = 0.3 * 2.2;
 
 let world: World;
 let classroom: THREE.Group;
@@ -102,6 +105,56 @@ function instructionsBoard(root: THREE.Object3D): THREE.Object3D {
   assert.ok(board, "the instructions board must stay parented to the environment root");
   return board!;
 }
+function feedbackPanel(root: THREE.Object3D): THREE.Object3D {
+  const panel = root.children.find(object =>
+    object.entityIdx !== undefined &&
+    PanelUI.data.config[object.entityIdx]?.includes("feedback"),
+  );
+  assert.ok(panel, "the feedback panel must stay parented to the environment root");
+  return panel!;
+}
+
+test("the feedback panel sits on top of the centre board, not above the ceiling", () => {
+  new CastleEnvironmentManager(world, [classroom]);
+  tick(); tick();
+
+  const root = castleRoot();
+  const panel = feedbackPanel(root);
+  const board = root.getObjectByName("CastlePuzzleBoard");
+  assert.ok(board, "the castle must have a centre puzzle board");
+  const boardMesh = board!.children[0] as THREE.Mesh;
+
+  const panelPosition = panel.getWorldPosition(new THREE.Vector3());
+  const boardTop =
+    boardMesh.getWorldPosition(new THREE.Vector3()).y +
+    (boardMesh.geometry as THREE.BoxGeometry).parameters.height / 2;
+
+  // A wrong Python result was invisible: the panel hung at 2.3 * S = 5.06 m,
+  // i.e. above the 5 m ceiling (and far above the board it explains).
+  assert.ok(
+    panelPosition.y > boardTop,
+    `the panel must sit above the board's top edge (y=${panelPosition.y}, top=${boardTop})`,
+  );
+  assert.ok(
+    panelPosition.y + PANEL_HALF_HEIGHT < WALL_HEIGHT,
+    `the whole panel must fit under the ceiling, got y=${panelPosition.y}`,
+  );
+  assert.ok(
+    panelPosition.y - PANEL_HALF_HEIGHT > boardTop,
+    `the panel must not cover the board's code slots, got y=${panelPosition.y}`,
+  );
+
+  // Facing the player, or the error text would be edge-on in the headset.
+  const facing = new THREE.Vector3(0, 0, 1)
+    .applyQuaternion(panel.getWorldQuaternion(new THREE.Quaternion()))
+    .setY(0)
+    .normalize();
+  const toPlayer = EYE.clone().sub(panelPosition).setY(0).normalize();
+  assert.ok(
+    facing.dot(toPlayer) > 0.98,
+    `the panel must face the player, dot=${facing.dot(toPlayer)}`,
+  );
+});
 
 test("the instructions board is held at the player's right, in view and inside the room", () => {
   new CastleEnvironmentManager(world, [classroom]);

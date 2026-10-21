@@ -81,6 +81,12 @@ start. Provide them via the Base44 secrets dashboard:
   covers that placement (right of the player, inside the room, facing the
   player, within the forward view), the king's footprint, and that the idle
   motion runs only while the castle is active.
+- Every puzzle's feedback panel (success, wrong output and Python errors) sits
+  **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
+  rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at
+  5.06 m — above the castle's 5 m ceiling — so a wrong Python result was never
+  visible. Keep the panel inside the walls and clear of the board's code slots;
+  the castle board layout test asserts both.
 - All three activities cut their code blocks from `src/utils/jigsaw-block.ts`:
   each joint between two consecutive lines owns a unique key (knob position and
   which of the two pieces carries it), so complementary cuts meet only where the
