@@ -31,11 +31,10 @@ import {
   createSystem,
   type Entity,
 } from "@iwsdk/core";
-import { ExtrudeGeometry, Shape } from "three";
-
 import { OceanJigsawBlock, OceanJigsawButton } from "./oceanJigsawComponents.js";
 import { OCEAN_PUZZLE_LINES, OCEAN_SHUFFLED_ORDER, OCEAN_EXPECTED_OUTPUT } from "./oceanPuzzleData.js";
 import { attachToOceanRoot, createOceanEntity } from "../oceanRoot.js";
+import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runOceanPython } from "./oceanPythonRunner.js";
 import { socket } from "../../network/socket";
@@ -52,38 +51,13 @@ const BLOCK_WIDTH = 0.9 * S;
 const BLOCK_HEIGHT = 0.14 * S;
 const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
-const TAB_RADIUS = BLOCK_HEIGHT * 0.35;
+const BLOCK_BEVEL = 0.004 * S;
 
-function createJigsawBlockGeometry(
-  width: number,
-  height: number,
-  depth: number,
-): ExtrudeGeometry {
-  const w = width / 2;
-  const h = height / 2;
-  const r = TAB_RADIUS;
-
-  const shape = new Shape();
-  shape.moveTo(-w, -h);
-  shape.lineTo(-r, -h);
-  shape.absarc(0, -h, r, Math.PI, 0, true);
-  shape.lineTo(w, -h);
-  shape.lineTo(w, h);
-  shape.lineTo(r, h);
-  shape.absarc(0, h, r, 0, Math.PI, false);
-  shape.lineTo(-w, h);
-  shape.lineTo(-w, -h);
-
-  const geo = new ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: 0.004 * S,
-    bevelSize: 0.004 * S,
-    bevelSegments: 2,
-  });
-  geo.translate(0, 0, -depth / 2);
-  return geo;
-}
+// Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
+// and the knob stays shorter than the gap between two slots so a shuffled block
+// never pokes into its neighbour on the shelf.
+const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
+const KNOB_RADIUS = SLOT_GAP * 0.9;
 
 const SHELF_X = 2.8;
 const SHELF_Z = 1.0;
@@ -331,6 +305,9 @@ export class OceanJigsawPuzzleSystem extends createSystem({
   // ── Blocks ────────────────────────────────────────────────
 
   private createBlocks(): void {
+    // Cuts keyed to the correct line order, so only true neighbours interlock.
+    const pieceEdges = jigsawPieceEdges(OCEAN_PUZZLE_LINES);
+
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = OCEAN_SHUFFLED_ORDER[i];
       const line = OCEAN_PUZZLE_LINES[origIdx];
@@ -342,7 +319,13 @@ export class OceanJigsawPuzzleSystem extends createSystem({
         roughness: 0.75,
       });
       const body = new Mesh(
-        createJigsawBlockGeometry(BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_THICKNESS),
+        createJigsawBlockGeometry(
+          BLOCK_WIDTH,
+          BLOCK_HEIGHT,
+          BLOCK_THICKNESS,
+          pieceEdges[origIdx],
+          { knobRadius: KNOB_RADIUS, bevel: BLOCK_BEVEL },
+        ),
         bodyMat,
       );
       group.add(body);

@@ -30,11 +30,10 @@ import {
   createSystem,
   type Entity,
 } from "@iwsdk/core";
-import { ExtrudeGeometry, Shape } from "three";
-
 import { JigsawBlock, JigsawButton } from "./jigsawComponents.js";
 import { PUZZLE_LINES, SHUFFLED_ORDER, EXPECTED_OUTPUT } from "./puzzleData.js";
 import { attachToCastleRoot, createCastleEntity } from "./castleRoot.js";
+import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runPython } from "./pythonRunner.js";
 import { socket } from "../../network/socket";
@@ -52,52 +51,13 @@ const BLOCK_WIDTH = 0.9 * S;
 const BLOCK_HEIGHT = 0.14 * S;
 const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
-const TAB_RADIUS = BLOCK_HEIGHT * 0.35;
+const BLOCK_BEVEL = 0.004 * S;
 
-/**
- * Builds a jigsaw-piece-shaped geometry: a rounded rectangle with a tab
- * (protrusion) on the top edge and a blank (indentation) on the bottom edge
- * so stacked blocks interlock like real puzzle pieces.
- */
-function createJigsawBlockGeometry(
-  width: number,
-  height: number,
-  depth: number,
-): ExtrudeGeometry {
-  const w = width / 2;
-  const h = height / 2;
-  const r = TAB_RADIUS;
-
-  const shape = new Shape();
-  shape.moveTo(-w, -h);
-
-  // Bottom edge — blank (semicircular indentation into the piece)
-  shape.lineTo(-r, -h);
-  shape.absarc(0, -h, r, Math.PI, 0, true);
-  shape.lineTo(w, -h);
-
-  // Right edge
-  shape.lineTo(w, h);
-
-  // Top edge — tab (semicircular protrusion away from the piece)
-  shape.lineTo(r, h);
-  shape.absarc(0, h, r, 0, Math.PI, false);
-  shape.lineTo(-w, h);
-
-  // Left edge
-  shape.lineTo(-w, -h);
-
-  const geo = new ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: 0.004 * S,
-    bevelSize: 0.004 * S,
-    bevelSegments: 2,
-  });
-  // Centre on z so the face panel position stays the same as with BoxGeometry.
-  geo.translate(0, 0, -depth / 2);
-  return geo;
-}
+// Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
+// and the knob stays shorter than the gap between two slots so a shuffled block
+// never pokes into its neighbour on the shelf.
+const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
+const KNOB_RADIUS = SLOT_GAP * 0.9;
 
 /**
  * Builds a limb segment running from `from` to `to` in the parent's local
@@ -372,6 +332,9 @@ export class JigsawPuzzleSystem extends createSystem({
   // ── Blocks ────────────────────────────────────────────────
 
   private createBlocks(): void {
+    // Cuts keyed to the correct line order, so only true neighbours interlock.
+    const pieceEdges = jigsawPieceEdges(PUZZLE_LINES);
+
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = SHUFFLED_ORDER[i];
       const line = PUZZLE_LINES[origIdx];
@@ -383,7 +346,13 @@ export class JigsawPuzzleSystem extends createSystem({
         roughness: 0.8,
       });
       const body = new Mesh(
-        createJigsawBlockGeometry(BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_THICKNESS),
+        createJigsawBlockGeometry(
+          BLOCK_WIDTH,
+          BLOCK_HEIGHT,
+          BLOCK_THICKNESS,
+          pieceEdges[origIdx],
+          { knobRadius: KNOB_RADIUS, bevel: BLOCK_BEVEL },
+        ),
         bodyMat,
       );
       group.add(body);
