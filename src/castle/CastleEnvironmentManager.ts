@@ -17,6 +17,7 @@ import type { Object3D } from "three";
 
 import { socket } from "../network/socket";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
+import { CastleVisibleInteractionSystem } from "./CastleVisibleInteractionSystem.js";
 import { setCastleRoot } from "./jigsaw/castleRoot.js";
 import { JigsawBlock, JigsawButton } from "./jigsaw/jigsawComponents.js";
 import { JigsawPuzzleSystem } from "./jigsaw/JigsawPuzzleSystem.js";
@@ -77,6 +78,9 @@ export class CastleEnvironmentManager {
     this.world
       .registerComponent(JigsawBlock)
       .registerComponent(JigsawButton)
+      // Run before IWSDK input (-4), including the headset controller hit test,
+      // so hidden classroom HUD controls cannot outrank the puzzle blocks.
+      .registerSystem(CastleVisibleInteractionSystem, { priority: -5 })
       .registerSystem(JigsawPuzzleSystem);
   }
 
