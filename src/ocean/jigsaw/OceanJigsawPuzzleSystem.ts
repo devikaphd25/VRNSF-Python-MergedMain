@@ -31,6 +31,7 @@ import {
   createSystem,
   type Entity,
 } from "@iwsdk/core";
+import type { Object3D } from "three";
 import { OceanJigsawBlock, OceanJigsawButton } from "./oceanJigsawComponents.js";
 import { OCEAN_PUZZLE_LINES, OCEAN_SHUFFLED_ORDER, OCEAN_EXPECTED_OUTPUT } from "./oceanPuzzleData.js";
 import { attachToOceanRoot, createOceanEntity } from "../oceanRoot.js";
@@ -85,6 +86,7 @@ const BOARD_COLOR = 0x1a6fa4;
 const SLOT_COLOR = 0x2a8fc0;
 const BUBBLE_COLORS = [0x4dabc0, 0x6bcf7f, 0xffd93d, 0xff9a44, 0xaaccff];
 const ACTIVE_GLOW = 0x7fdfda;
+const DISABLED_BUTTON_COLOR = 0x6b7280; // greyed-out control on a solved board
 
 const BUTTON_CONFIGS: {
   type: "indent" | "dedent" | "reset" | "exit" | "submit";
@@ -124,6 +126,14 @@ export class OceanJigsawPuzzleSystem extends createSystem({
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
+  /** Set once the puzzle is solved: blocks and every button except Exit stop responding. */
+  private solved = false;
+  private environmentActive = false;
+  private lockedHitTest = new Map<
+    Object3D,
+    { pointerEvents: Object3D["pointerEvents"]; intersectChildren: boolean | undefined }
+  >();
+  private buttonMaterials = new Map<number, MeshStandardMaterial>();
 
   // ── Lifecycle ──────────────────────────────────────────────
 
@@ -276,7 +286,15 @@ export class OceanJigsawPuzzleSystem extends createSystem({
       }
     }
 
-    if (!(window as any).isOceanActive) return;
+    const active = (window as any).isOceanActive === true;
+    if (active !== this.environmentActive) {
+      this.environmentActive = active;
+      // Entering the reef starts a fresh attempt, so the lock applied by
+      // lockSolvedPuzzle is lifted again (this system runs after the shared
+      // visibility guard, which restores the settings it saved while hidden).
+      if (active) this.unlockSolvedPuzzle();
+    }
+    if (!active) return;
 
     if (this.bubbleAnimation) {
       this.updateBubbles(delta);
@@ -434,6 +452,7 @@ export class OceanJigsawPuzzleSystem extends createSystem({
         maxWidth: BUTTON_SIZE * 2.2,
         maxHeight: BUTTON_SIZE * 0.7,
       });
+      this.buttonMaterials.set(entity.index, buttonMat);
       group.name = `OceanButton-${config.type}`;
       group.position.set(
         BUTTON_X,
@@ -687,6 +706,9 @@ export class OceanJigsawPuzzleSystem extends createSystem({
     if (!(window as any).isOceanActive) return;
     const buttonType = button.getValue(OceanJigsawButton, "buttonType");
 
+    // A solved puzzle is finished: only Exit still responds.
+    if (this.solved && buttonType !== "exit") return;
+
     switch (buttonType) {
       case "indent":
         this.handleIndent(1);
@@ -796,6 +818,7 @@ export class OceanJigsawPuzzleSystem extends createSystem({
         );
         this.showRisingBubbles();
         this.reportScoreToInstructor();
+        this.lockSolvedPuzzle();
       } else {
         this.showFeedback(
           "Wrong Output",
@@ -825,6 +848,81 @@ export class OceanJigsawPuzzleSystem extends createSystem({
 
     socket.emit("labProgressUpdated", puzzleResult);
     socket.emit("labCompleted", { result: puzzleResult });
+  }
+
+  // ── Solved-puzzle lock ────────────────────────────────────
+
+  /**
+   * Finishes the puzzle: after a correct submission the blocks can no longer be
+   * grabbed and every button except Exit stops responding, so the player cannot
+   * replay the board without leaving the reef first.
+   */
+  private lockSolvedPuzzle(): void {
+    if (this.solved) return;
+    this.solved = true;
+
+    for (const block of this.queries.blocks.entities) {
+      this.setHitTestEnabled(block.object3D, false);
+    }
+    for (const button of this.queries.buttons.entities) {
+      if (button.getValue(OceanJigsawButton, "buttonType") === "exit") continue;
+      this.setHitTestEnabled(button.object3D, false);
+      this.setButtonDisabled(button, true);
+    }
+  }
+
+  /** Lifts the lock so the next visit to the reef can play the puzzle again. */
+  private unlockSolvedPuzzle(): void {
+    for (const object of [...this.lockedHitTest.keys()]) {
+      this.setHitTestEnabled(object, true);
+    }
+    for (const button of this.queries.buttons.entities) {
+      this.setButtonDisabled(button, false);
+    }
+    this.solved = false;
+  }
+
+  /**
+   * Turns pointer hit testing on or off for one puzzle object, remembering the
+   * settings it had. Both flags are needed: UIKit children can opt back into
+   * pointer hits even under a root whose own pointer events are off.
+   */
+  private setHitTestEnabled(
+    object: Object3D | undefined,
+    enabled: boolean,
+  ): void {
+    if (!object) return;
+
+    const saved = this.lockedHitTest.get(object);
+    if (enabled) {
+      if (!saved) return;
+      object.pointerEvents = saved.pointerEvents;
+      object.intersectChildren = saved.intersectChildren;
+      this.lockedHitTest.delete(object);
+      return;
+    }
+
+    if (!saved) {
+      this.lockedHitTest.set(object, {
+        pointerEvents: object.pointerEvents,
+        intersectChildren: object.intersectChildren,
+      });
+    }
+    object.pointerEvents = "none";
+    object.intersectChildren = false;
+  }
+
+  /** Greys a locked button out so a finished board reads as disabled. */
+  private setButtonDisabled(button: Entity, disabled: boolean): void {
+    const material = this.buttonMaterials.get(button.index);
+    const config = BUTTON_CONFIGS.find(
+      (entry) => entry.type === button.getValue(OceanJigsawButton, "buttonType"),
+    );
+    if (!material || !config) return;
+
+    material.color.setHex(disabled ? DISABLED_BUTTON_COLOR : config.color);
+    material.emissive.setHex(disabled ? 0x000000 : config.color);
+    material.emissiveIntensity = disabled ? 0 : 0.15;
   }
 
   // ── Feedback ──────────────────────────────────────────────

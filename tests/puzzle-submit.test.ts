@@ -42,6 +42,7 @@ mock.module("@iwsdk/core", {
 });
 
 const emissions: Array<{ event: string; data: any }> = [];
+const dispatched: string[] = [];
 mock.module("../src/network/socket.ts", {
   namedExports: { socket: { emit: (event: string, data: any) => emissions.push({ event, data }) } },
 });
@@ -66,7 +67,7 @@ const originalWindow = globalThis.window;
 /** Builds the real castle puzzle on top of the real pointer/input stack. */
 function build(): Harness {
   const world: any = new World();
-  emissions.length = 0;
+  emissions.length = dispatched.length = 0;
 
   globalThis.window = {
     isCastleActive: true,
@@ -74,7 +75,7 @@ function build(): Harness {
     // The browser injects the CDN bootstrap; Node uses the identical packaged
     // 0.27.0 build so the assembled program really executes.
     loadPyodide: () => loadPyodide(),
-    dispatchEvent: () => true,
+    dispatchEvent: (event: any) => { dispatched.push(event.type); return true; },
   } as any;
 
   world.scene = new THREE.Scene();
@@ -176,6 +177,19 @@ function press(type: string) {
   assert.equal(entity.hasComponent(tags.Pressed), false, `${type} stayed pressed`);
 }
 
+/** True when the controller ray aimed at the entity still reaches it. */
+function reachable(entity: any): boolean {
+  const position = entity.object3D.getWorldPosition(new THREE.Vector3());
+  const { space, pointer, world } = active!;
+  space.position.set(position.x, position.y, -1);
+  space.lookAt(position);
+  space.updateMatrixWorld(true);
+  pointer.move(world.scene, { timeStamp: performance.now() });
+
+  const intersection = pointer.getIntersection();
+  return Boolean(intersection?.object && ownerOf(entity, intersection) === entity.object3D);
+}
+
 /**
  * Places every block on the board. Blocks carry their own line and indent, so
  * the board is filled by assigning slot numbers exactly as a finished drop
@@ -233,14 +247,47 @@ test("A fully-filled board runs the real compiler and celebrates the correct ans
   assert.equal(system.queries.blocks.entities.size, PUZZLE_LINES.length);
 });
 
-test("A second Submit on the solved board does not report the score twice", async () => {
-  build();
+test("A correct answer locks the board for the rest of the visit", async () => {
+  const { system } = build();
   fillBoard();
 
   assert.equal((await submit()).title, "Success!");
-  assert.equal((await submit()).title, "Success!");
+
+  // The finished puzzle is out of the ray's reach: no block can be grabbed and
+  // no control except Exit responds, so it cannot be played again.
+  for (const block of system.queries.blocks.entities) {
+    assert.equal(reachable(block), false, "a solved board still lets blocks be grabbed");
+  }
+  for (const type of ["indent", "dedent", "reset", "submit"]) {
+    assert.equal(reachable(button(type)), false, `${type} still responds on a solved board`);
+  }
+  assert.equal(reachable(button("exit")), true, "Exit must stay reachable");
+
+  // Exit still returns to the classroom, and the score is reported only once.
+  press("exit");
+  assert.deepEqual(dispatched, ["castleExitRequested"]);
   assert.equal(emissions.filter(entry => entry.event === "labCompleted").length, 1,
     "the completed score was reported more than once");
+});
+
+test("Leaving and re-entering the castle makes the solved board playable again", async () => {
+  const { system, castle } = build();
+  fillBoard();
+  assert.equal((await submit()).title, "Success!");
+
+  // Leaving hides the castle root, so the shared visibility guard saves the
+  // locked hit-test settings while the room is hidden.
+  (window as any).isCastleActive = false;
+  castle.visible = false;
+  tick();
+
+  (window as any).isCastleActive = true;
+  castle.visible = true;
+  tick();
+
+  assert.equal(reachable(button("submit")), true, "the board stayed locked after re-entry");
+  assert.equal(reachable([...system.queries.blocks.entities][0]), true,
+    "blocks stayed ungrabbable after re-entry");
 });
 
 test("A valid but wrongly ordered program reports wrong output and no score", async () => {

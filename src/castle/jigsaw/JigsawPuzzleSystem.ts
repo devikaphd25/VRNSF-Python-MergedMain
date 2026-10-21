@@ -30,6 +30,7 @@ import {
   createSystem,
   type Entity,
 } from "@iwsdk/core";
+import type { Object3D } from "three";
 import { JigsawBlock, JigsawButton } from "./jigsawComponents.js";
 import { PUZZLE_LINES, SHUFFLED_ORDER, EXPECTED_OUTPUT } from "./puzzleData.js";
 import { attachToCastleRoot, createCastleEntity } from "./castleRoot.js";
@@ -121,6 +122,7 @@ const BOARD_COLOR = 0x4a3b2a;
 const SLOT_COLOR = 0x5a4a38;
 const GOLD_COLOR = 0xffd700;
 const ACTIVE_GLOW = 0xffd700;
+const DISABLED_BUTTON_COLOR = 0x6b7280; // greyed-out control on a solved board
 
 const BUTTON_CONFIGS: {
   type: "indent" | "dedent" | "reset" | "exit" | "submit";
@@ -156,6 +158,14 @@ export class JigsawPuzzleSystem extends createSystem({
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
+  /** Set once the puzzle is solved: blocks and every button except Exit stop responding. */
+  private solved = false;
+  private environmentActive = false;
+  private lockedHitTest = new Map<
+    Object3D,
+    { pointerEvents: Object3D["pointerEvents"]; intersectChildren: boolean | undefined }
+  >();
+  private buttonMaterials = new Map<number, MeshStandardMaterial>();
   private king: {
     robe: Mesh;
     head: Group;
@@ -302,7 +312,15 @@ export class JigsawPuzzleSystem extends createSystem({
       }
     }
 
-    if (!(window as any).isCastleActive) return;
+    const active = (window as any).isCastleActive === true;
+    if (active !== this.environmentActive) {
+      this.environmentActive = active;
+      // Entering the room starts a fresh attempt, so the lock applied by
+      // lockSolvedPuzzle is lifted again (this system runs after the shared
+      // visibility guard, which restores the settings it saved while hidden).
+      if (active) this.unlockSolvedPuzzle();
+    }
+    if (!active) return;
 
     this.updateKingIdle(delta);
 
@@ -463,6 +481,7 @@ export class JigsawPuzzleSystem extends createSystem({
         buttonType: config.type,
       });
       entity.addComponent(RayInteractable);
+      this.buttonMaterials.set(entity.index, buttonMat);
 
       group.position.set(
         BUTTON_X,
@@ -733,6 +752,9 @@ export class JigsawPuzzleSystem extends createSystem({
   private handleButtonPress(button: Entity): void {
     const buttonType = button.getValue(JigsawButton, "buttonType");
 
+    // A solved puzzle is finished: only Exit still responds.
+    if (this.solved && buttonType !== "exit") return;
+
     switch (buttonType) {
       case "indent":
         this.handleIndent(1);
@@ -845,6 +867,7 @@ export class JigsawPuzzleSystem extends createSystem({
         );
         this.showGoldCoins();
         this.reportScoreToInstructor();
+        this.lockSolvedPuzzle();
       } else {
         this.showFeedback(
           "Wrong Output",
@@ -874,6 +897,81 @@ export class JigsawPuzzleSystem extends createSystem({
 
     socket.emit("labProgressUpdated", puzzleResult);
     socket.emit("labCompleted", { result: puzzleResult });
+  }
+
+  // ── Solved-puzzle lock ────────────────────────────────────
+
+  /**
+   * Finishes the puzzle: after a correct submission the blocks can no longer be
+   * grabbed and every button except Exit stops responding, so the player cannot
+   * replay the board without leaving the room first.
+   */
+  private lockSolvedPuzzle(): void {
+    if (this.solved) return;
+    this.solved = true;
+
+    for (const block of this.queries.blocks.entities) {
+      this.setHitTestEnabled(block.object3D, false);
+    }
+    for (const button of this.queries.buttons.entities) {
+      if (button.getValue(JigsawButton, "buttonType") === "exit") continue;
+      this.setHitTestEnabled(button.object3D, false);
+      this.setButtonDisabled(button, true);
+    }
+  }
+
+  /** Lifts the lock so the next visit to the room can play the puzzle again. */
+  private unlockSolvedPuzzle(): void {
+    for (const object of [...this.lockedHitTest.keys()]) {
+      this.setHitTestEnabled(object, true);
+    }
+    for (const button of this.queries.buttons.entities) {
+      this.setButtonDisabled(button, false);
+    }
+    this.solved = false;
+  }
+
+  /**
+   * Turns pointer hit testing on or off for one puzzle object, remembering the
+   * settings it had. Both flags are needed: UIKit children can opt back into
+   * pointer hits even under a root whose own pointer events are off.
+   */
+  private setHitTestEnabled(
+    object: Object3D | undefined,
+    enabled: boolean,
+  ): void {
+    if (!object) return;
+
+    const saved = this.lockedHitTest.get(object);
+    if (enabled) {
+      if (!saved) return;
+      object.pointerEvents = saved.pointerEvents;
+      object.intersectChildren = saved.intersectChildren;
+      this.lockedHitTest.delete(object);
+      return;
+    }
+
+    if (!saved) {
+      this.lockedHitTest.set(object, {
+        pointerEvents: object.pointerEvents,
+        intersectChildren: object.intersectChildren,
+      });
+    }
+    object.pointerEvents = "none";
+    object.intersectChildren = false;
+  }
+
+  /** Greys a locked button out so a finished board reads as disabled. */
+  private setButtonDisabled(button: Entity, disabled: boolean): void {
+    const material = this.buttonMaterials.get(button.index);
+    const config = BUTTON_CONFIGS.find(
+      (entry) => entry.type === button.getValue(JigsawButton, "buttonType"),
+    );
+    if (!material || !config) return;
+
+    material.color.setHex(disabled ? DISABLED_BUTTON_COLOR : config.color);
+    material.emissive.setHex(disabled ? 0x000000 : config.color);
+    material.emissiveIntensity = disabled ? 0 : 0.15;
   }
 
   // ── Feedback ──────────────────────────────────────────────
