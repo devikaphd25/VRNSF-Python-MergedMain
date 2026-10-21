@@ -1,16 +1,15 @@
 /**
  * Python Jigsaw Puzzle system for the ocean environment.
  *
- * Creates grabbable code-line blocks, a slotted board, control buttons
- * (indent / dedent / reset / exit / submit), a fish holding an instructions
- * board, a feedback panel, and a bubble celebration animation.  The player
+ * Creates grabbable code-line blocks, a board shaped as a large blue whale,
+ * control buttons (indent / dedent / reset / exit / submit), a crab holding an
+ * instructions board, a feedback panel, and a bubble celebration animation.
+ * The player
  * grabs blocks via raycast, drops them into board slots, adjusts
  * indentation, and submits to validate the assembled Python program.
  */
 import {
   BoxGeometry,
-  ConeGeometry,
-  CylinderGeometry,
   DistanceGrabbable,
   DoubleSide,
   Grabbed,
@@ -39,6 +38,18 @@ import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-
 import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runOceanPython } from "./oceanPythonRunner.js";
+import { createWhaleBoard } from "./oceanWhaleBoard.js";
+import {
+  CRAB_YAW,
+  INSTRUCTION_BOARD_HEIGHT,
+  INSTRUCTION_BOARD_WIDTH,
+  INSTRUCTION_BOARD_X,
+  INSTRUCTION_BOARD_Y,
+  INSTRUCTION_BOARD_Z,
+  TOWARD_PLAYER_X,
+  TOWARD_PLAYER_Z,
+  createCrab,
+} from "./oceanCrab.js";
 import { socket } from "../../network/socket";
 
 // ── Layout ────────────────────────────────────────────────────
@@ -77,13 +88,8 @@ const BUTTON_Z = BOARD_CENTER[2];
 const BUTTON_SPACING = 0.24 * S;
 const BUTTON_SIZE = 0.14 * S;
 
-const FISH_X = -3.5 * S;
-const FISH_Z = 1.5 * S;
-const FISH_Y = 2.0 * S;
-
 // ── Ocean Colours ─────────────────────────────────────────────
 const BLOCK_COLOR = 0x4dabc0;
-const BOARD_COLOR = 0x1a6fa4;
 const SLOT_COLOR = 0x2a8fc0;
 const BUBBLE_COLORS = [0x4dabc0, 0x6bcf7f, 0xffd93d, 0xff9a44, 0xaaccff];
 const ACTIVE_GLOW = 0x7fdfda;
@@ -171,7 +177,7 @@ export class OceanJigsawPuzzleSystem extends createSystem({
     this.buildBoard();
     this.createBlocks();
     this.createButtons();
-    this.createFish();
+    this.createCrab();
     this.createFeedbackPanel();
 
     this.queries.heldBlocks.subscribe("qualify", (block) => {
@@ -316,25 +322,19 @@ export class OceanJigsawPuzzleSystem extends createSystem({
   // ── Board ────────────────────────────────────────────────
 
   private buildBoard(): void {
-    const boardGroup = new Group();
-
-    const boardMat = new MeshStandardMaterial({
-      color: BOARD_COLOR,
-      roughness: 0.85,
-    });
-    const board = new Mesh(
-      new BoxGeometry(BOARD_WIDTH, BOARD_HEIGHT, 0.04 * S),
-      boardMat,
+    // The centre board is a large blue whale (see oceanWhaleBoard.ts); the code
+    // blocks climb its flank. It is sized from the real code column, and its
+    // head stops under the feedback panel, which hangs in front of the board.
+    attachToOceanRoot(
+      createWhaleBoard({
+        centerX: BOARD_CENTER[0],
+        halfWidth: BLOCK_WIDTH / 2,
+        top: this.slotPositions[0].y + BLOCK_HEIGHT / 2,
+        bottom: this.slotPositions[NUM_SLOTS - 1].y - BLOCK_HEIGHT / 2,
+        z: BOARD_CENTER[2],
+        headLimit: FEEDBACK_Y - FEEDBACK_HEIGHT / 2,
+      }),
     );
-    board.position.z = 0.02 * S;
-    boardGroup.add(board);
-
-    boardGroup.position.set(
-      BOARD_CENTER[0],
-      BOARD_CENTER[1],
-      BOARD_CENTER[2],
-    );
-    attachToOceanRoot(boardGroup);
   }
 
   // ── Blocks ────────────────────────────────────────────────
@@ -474,153 +474,34 @@ export class OceanJigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Fish holding instructions board ───────────────────────
+  // ── Crab holding instructions board ───────────────────────
 
-  private createFish(): void {
-    const fish = new Group();
+  private createCrab(): void {
+    // The crab stands on the sand at the player's right and holds the board up
+    // in front of itself; oceanCrab.ts owns the placement it is built around.
+    attachToOceanRoot(createCrab());
 
-    const bodyMat = new MeshStandardMaterial({
-      color: 0xff9a44,
-      roughness: 0.5,
-    });
-    const finMat = new MeshStandardMaterial({
-      color: 0xe87a20,
-      roughness: 0.6,
-    });
-    const eyeWhiteMat = new MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.3,
-    });
-    const pupilMat = new MeshStandardMaterial({
-      color: 0x1a1a1a,
-      roughness: 0.3,
-    });
-
-    // Body (large fish)
-    const body = new Mesh(
-      new SphereGeometry(0.35 * S, 16, 12),
-      bodyMat,
-    );
-    body.scale.set(1, 0.8, 1.4);
-    fish.add(body);
-
-    // Tail fin
-    const tail = new Mesh(
-      new ConeGeometry(0.2 * S, 0.3 * S, 8),
-      finMat,
-    );
-    tail.position.set(0, 0, 0.45 * S);
-    tail.rotation.x = Math.PI / 2;
-    fish.add(tail);
-
-    // Dorsal fin (top)
-    const dorsal = new Mesh(
-      new ConeGeometry(0.12 * S, 0.25 * S, 6),
-      finMat,
-    );
-    dorsal.position.set(0, 0.25 * S, 0);
-    dorsal.rotation.x = 0;
-    fish.add(dorsal);
-
-    // Pectoral fins (sides)
-    const leftFin = new Mesh(
-      new ConeGeometry(0.1 * S, 0.2 * S, 6),
-      finMat,
-    );
-    leftFin.position.set(-0.25 * S, 0, -0.05 * S);
-    leftFin.rotation.z = Math.PI / 2;
-    leftFin.rotation.y = 0.3;
-    fish.add(leftFin);
-
-    const rightFin = new Mesh(
-      new ConeGeometry(0.1 * S, 0.2 * S, 6),
-      finMat,
-    );
-    rightFin.position.set(0.25 * S, 0, -0.05 * S);
-    rightFin.rotation.z = -Math.PI / 2;
-    rightFin.rotation.y = -0.3;
-    fish.add(rightFin);
-
-    // Eyes
-    const leftEyeWhite = new Mesh(
-      new SphereGeometry(0.08 * S, 10, 10),
-      eyeWhiteMat,
-    );
-    leftEyeWhite.position.set(-0.15 * S, 0.1 * S, -0.25 * S);
-    fish.add(leftEyeWhite);
-
-    const rightEyeWhite = new Mesh(
-      new SphereGeometry(0.08 * S, 10, 10),
-      eyeWhiteMat,
-    );
-    rightEyeWhite.position.set(0.15 * S, 0.1 * S, -0.25 * S);
-    fish.add(rightEyeWhite);
-
-    const leftPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
-    );
-    leftPupil.position.set(-0.15 * S, 0.1 * S, -0.31 * S);
-    fish.add(leftPupil);
-
-    const rightPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
-    );
-    rightPupil.position.set(0.15 * S, 0.1 * S, -0.31 * S);
-    fish.add(rightPupil);
-
-    // Mouth (open, holding the board)
-    const mouthTop = new Mesh(
-      new BoxGeometry(0.25 * S, 0.04 * S, 0.08 * S),
-      finMat,
-    );
-    mouthTop.position.set(0, -0.08 * S, -0.4 * S);
-    mouthTop.rotation.x = -0.2;
-    fish.add(mouthTop);
-
-    const mouthBottom = new Mesh(
-      new BoxGeometry(0.25 * S, 0.04 * S, 0.08 * S),
-      finMat,
-    );
-    mouthBottom.position.set(0, -0.16 * S, -0.4 * S);
-    mouthBottom.rotation.x = 0.2;
-    fish.add(mouthBottom);
-
-    // Position the fish floating on the right side, facing the user
-    fish.position.set(FISH_X, FISH_Y, FISH_Z);
-    fish.lookAt(0, FISH_Y, -1.0);
-    attachToOceanRoot(fish);
-
-    // ── Instructions board held in the fish's mouth ──────────
-    const boardX = FISH_X;
-    const boardZ = FISH_Z + 0.05 * S;
-    const boardY = FISH_Y - 0.75 * S;
-
+    // ── Instructions board held in the crab's claws ──────
     // Board backing panel
     const boardBacking = new Mesh(
-      new BoxGeometry(0.85 * S, 1.15 * S, 0.03 * S),
+      new BoxGeometry(
+        INSTRUCTION_BOARD_WIDTH,
+        INSTRUCTION_BOARD_HEIGHT,
+        0.03 * S,
+      ),
       new MeshStandardMaterial({
         color: 0xe8f4f8,
         roughness: 0.9,
         side: DoubleSide,
       }),
     );
-    boardBacking.position.set(boardX, boardY, boardZ);
-    boardBacking.lookAt(0, boardY, -1.0);
-    attachToOceanRoot(boardBacking);
-
-    // String from mouth to board
-    const stringMat = new MeshStandardMaterial({
-      color: 0x8a7a5a,
-      roughness: 0.8,
-    });
-    const string = new Mesh(
-      new CylinderGeometry(0.008 * S, 0.008 * S, 0.4 * S, 6),
-      stringMat,
+    boardBacking.position.set(
+      INSTRUCTION_BOARD_X,
+      INSTRUCTION_BOARD_Y,
+      INSTRUCTION_BOARD_Z,
     );
-    string.position.set(boardX, boardY + 0.6 * S, boardZ);
-    attachToOceanRoot(string);
+    boardBacking.rotation.y = CRAB_YAW;
+    attachToOceanRoot(boardBacking);
 
     // PanelUI for the instruction text
     const instructionsEntity = createOceanEntity(this.world);
@@ -629,11 +510,14 @@ export class OceanJigsawPuzzleSystem extends createSystem({
       maxWidth: 0.78 * S,
       maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
-    instructionsEntity.object3D!.rotation.y = Math.atan2(
-      0 - boardX,
-      -1.0 - boardZ,
+    // Lift the text panel slightly off the backing, toward the player, so the
+    // two never z-fight.
+    instructionsEntity.object3D!.position.set(
+      INSTRUCTION_BOARD_X + TOWARD_PLAYER_X * 0.02 * S,
+      INSTRUCTION_BOARD_Y,
+      INSTRUCTION_BOARD_Z + TOWARD_PLAYER_Z * 0.02 * S,
     );
+    instructionsEntity.object3D!.rotation.y = CRAB_YAW;
     attachToOceanRoot(instructionsEntity.object3D!);
     this.instructionsEntity = instructionsEntity;
     this.instructionsEntityIndex = instructionsEntity.index;

@@ -104,6 +104,25 @@ approved, only the luminance was low.
   covers that placement (right of the player, inside the room, facing the
   player, within the forward view), the king's footprint, and that the idle
   motion runs only while the castle is active.
+- The ocean's centre board is a large blue whale
+  (`src/ocean/jigsaw/oceanWhaleBoard.ts`): an extruded whale silhouette whose
+  flat front face sits half a block's thickness behind the code plane, so every
+  placed code row rests on it instead of hovering off a curve. It is built from
+  the code column's real bounds, and from `headLimit` — the feedback panel's
+  bottom edge — which its head stops just under (that panel hangs in front of
+  the board) while still reaching behind the top code row; the tail stock keeps
+  the column's width down to the sand so no row sits against open water. Its
+  instruction board is held up by a crab (`src/ocean/jigsaw/oceanCrab.ts`)
+  standing inside the coral clearing at the player's right, one yaw facing the
+  player; the system builds the backing and instructions panel from that
+  module's `INSTRUCTION_BOARD_*` constants, and `INSTRUCTION_BOARD_Y` is set so
+  the whole crab — body, eyes, claws — stays in the clear band below the sign
+  from the player's eye. `node --experimental-test-module-mocks --import tsx --test tests/ocean-board.test.ts`
+  pins both down (whale backs every code row and clears the buttons; a claw
+  clamps each of the board's lower corners). Neither prop can be seen in the
+  app preview — the reef is behind the student login — so that suite is the
+  regression guard, and a throwaway page importing the two builders is how to
+  actually look at them in a browser.
 - Every puzzle's feedback panel (success, wrong output and Python errors) sits
   **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
   rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at
