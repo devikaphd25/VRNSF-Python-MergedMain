@@ -74,6 +74,13 @@ start. Provide them via the Base44 secrets dashboard:
   must aim local -Z (`Camera.lookAt`, not `Object3D.lookAt`); register TransformSystem
   before scene creation. Compare scene-object identity with boolean assertions:
   failed object equality assertions can exhaust memory formatting the ECS graph.
+- Inside the castle the player enters at (0, 0, -1) facing +z, so world **-x is
+  their right** and +x their left: the code blocks' shelf sits at +x, and the
+  animated king who holds the instructions board stands at -x, with the board
+  held in front of him inside the 10 x 10 room. `node --experimental-test-module-mocks --import tsx --test tests/castle-instructions-board.test.ts`
+  covers that placement (right of the player, inside the room, facing the
+  player, within the forward view), the king's footprint, and that the idle
+  motion runs only while the castle is active.
 - Connect the classroom socket only after all environment managers and global
   classroom references are installed. Registering earlier exposes a student to
   instructor launch/seat events before their game listeners exist. Seat retries

@@ -2,8 +2,8 @@
  * Python Jigsaw Puzzle system for the castle environment.
  *
  * Creates grabbable code-line blocks, a slotted board at the centre, control
- * buttons (indent / dedent / reset / exit / submit), a soldier holding an
- * instructions board, a feedback panel, and a gold-coin celebration animation.
+ * buttons (indent / dedent / reset / exit / submit), an animated king holding
+ * an instructions board, a feedback panel, and a gold-coin celebration.
  * The player grabs blocks via raycast, drops them into board slots, adjusts
  * indentation, and submits to validate the assembled Python program.
  */
@@ -99,6 +99,31 @@ function createJigsawBlockGeometry(
   return geo;
 }
 
+/**
+ * Builds a limb segment running from `from` to `to` in the parent's local
+ * space. The cylinder's axis is rotated onto +z so a plain `lookAt` can aim the
+ * segment at the target, including its downward pitch.
+ */
+function createLimb(
+  from: Vector3,
+  to: Vector3,
+  radius: number,
+  material: MeshStandardMaterial,
+): Mesh {
+  const direction = new Vector3().subVectors(to, from);
+  const geometry = new CylinderGeometry(
+    radius,
+    radius * 0.85,
+    direction.length(),
+    10,
+  );
+  geometry.rotateX(Math.PI / 2);
+  const limb = new Mesh(geometry, material);
+  limb.position.copy(from).addScaledVector(direction, 0.5);
+  limb.lookAt(to);
+  return limb;
+}
+
 const SHELF_X = 2.8;
 const SHELF_Z = 1.0;
 const SHELF_ROTATION_Y = Math.PI / 2;
@@ -108,9 +133,19 @@ const BUTTON_Z = BOARD_CENTER[2]; // mounted on wall, same plane as board
 const BUTTON_SPACING = 0.24 * S; // vertical spacing
 const BUTTON_SIZE = 0.14 * S;
 
-const SOLDIER_X = -3.5 * S;
-const SOLDIER_Z = 1.5 * S; // standing on the floor, left of the player
-const SOLDIER_SCALE = 1.5; // make the soldier larger so it's clearly visible
+// ── King and instructions board ───────────────────────────────
+// World -x is the player's right (the player enters at (0, 0, -1) facing +z),
+// so the king stands on the floor to their right, mirroring the code blocks'
+// shelf at +x on their left. He stays inside the 10 x 10 room: at his old spot
+// (-7.7, 3.3) the board sat outside the walls, out of the player's view.
+const KING_X = -3.0;
+const KING_Z = 2.7;
+const KING_LOOK_X = 0;
+const KING_LOOK_Z = -1.0; // where the player enters the castle
+const INSTRUCTION_BOARD_WIDTH = 0.85 * S;
+const INSTRUCTION_BOARD_HEIGHT = 1.15 * S;
+const BOARD_DISTANCE = 0.85; // how far in front of the king the board is held
+const BOARD_Y = 2.15; // board centre height, at the king's chest
 
 // ── Colours ──────────────────────────────────────────────────
 const BLOCK_COLOR = 0xd4a76a;
@@ -153,6 +188,13 @@ export class JigsawPuzzleSystem extends createSystem({
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
+  private king: {
+    robe: Mesh;
+    head: Group;
+    cape: Mesh;
+    sceptre: Group;
+    clock: number;
+  } | null = null;
 
   // ── Lifecycle ──────────────────────────────────────────────
 
@@ -183,7 +225,7 @@ export class JigsawPuzzleSystem extends createSystem({
     this.buildBoard();
     this.createBlocks();
     this.createButtons();
-    this.createSoldier();
+    this.createKing();
     this.createFeedbackPanel();
 
     // Clear slot assignment when a block is grabbed off the board.
@@ -293,6 +335,8 @@ export class JigsawPuzzleSystem extends createSystem({
     }
 
     if (!(window as any).isCastleActive) return;
+
+    this.updateKingIdle(delta);
 
     if (this.coinAnimation) {
       this.updateCoins(delta);
@@ -463,104 +507,146 @@ export class JigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Soldier with instructions board ───────────────────────
+  // ── King holding the instructions board ───────────────────
 
-  private createSoldier(): void {
-    const soldier = new Group();
+  private createKing(): void {
+    const king = new Group();
+    king.name = "CastleKing";
 
-    const armorMat = new MeshStandardMaterial({
-      color: 0x6b6b6b,
-      roughness: 0.6,
-      metalness: 0.4,
+    // The room is lit only by its four corner torches, so the king carries a
+    // little emissive of his own — the same trick the puzzle buttons use — to
+    // stay readable from the player's side of the room.
+    const robeMat = new MeshStandardMaterial({
+      color: 0x53308f,
+      roughness: 0.72,
+      emissive: 0x53308f,
+      emissiveIntensity: 0.1,
     });
     const skinMat = new MeshStandardMaterial({
       color: 0xd4a76a,
       roughness: 0.8,
+      emissive: 0xd4a76a,
+      emissiveIntensity: 0.06,
     });
-    const darkMat = new MeshStandardMaterial({
-      color: 0x4a4a4a,
-      roughness: 0.8,
+    const goldMat = new MeshStandardMaterial({
+      color: GOLD_COLOR,
+      roughness: 0.35,
+      metalness: 0.7,
+      emissive: GOLD_COLOR,
+      emissiveIntensity: 0.3,
+    });
+    const capeMat = new MeshStandardMaterial({
+      color: 0x8b1e3f,
+      roughness: 0.85,
+      emissive: 0x8b1e3f,
+      emissiveIntensity: 0.1,
+      side: DoubleSide,
+    });
+    const beardMat = new MeshStandardMaterial({
+      color: 0xe6e2da,
+      roughness: 0.9,
     });
 
-    // Torso
-    const torso = new Mesh(
-      new CylinderGeometry(0.25 * S, 0.3 * S, 0.8 * S, 12),
-      armorMat,
-    );
-    torso.position.y = 1.0 * S;
-    soldier.add(torso);
+    // Robe — one tapered cylinder from the floor to the shoulders so the figure
+    // reads as a robed king at a glance. It also carries the breathing motion.
+    const robe = new Mesh(new CylinderGeometry(0.6, 0.95, 2.9, 20), robeMat);
+    robe.position.y = 1.45;
+    king.add(robe);
 
-    // Head
-    const head = new Mesh(
-      new SphereGeometry(0.15 * S, 12, 12),
-      skinMat,
-    );
-    head.position.set(0, 1.55 * S, -0.05 * S);
-    soldier.add(head);
+    const belt = new Mesh(new CylinderGeometry(0.8, 0.8, 0.18, 20), goldMat);
+    belt.position.y = 1.55;
+    king.add(belt);
 
-    // Helmet
-    const helmet = new Mesh(
-      new ConeGeometry(0.18 * S, 0.2 * S, 12),
-      armorMat,
-    );
-    helmet.position.set(0, 1.72 * S, -0.05 * S);
-    soldier.add(helmet);
+    const collar = new Mesh(new CylinderGeometry(0.52, 0.62, 0.28, 20), robeMat);
+    collar.position.y = 3.0;
+    king.add(collar);
 
-    // Left arm — extended forward to hold the board
-    const leftArm = new Mesh(
-      new CylinderGeometry(0.06 * S, 0.06 * S, 0.6 * S, 8),
-      armorMat,
-    );
-    leftArm.position.set(-0.25 * S, 1.2 * S, -0.25 * S);
-    leftArm.rotation.x = Math.PI / 3;
-    soldier.add(leftArm);
+    const cape = new Mesh(new BoxGeometry(1.7, 2.2, 0.06), capeMat);
+    cape.position.set(0, 1.75, -0.78);
+    cape.rotation.x = 0.18;
+    king.add(cape);
 
-    // Right arm
-    const rightArm = new Mesh(
-      new CylinderGeometry(0.06 * S, 0.06 * S, 0.5 * S, 8),
-      armorMat,
-    );
-    rightArm.position.set(0.3 * S, 1.1 * S, 0);
-    rightArm.rotation.z = -Math.PI / 6;
-    soldier.add(rightArm);
+    const neck = new Mesh(new CylinderGeometry(0.19, 0.19, 0.2, 12), skinMat);
+    neck.position.y = 3.2;
+    king.add(neck);
 
-    // Legs
-    const leftLeg = new Mesh(
-      new CylinderGeometry(0.08 * S, 0.08 * S, 0.6 * S, 8),
-      darkMat,
-    );
-    leftLeg.position.set(-0.12 * S, 0.3 * S, 0);
-    soldier.add(leftLeg);
-    const rightLeg = new Mesh(
-      new CylinderGeometry(0.08 * S, 0.08 * S, 0.6 * S, 8),
-      darkMat,
-    );
-    rightLeg.position.set(0.12 * S, 0.3 * S, 0);
-    soldier.add(rightLeg);
+    // Head, beard and crown hang off one pivot at the head's centre, so the idle
+    // nod never moves the shoulders or the board in his hands.
+    const head = new Group();
+    head.position.y = 3.62;
+    king.add(head);
 
-    soldier.position.set(SOLDIER_X, 0, SOLDIER_Z);
-    soldier.scale.setScalar(SOLDIER_SCALE);
-    soldier.lookAt(0, 1.3 * S, -1.0);
-    attachToCastleRoot(soldier);
+    const skull = new Mesh(new SphereGeometry(0.4, 16, 16), skinMat);
+    head.add(skull);
 
-    // Standalone instructions board — positioned between the soldier and the
-    // player, facing the player directly (not parented to the soldier, so the
-    // lookAt rotation on the soldier doesn't interfere).
+    const beard = new Mesh(new ConeGeometry(0.26, 0.5, 12), beardMat);
+    beard.rotation.x = Math.PI;
+    beard.position.set(0, -0.26, 0.22);
+    head.add(beard);
+
+    const crownBand = new Mesh(new CylinderGeometry(0.4, 0.44, 0.2, 20), goldMat);
+    crownBand.position.y = 0.48;
+    head.add(crownBand);
+
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      const spike = new Mesh(new ConeGeometry(0.08, 0.22, 8), goldMat);
+      spike.position.set(Math.sin(angle) * 0.36, 0.68, Math.cos(angle) * 0.36);
+      head.add(spike);
+    }
+
+    // Both arms reach forward and out to grip the board's side edges at the
+    // board's own height, so the hands hold it instead of hovering near it.
+    const gripX = INSTRUCTION_BOARD_WIDTH / 2 + 0.03;
+    for (const side of [-1, 1]) {
+      const hand = new Vector3(side * gripX, BOARD_Y, BOARD_DISTANCE);
+      king.add(createLimb(new Vector3(side * 0.5, 3.0, 0), hand, 0.15, robeMat));
+      const fist = new Mesh(new SphereGeometry(0.17, 12, 12), skinMat);
+      fist.position.copy(hand);
+      king.add(fist);
+    }
+
+    // Sceptre planted on the floor beside the board's right edge, gripped by the
+    // same fist and swaying about its base with the idle motion.
+    const sceptre = new Group();
+    sceptre.position.set(gripX + 0.1, 0, BOARD_DISTANCE);
+    const shaft = new Mesh(new CylinderGeometry(0.06, 0.06, 3.0, 10), goldMat);
+    shaft.position.y = 1.5;
+    sceptre.add(shaft);
+    const orb = new Mesh(new SphereGeometry(0.15, 14, 14), goldMat);
+    orb.position.y = 3.15;
+    sceptre.add(orb);
+    king.add(sceptre);
+
+    king.position.set(KING_X, 0, KING_Z);
+    // Yaw only: lookAt would also pitch the figure up toward the player's eye
+    // and lean the whole king backwards.
+    king.rotation.y = Math.atan2(KING_LOOK_X - KING_X, KING_LOOK_Z - KING_Z);
+    attachToCastleRoot(king);
+
+    this.king = { robe, head, cape, sceptre, clock: 0 };
+
+    // Instructions board — left a child of the environment root rather than of
+    // the king, so it keeps facing the player while the king idles behind it.
+    const towardPlayerX = Math.sin(king.rotation.y);
+    const towardPlayerZ = Math.cos(king.rotation.y);
+    const boardX = KING_X + towardPlayerX * BOARD_DISTANCE;
+    const boardZ = KING_Z + towardPlayerZ * BOARD_DISTANCE;
+
     const boardBacking = new Mesh(
-      new BoxGeometry(0.85 * S, 1.15 * S, 0.03 * S),
+      new BoxGeometry(
+        INSTRUCTION_BOARD_WIDTH,
+        INSTRUCTION_BOARD_HEIGHT,
+        0.03 * S,
+      ),
       new MeshStandardMaterial({
         color: 0xf5f0e6,
         roughness: 0.9,
         side: DoubleSide,
       }),
     );
-    // Place toward the player from the soldier, at chest height.
-    const boardX = SOLDIER_X;
-    const boardZ = SOLDIER_Z + 0.05 * S;
-    const boardY = 1.3 * S;
-    boardBacking.position.set(boardX, boardY, boardZ);
-    // Face the player at (0, ~1.3, -1.0)
-    boardBacking.lookAt(0, boardY, -1.0);
+    boardBacking.position.set(boardX, BOARD_Y, boardZ);
+    boardBacking.lookAt(KING_LOOK_X, BOARD_Y, KING_LOOK_Z);
     attachToCastleRoot(boardBacking);
 
     const instructionsEntity = createCastleEntity(this.world);
@@ -569,13 +655,33 @@ export class JigsawPuzzleSystem extends createSystem({
       maxWidth: 0.78 * S,
       maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
-    // PanelUI text faces +z by default; rotate to face the player.
-    instructionsEntity.object3D!.rotation.y = Math.atan2(
-      0 - boardX,
-      -1.0 - boardZ,
+    // Lift the text panel slightly off the backing, toward the player, so the
+    // two never z-fight.
+    instructionsEntity.object3D!.position.set(
+      boardX + towardPlayerX * 0.02 * S,
+      BOARD_Y,
+      boardZ + towardPlayerZ * 0.02 * S,
     );
+    // PanelUI text faces +z by default, and the king already faces the player.
+    instructionsEntity.object3D!.rotation.y = king.rotation.y;
     attachToCastleRoot(instructionsEntity.object3D!);
+  }
+
+  /** Standing idle: breathing robe, nodding head, swaying cape and sceptre. */
+  private updateKingIdle(delta: number): void {
+    const king = this.king;
+    if (!king) return;
+
+    king.clock += delta;
+    const t = king.clock;
+
+    const breath = Math.sin(t * 1.4);
+    king.robe.scale.set(1 + breath * 0.015, 1, 1 + breath * 0.015);
+    king.head.rotation.y = Math.sin(t * 0.6) * 0.09;
+    king.head.rotation.x = Math.sin(t * 0.9) * 0.035;
+    king.cape.rotation.x = 0.18 + Math.sin(t * 0.7) * 0.02;
+    king.sceptre.rotation.z = Math.sin(t * 1.1) * 0.025;
+    king.sceptre.rotation.x = Math.cos(t * 0.8) * 0.02;
   }
 
   // ── Feedback panel ────────────────────────────────────────
