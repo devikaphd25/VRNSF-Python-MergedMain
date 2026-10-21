@@ -35,6 +35,7 @@ import { JigsawBlock, JigsawButton } from "./jigsawComponents.js";
 import { PUZZLE_LINES, SHUFFLED_ORDER, EXPECTED_OUTPUT } from "./puzzleData.js";
 import { attachToCastleRoot, createCastleEntity } from "./castleRoot.js";
 import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
+import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runPython } from "./pythonRunner.js";
 import { socket } from "../../network/socket";
@@ -163,8 +164,12 @@ export class JigsawPuzzleSystem extends createSystem({
   private pendingFeedback: { title: string; body: string } | null = null;
   private pendingBlockText: Map<number, string> = new Map();
   private pendingButtonLabels: Map<number, string> = new Map();
-  private coins: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
-  private coinAnimation = false;
+  /** Gold-coin cheer shared by every puzzle (see src/utils/coin-splash.ts). */
+  private readonly coinSplash = createCoinSplash({
+    attach: (coin) => attachToCastleRoot(coin),
+    resolveOrigin: () => this.getPlayerPosition(),
+    scale: S,
+  });
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
@@ -339,8 +344,8 @@ export class JigsawPuzzleSystem extends createSystem({
 
     this.updateKingIdle(delta);
 
-    if (this.coinAnimation) {
-      this.updateCoins(delta);
+    if (this.coinSplash.active) {
+      this.coinSplash.update(delta);
     }
 
     this.updateActiveBlockHighlight();
@@ -880,7 +885,7 @@ export class JigsawPuzzleSystem extends createSystem({
           "Success!",
           `Correct! The code runs successfully.\n\nOutput:\n${result.output.trim()}`,
         );
-        this.showGoldCoins();
+        this.coinSplash.start();
         this.reportScoreToInstructor();
         this.lockSolvedPuzzle();
       } else {
@@ -995,43 +1000,7 @@ export class JigsawPuzzleSystem extends createSystem({
     this.pendingFeedback = { title, body };
   }
 
-  // ── Gold coin animation ───────────────────────────────────
-
-  private showGoldCoins(): void {
-    this.coinAnimation = true;
-    const coinGeo = new CylinderGeometry(0.03 * S, 0.03 * S, 0.008 * S, 12);
-    const coinMat = new MeshStandardMaterial({
-      color: GOLD_COLOR,
-      emissive: GOLD_COLOR,
-      emissiveIntensity: 0.4,
-      metalness: 0.9,
-      roughness: 0.2,
-      transparent: true,
-    });
-
-    // Splash coins from the player's position so they burst upward and rain
-    // back down on the user in a celebratory fountain.
-    const playerPos = this.getPlayerPosition();
-    const COIN_COUNT = 80;
-    for (let i = 0; i < COIN_COUNT; i++) {
-      const coin = new Mesh(coinGeo, coinMat);
-      const angle = (i / COIN_COUNT) * Math.PI * 2 + Math.random() * 0.3;
-      const radius = 0.1 + Math.random() * 0.5;
-      coin.position.set(
-        playerPos.x + Math.cos(angle) * radius,
-        playerPos.y + 1.0,
-        playerPos.z + Math.sin(angle) * radius,
-      );
-      // Shoot upward and outward; gravity brings them back down.
-      const velocity = new Vector3(
-        Math.cos(angle) * (1.5 + Math.random() * 2),
-        4 + Math.random() * 4,
-        Math.sin(angle) * (1.5 + Math.random() * 2),
-      );
-      this.coins.push({ mesh: coin, velocity, life: 1.5 });
-      attachToCastleRoot(coin);
-    }
-  }
+  // ── Player position ───────────────────────────────────────
 
   private getPlayerPosition(): Vector3 {
     const player = (this.world as any)?.player;
@@ -1040,37 +1009,6 @@ export class JigsawPuzzleSystem extends createSystem({
       return new Vector3(obj.position.x, obj.position.y, obj.position.z);
     }
     return new Vector3(0, 0, -1.0);
-  }
-
-  private updateCoins(delta: number): void {
-    const gravity = -5;
-    let allDead = true;
-
-    for (let i = this.coins.length - 1; i >= 0; i--) {
-      const coin = this.coins[i];
-      coin.life -= delta * 0.5;
-
-      if (coin.life <= 0) {
-        coin.mesh.parent?.remove(coin.mesh);
-        this.coins.splice(i, 1);
-        continue;
-      }
-
-      allDead = false;
-      coin.velocity.y += gravity * delta;
-      coin.mesh.position.x += coin.velocity.x * delta;
-      coin.mesh.position.y += coin.velocity.y * delta;
-      coin.mesh.position.z += coin.velocity.z * delta;
-      coin.mesh.rotation.x += delta * 5;
-      coin.mesh.rotation.z += delta * 3;
-
-      const mat = coin.mesh.material as MeshStandardMaterial;
-      mat.opacity = Math.max(0, coin.life);
-    }
-
-    if (allDead) {
-      this.coinAnimation = false;
-    }
   }
 
   // ── Active block highlighting ─────────────────────────────
@@ -1151,10 +1089,7 @@ export class JigsawPuzzleSystem extends createSystem({
       button.dispose();
     }
     this.feedbackEntity?.dispose();
-    for (const coin of this.coins) {
-      coin.mesh.parent?.remove(coin.mesh);
-    }
-    this.coins = [];
+    this.coinSplash.clear();
     this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();

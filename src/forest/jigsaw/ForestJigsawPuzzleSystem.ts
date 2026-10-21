@@ -37,6 +37,7 @@ import { ForestJigsawBlock, ForestJigsawButton } from "./forestJigsawComponents.
 import { FOREST_PUZZLE_LINES, FOREST_SHUFFLED_ORDER, FOREST_EXPECTED_OUTPUT } from "./forestPuzzleData.js";
 import { attachToForestRoot, createForestEntity } from "../forestRoot.js";
 import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
+import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
@@ -124,6 +125,12 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private pendingButtonLabels: Map<number, string> = new Map();
   private leaves: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
   private leafAnimation = false;
+  /** Gold-coin cheer shared by every puzzle (see src/utils/coin-splash.ts). */
+  private readonly coinSplash = createCoinSplash({
+    attach: (coin) => attachToForestRoot(coin),
+    resolveOrigin: () => this.getPlayerPosition(),
+    scale: S,
+  });
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
@@ -300,6 +307,9 @@ export class ForestJigsawPuzzleSystem extends createSystem({
 
     if (this.leafAnimation) {
       this.updateLeaves(delta);
+    }
+    if (this.coinSplash.active) {
+      this.coinSplash.update(delta);
     }
 
     this.updateActiveBlockHighlight();
@@ -840,6 +850,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
           `Correct! The code runs successfully.\n\nOutput:\n${result.output.trim()}`,
         );
         this.showFallingLeaves();
+        this.coinSplash.start();
         this.reportScoreToInstructor();
         this.lockSolvedPuzzle();
       } else {
@@ -1113,6 +1124,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       leaf.mesh.parent?.remove(leaf.mesh);
     }
     this.leaves = [];
+    this.coinSplash.clear();
     this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();

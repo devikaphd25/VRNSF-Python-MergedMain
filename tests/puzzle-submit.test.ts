@@ -230,8 +230,8 @@ test("A fully-filled board runs the real compiler and celebrates the correct ans
   assert.equal(feedback.title, "Success!", feedback.body);
 
   // Celebration: coins must hang off the castle root, not a detached parent.
-  assert.ok(system.coins.length > 0, "no celebration coins were spawned");
-  assert.equal(system.coins.every((coin: any) => coin.mesh.parent === castle), true,
+  assert.ok(system.coinSplash.coins.length > 0, "no celebration coins were spawned");
+  assert.equal(system.coinSplash.coins.every((coin: any) => coin.mesh.parent === castle), true,
     "celebration coins detached from the castle root");
 
   const completed = emissions.filter(entry => entry.event === "labCompleted");
@@ -241,8 +241,8 @@ test("A fully-filled board runs the real compiler and celebrates the correct ans
 
   // The animation must finish and clean itself up without tearing the puzzle down.
   for (let frame = 0; frame < 400; frame++) tick();
-  assert.equal(system.coins.length, 0, "celebration coins were never cleaned up");
-  assert.equal(system.coinAnimation, false);
+  assert.equal(system.coinSplash.coins.length, 0, "celebration coins were never cleaned up");
+  assert.equal(system.coinSplash.active, false);
   assert.equal(system.queries.buttons.entities.size, 5, "the board lost its buttons");
   assert.equal(system.queries.blocks.entities.size, PUZZLE_LINES.length);
 });
@@ -299,7 +299,7 @@ test("A valid but wrongly ordered program reports wrong output and no score", as
   const feedback = await submit();
   assert.equal(feedback.title, "Wrong Output");
   assert.match(feedback.body, /produces the wrong output/);
-  assert.equal(system.coins.length, 0, "a wrong answer played the celebration");
+  assert.equal(system.coinSplash.coins.length, 0, "a wrong answer played the celebration");
   assert.equal(emissions.filter(entry => entry.event === "labCompleted").length, 0,
     "a wrong answer reported a completed score");
 });

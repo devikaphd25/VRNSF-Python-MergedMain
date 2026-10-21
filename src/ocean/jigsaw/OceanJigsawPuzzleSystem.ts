@@ -36,6 +36,7 @@ import { OceanJigsawBlock, OceanJigsawButton } from "./oceanJigsawComponents.js"
 import { OCEAN_PUZZLE_LINES, OCEAN_SHUFFLED_ORDER, OCEAN_EXPECTED_OUTPUT } from "./oceanPuzzleData.js";
 import { attachToOceanRoot, createOceanEntity } from "../oceanRoot.js";
 import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
+import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runOceanPython } from "./oceanPythonRunner.js";
 import { socket } from "../../network/socket";
@@ -123,6 +124,12 @@ export class OceanJigsawPuzzleSystem extends createSystem({
   private pendingButtonLabels: Map<number, string> = new Map();
   private bubbles: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
   private bubbleAnimation = false;
+  /** Gold-coin cheer shared by every puzzle (see src/utils/coin-splash.ts). */
+  private readonly coinSplash = createCoinSplash({
+    attach: (coin) => attachToOceanRoot(coin),
+    resolveOrigin: () => this.getPlayerPosition(),
+    scale: S,
+  });
   private tmpVec = new Vector3();
   private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
   private tmpLerp = new Vector3();
@@ -298,6 +305,9 @@ export class OceanJigsawPuzzleSystem extends createSystem({
 
     if (this.bubbleAnimation) {
       this.updateBubbles(delta);
+    }
+    if (this.coinSplash.active) {
+      this.coinSplash.update(delta);
     }
 
     this.updateActiveBlockHighlight();
@@ -817,6 +827,7 @@ export class OceanJigsawPuzzleSystem extends createSystem({
           `Correct! The code runs successfully.\n\nOutput:\n${result.output.trim()}`,
         );
         this.showRisingBubbles();
+        this.coinSplash.start();
         this.reportScoreToInstructor();
         this.lockSolvedPuzzle();
       } else {
@@ -1088,6 +1099,7 @@ export class OceanJigsawPuzzleSystem extends createSystem({
       bubble.mesh.parent?.remove(bubble.mesh);
     }
     this.bubbles = [];
+    this.coinSplash.clear();
     this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();

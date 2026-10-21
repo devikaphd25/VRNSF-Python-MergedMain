@@ -164,6 +164,11 @@ test("Submit assembles indented code, shows success, celebrates and emits one co
   assert.equal(pythonCalls[0], FOREST_PUZZLE_LINES.map(line => "    ".repeat(line.correctIndent) + line.text).join("\n"));
   assert.equal(system.pendingFeedback.title, "Success!");
   assert.equal(system.leaves.length, 60);
+  // The gold-coin cheer is shared by every puzzle: it must spawn here too, and
+  // hang off the forest root so leaving the clearing removes it.
+  assert.equal(system.coinSplash.coins.length, 60);
+  assert.equal(system.coinSplash.coins.every((coin: any) => coin.mesh.parent === root), true,
+    "celebration coins detached from the forest root");
   assert.equal(window.forestPuzzleSolved, true);
   assert.deepEqual(emissions.map(item => item.event), ["labProgressUpdated", "labCompleted"]);
   assert.equal(emissions[1].data.result.score, 100);
