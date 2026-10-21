@@ -160,6 +160,18 @@ approved, only the luminance was low.
 - Pyodide error messages can be empty after redirecting stderr. Read the stderr
   buffer for the traceback. Run each submitted program in its own globals dict
   so prior attempts cannot supply missing variables.
+- A submitted Python program runs in a Web Worker
+  (`src/castle/jigsaw/python.worker.ts`), which owns the Pyodide instance;
+  `pythonRunner.ts` only routes `{id, code}` messages to it and
+  `pyodide-exec.ts` holds the shared stdout/traceback logic. Keep the compiler
+  off the main thread: the ~10 MB download plus its WebAssembly instantiation
+  and stdlib unpacking are synchronous JS, and on the main thread they stalled
+  the render loop for the whole check — the scene blacked out until it
+  finished. Node has no Web Worker, so `pythonRunner.ts` falls back to running
+  on the current thread through `window.loadPyodide`; that fallback is the path
+  the puzzle tests exercise, which is why the worker protocol itself is
+  verified in the browser instead (`print(sum(range(10)))` → `45`, plus a real
+  `NameError`) while the page kept painting frames.
 - The connected Supabase project currently lacks `public.week_lessons`:
   `/api/instructor-content` returns 500. Apply the existing
   `supabase/weekly-content-migration.sql` in Supabase SQL Editor (then the
