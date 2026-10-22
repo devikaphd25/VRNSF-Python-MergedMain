@@ -1,0 +1,56 @@
+<style>
+  .forest-instructions-board {
+    padding: 3.75;
+    width: 75;
+    height: 100;
+    background-color: #f5f0e6;
+    border-color: #2d6a4f;
+    border-width: 0.5;
+    border-radius: 2;
+    display: flex;
+    flex-direction: column;
+  }
+  #instructions-title {
+    font-size: 4.4;
+    font-weight: bold;
+    color: #2d6a4f;
+  }
+  #instructions-body {
+    font-size: 2.75;
+    color: #2a2a2a;
+    margin-top: 1.875;
+    white-space: pre;
+  }
+  #instructions-given {
+    font-size: 2.75;
+    color: #1b4332;
+    margin-top: 1.875;
+    white-space: pre;
+    font-weight: bold;
+  }
+  #instructions-expected-label {
+    font-size: 2.75;
+    color: #b5651d;
+    margin-top: 1.875;
+    font-weight: bold;
+  }
+  #instructions-expected {
+    font-size: 2.75;
+    color: #b5651d;
+    margin-top: 0.625;
+    white-space: pre;
+  }
+</style>
+<div class="forest-instructions-board">
+  <div id="instructions-title">Python Puzzle 3</div>
+  <div id="instructions-body">The guest list is given below. Ask for a name with input().
+If the name is on the list, print Welcome, NAME!
+— otherwise print Sorry, NAME is not on the list.
+Finish by printing the guest count with len().
+Run it twice: once with a name on the list, once with a name that is not.</div>
+  <div id="instructions-given">Given:  guests = ['Ava', 'Ben', 'Cai', 'Dee', 'Eli']</div>
+  <div id="instructions-expected-label">Sample Run:</div>
+  <div id="instructions-expected">Name: Cai
+Welcome, Cai!
+Guests on list: 5</div>
+</div>

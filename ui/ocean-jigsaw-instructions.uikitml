@@ -1,0 +1,58 @@
+<style>
+  .ocean-instructions-board {
+    padding: 3.75;
+    width: 75;
+    height: 100;
+    background-color: #e8f4f8;
+    border-color: #1a6fa4;
+    border-width: 0.5;
+    border-radius: 2;
+    display: flex;
+    flex-direction: column;
+  }
+  #instructions-title {
+    font-size: 4.4;
+    font-weight: bold;
+    color: #1a6fa4;
+  }
+  #instructions-body {
+    font-size: 2.75;
+    color: #1a3a5a;
+    margin-top: 1.875;
+    white-space: pre;
+  }
+  #instructions-given {
+    font-size: 2.75;
+    color: #0d4a7a;
+    margin-top: 1.875;
+    white-space: pre;
+    font-weight: bold;
+  }
+  #instructions-expected-label {
+    font-size: 2.75;
+    color: #b5651d;
+    margin-top: 1.875;
+    font-weight: bold;
+  }
+  #instructions-expected {
+    font-size: 2.75;
+    color: #b5651d;
+    margin-top: 0.625;
+    white-space: pre;
+  }
+</style>
+<div class="ocean-instructions-board">
+  <div id="instructions-title">Python Puzzle 2</div>
+  <div id="instructions-body">Calculate ticket costs for adults and children.
+Ask how many adult and child tickets with input().
+Multiply by the prices, add for the total.
+Print each subtotal and the total formatted to 2 decimals.</div>
+  <div id="instructions-given">ADULT_PRICE = 11.50
+CHILD_PRICE = 8.25</div>
+  <div id="instructions-expected-label">Sample Run:</div>
+  <div id="instructions-expected">Adult tickets: 2
+Child tickets: 3
+Adults: $23.00
+Children: $24.75
+Total: $47.75</div>
+</div>
