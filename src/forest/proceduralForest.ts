@@ -506,6 +506,16 @@ function createGrassTuft(rng: () => number): Mesh {
   return grass;
 }
 
+// ── Puzzle assembly keep-out ──────────────────────────────────
+// The forest puzzle's round board hangs at (0, 4.5) — outside the circular
+// clearing the environment manager asks for, which is centred on the player's
+// spawn and only reaches 3.5 m. A seeded tree that lands on that disc covers
+// the code blocks placed on the board, so the tree ring below drops them.
+const PUZZLE_BOARD_X = 0;
+const PUZZLE_BOARD_Z = 4.5;
+/** The board's own 2.09 m disc, plus a margin so foliage clears the rim. */
+const PUZZLE_KEEPOUT_RADIUS = 2.5;
+
 // ── Main forest builder ───────────────────────────────────────
 export function buildProceduralForest(
   footprint: number,
@@ -544,6 +554,15 @@ export function buildProceduralForest(
       const m = o as Mesh;
       if (m.isMesh) disableRaycast(m);
     });
+    // A tree on the puzzle board hides the code rows placed on it. It is still
+    // built from the shared seeded sequence — skipping its draws would shift
+    // every later tree, bush and animal — and just not added to the forest.
+    if (
+      Math.hypot(x - PUZZLE_BOARD_X, z - PUZZLE_BOARD_Z) <
+      PUZZLE_KEEPOUT_RADIUS
+    ) {
+      continue;
+    }
     forest.add(tree);
   }
 

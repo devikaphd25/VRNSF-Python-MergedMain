@@ -142,6 +142,18 @@ approved, only the luminance was low.
   facing the player). As with the reef, the clearing only renders behind the
   student login, so that suite is the regression guard and a throwaway page
   importing the two builders is how to look at the props in a browser.
+- `buildProceduralForest` places its trees from a seeded `mulberry32(42)`
+  sequence, so a tree's position is fixed, not sampled per run. The board hangs
+  at (0, 4.5), outside the circular clearing the manager passes (3.5 m, centred
+  on the player's spawn), so a seeded tree can land **on the disc** and hide the
+  code rows placed on it — that was the tree beside the forest feedback panel.
+  Trees inside `PUZZLE_KEEPOUT_RADIUS` of the board are therefore dropped, but
+  they are still *built* first: `createTree` is what consumes the shared random
+  draws, and skipping them would shift every later tree, bush, rock and animal.
+  Changing the tree-placement `do/while` condition instead (an extra retry, a
+  larger clearing) moves the whole forest for the same reason: verify any change
+  here by building the forest in Node and comparing tree positions, not just by
+  counting trees.
 - Every puzzle's feedback panel (success, wrong output and Python errors) sits
   **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
   rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at
