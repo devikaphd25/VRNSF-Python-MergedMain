@@ -1,17 +1,15 @@
 /**
  * Python Jigsaw Puzzle system for the forest environment.
  *
- * Creates grabbable code-line blocks, a slotted board on a tree trunk,
- * control buttons (indent / dedent / reset / exit / submit), an owl
- * holding an instructions board, a feedback panel, and a falling-leaf
- * celebration animation.  The player grabs blocks via raycast, drops
- * them into board slots, adjusts indentation, and submits to validate
+ * Creates grabbable code-line blocks, a round board hung between two trees,
+ * control buttons (indent / dedent / reset / exit / submit), an owl perched on
+ * one of those trees holding an instructions board, a feedback panel, and a
+ * falling-leaf celebration animation.  The player grabs blocks via raycast,
+ * drops them into board slots, adjusts indentation, and submits to validate
  * the assembled Python program.
  */
 import {
   BoxGeometry,
-  ConeGeometry,
-  CylinderGeometry,
   DistanceGrabbable,
   DoubleSide,
   Grabbed,
@@ -26,83 +24,85 @@ import {
   PlaneGeometry,
   Pressed,
   RayInteractable,
-  SphereGeometry,
   type UIKitDocument,
   Vector3,
   createSystem,
   type Entity,
 } from "@iwsdk/core";
-import { ExtrudeGeometry, Shape } from "three";
-
+import type { Object3D } from "three";
 import { ForestJigsawBlock, ForestJigsawButton } from "./forestJigsawComponents.js";
 import { FOREST_PUZZLE_LINES, FOREST_SHUFFLED_ORDER, FOREST_EXPECTED_OUTPUT } from "./forestPuzzleData.js";
 import { attachToForestRoot, createForestEntity } from "../forestRoot.js";
+import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
+import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
+import { createForestBoard, forestBoardMetrics } from "./forestBoard.js";
+import { createOwlProp } from "./forestOwl.js";
 
 // ── Layout ────────────────────────────────────────────────────
-const S = 3.96;
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
-const BOARD_WIDTH = 1.4 * S;
-const BOARD_HEIGHT = 1.0 * S;
-const SLOT_HEIGHT = 0.14 * S;
+const S = 2.2;
+// Raised off the board's old 1.4: the round board is sized from the code
+// column's own bounds, and this keeps the whole disc — bottom rim included —
+// clear of the ground while it hangs in the gap between the two trees.
+const BOARD_CENTER: [number, number, number] = [0, 1.9, 4.5];
+const BOARD_WIDTH = 1.6 * S;
+const BOARD_HEIGHT = 1.6 * S;
+const SLOT_HEIGHT = 0.17 * S;
 const NUM_SLOTS = 7;
 
-const BLOCK_WIDTH = 1.1 * S;
-const BLOCK_HEIGHT = 0.11 * S;
-const BLOCK_THICKNESS = 0.03 * S;
+const BLOCK_WIDTH = 0.9 * S;
+const BLOCK_HEIGHT = 0.14 * S;
+const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
-const TAB_RADIUS = BLOCK_HEIGHT * 0.35;
+const BLOCK_BEVEL = 0.004 * S;
 
-function createJigsawBlockGeometry(
-  width: number,
-  height: number,
-  depth: number,
-): ExtrudeGeometry {
-  const w = width / 2;
-  const h = height / 2;
-  const r = TAB_RADIUS;
+// Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
+// and the knob stays shorter than the gap between two slots so a shuffled block
+// never pokes into its neighbour on the shelf.
+const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
+const KNOB_RADIUS = SLOT_GAP * 0.9;
 
-  const shape = new Shape();
-  shape.moveTo(-w, -h);
-  shape.lineTo(-r, -h);
-  shape.absarc(0, -h, r, Math.PI, 0, true);
-  shape.lineTo(w, -h);
-  shape.lineTo(w, h);
-  shape.lineTo(r, h);
-  shape.absarc(0, h, r, 0, Math.PI, false);
-  shape.lineTo(-w, h);
-  shape.lineTo(-w, -h);
+// The code column the blocks are placed in, in world metres: the round board
+// (src/forest/jigsaw/forestBoard.ts) is sized from these bounds, so a placed row
+// always has board behind it. The half-width is the widest a row ever gets — an
+// indented one — not just half a block.
+const SLOT_START_Y = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
+const CODE_COLUMN = {
+  centerX: BOARD_CENTER[0],
+  halfWidth: BLOCK_WIDTH / 2 + INDENT_SHIFT,
+  top: SLOT_START_Y + BLOCK_HEIGHT / 2,
+  bottom:
+    SLOT_START_Y - (NUM_SLOTS - 1) * SLOT_HEIGHT - BLOCK_HEIGHT / 2,
+  z: BOARD_CENTER[2],
+  blockThickness: BLOCK_THICKNESS,
+};
+const BOARD_METRICS = forestBoardMetrics(CODE_COLUMN);
 
-  const geo = new ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: 0.004 * S,
-    bevelSize: 0.004 * S,
-    bevelSegments: 2,
-  });
-  geo.translate(0, 0, -depth / 2);
-  return geo;
-}
+// The feedback panel (wrong output / Python errors) sits directly on top of the
+// round board, where the player is already looking: anchored to the disc's top
+// edge, since the board is a circle now rather than a rectangle. It used to hang
+// at 2.3 * S = 5.06 m, far above the board and out of the player's view.
+const FEEDBACK_HEIGHT = 0.6 * S;
+const FEEDBACK_Y =
+  BOARD_METRICS.top + FEEDBACK_HEIGHT / 2 + 0.06 * S;
 
-const SHELF_X = 2.5 * S;
-const SHELF_Z = 4.6;
+const SHELF_X = 2.8;
+const SHELF_Z = 1.0;
+const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S);
 const BUTTON_Z = BOARD_CENTER[2];
 const BUTTON_SPACING = 0.24 * S;
 const BUTTON_SIZE = 0.14 * S;
 
-const OWL_X = -2.5 * S;
-const OWL_Z = 3.5 * S;
-
 // ── Forest Colours ─────────────────────────────────────────────
 const BLOCK_COLOR = 0x8b6f47;      // wood brown
-const BOARD_COLOR = 0x3a5a3a;      // dark forest green
 const SLOT_COLOR = 0x4a6a4a;
 const LEAF_COLORS = [0xd4651f, 0xe8a838, 0xc04e1f, 0x6b8e23, 0x8baa3a];
 const ACTIVE_GLOW = 0x7fdf6a;
+const DISABLED_BUTTON_COLOR = 0x6b7280; // greyed-out control on a solved board
 
 const BUTTON_CONFIGS: {
   type: "indent" | "dedent" | "reset" | "exit" | "submit";
@@ -139,20 +139,34 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private pendingButtonLabels: Map<number, string> = new Map();
   private leaves: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
   private leafAnimation = false;
+  /** Gold-coin cheer shared by every puzzle (see src/utils/coin-splash.ts). */
+  private readonly coinSplash = createCoinSplash({
+    attach: (coin) => attachToForestRoot(coin),
+    resolveOrigin: () => this.getPlayerPosition(),
+    scale: S,
+  });
   private tmpVec = new Vector3();
+  private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
+  private tmpLerp = new Vector3();
+  /** Set once the puzzle is solved: blocks and every button except Exit stop responding. */
+  private solved = false;
+  private environmentActive = false;
+  private lockedHitTest = new Map<
+    Object3D,
+    { pointerEvents: Object3D["pointerEvents"]; intersectChildren: boolean | undefined }
+  >();
+  private buttonMaterials = new Map<number, MeshStandardMaterial>();
 
   // ── Lifecycle ──────────────────────────────────────────────
 
   init() {
     this.tmpVec = new Vector3();
 
-    const startY =
-      BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(
         new Vector3(
           BOARD_CENTER[0],
-          startY - i * SLOT_HEIGHT,
+          SLOT_START_Y - i * SLOT_HEIGHT,
           BOARD_CENTER[2],
         ),
       );
@@ -162,7 +176,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       const origIdx = FOREST_SHUFFLED_ORDER[i];
       this.homePositions.set(origIdx, [
         SHELF_X,
-        startY - i * SLOT_HEIGHT,
+        SLOT_START_Y - i * SLOT_HEIGHT,
         SHELF_Z,
       ]);
     }
@@ -178,6 +192,10 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       if (slot >= 0) {
         block.setValue(ForestJigsawBlock, "slotIndex", -1);
       }
+      // Reset rotation so the block faces the board while held,
+      // making it easy to align with board slots.
+      block.object3D!.rotation.set(0, 0, 0);
+      block.object3D!.updateMatrixWorld(true);
     });
 
     this.queries.heldBlocks.subscribe("disqualify", (block) => {
@@ -267,55 +285,62 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       this.pendingFeedback = null;
     }
 
-    if (!(window as any).isForestActive) return;
+    // Smoothly lerp blocks toward their target positions (placement / home / indent).
+    for (const [idx, anim] of this.animatingBlocks) {
+      if (anim.entity.hasComponent(Grabbed)) {
+        this.animatingBlocks.delete(idx);
+        continue;
+      }
+      const obj = anim.entity.object3D!;
+      this.tmpLerp.copy(obj.position).lerp(anim.targetPos, 0.15);
+      obj.position.copy(this.tmpLerp);
+      let diff = anim.targetRotY - obj.rotation.y;
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+      obj.rotation.y += diff * 0.15;
+      obj.updateMatrixWorld(true);
+      if (obj.position.distanceTo(anim.targetPos) < 0.01 && Math.abs(diff) < 0.01) {
+        obj.position.copy(anim.targetPos);
+        obj.rotation.set(0, anim.targetRotY, 0);
+        obj.updateMatrixWorld(true);
+        this.animatingBlocks.delete(idx);
+      }
+    }
+
+    const active = (window as any).isForestActive === true;
+    if (active !== this.environmentActive) {
+      this.environmentActive = active;
+      // Entering the clearing starts a fresh attempt, so the lock applied by
+      // lockSolvedPuzzle is lifted again (this system runs after the shared
+      // visibility guard, which restores the settings it saved while hidden).
+      if (active) this.unlockSolvedPuzzle();
+    }
+    if (!active) return;
 
     if (this.leafAnimation) {
       this.updateLeaves(delta);
+    }
+    if (this.coinSplash.active) {
+      this.coinSplash.update(delta);
     }
 
     this.updateActiveBlockHighlight();
   }
 
-  // ── Board (mounted on a tree trunk) ────────────────────────
+  // ── Board (a round sign hung between two trees) ────────────
 
   private buildBoard(): void {
-    const boardGroup = new Group();
-
-    // Large tree trunk behind the board
-    const trunkMat = new MeshStandardMaterial({
-      color: 0x5a3a1a,
-      roughness: 0.95,
-    });
-    const trunk = new Mesh(
-      new CylinderGeometry(0.9 * S, 1.1 * S, 5.5 * S, 12),
-      trunkMat,
-    );
-    trunk.position.set(0, 2.5 * S, BOARD_CENTER[2] + 0.15 * S);
-    boardGroup.add(trunk);
-
-    // Board panel (wooden plank)
-    const boardMat = new MeshStandardMaterial({
-      color: BOARD_COLOR,
-      roughness: 0.85,
-    });
-    const board = new Mesh(
-      new BoxGeometry(BOARD_WIDTH, BOARD_HEIGHT, 0.04 * S),
-      boardMat,
-    );
-    board.position.z = 0.02 * S;
-    boardGroup.add(board);
-
-    boardGroup.position.set(
-      BOARD_CENTER[0],
-      BOARD_CENTER[1],
-      BOARD_CENTER[2],
-    );
-    attachToForestRoot(boardGroup);
+    // The board is a circle hung in the gap between the two trees that hold it;
+    // forestBoard.ts owns its size, its hooks, the ropes and both trees.
+    attachToForestRoot(createForestBoard(CODE_COLUMN));
   }
 
   // ── Blocks ────────────────────────────────────────────────
 
   private createBlocks(): void {
+    // Cuts keyed to the correct line order, so only true neighbours interlock.
+    const pieceEdges = jigsawPieceEdges(FOREST_PUZZLE_LINES);
+
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = FOREST_SHUFFLED_ORDER[i];
       const line = FOREST_PUZZLE_LINES[origIdx];
@@ -327,7 +352,13 @@ export class ForestJigsawPuzzleSystem extends createSystem({
         roughness: 0.75,
       });
       const body = new Mesh(
-        createJigsawBlockGeometry(BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_THICKNESS),
+        createJigsawBlockGeometry(
+          BLOCK_WIDTH,
+          BLOCK_HEIGHT,
+          BLOCK_THICKNESS,
+          pieceEdges[origIdx],
+          { knobRadius: KNOB_RADIUS, bevel: BLOCK_BEVEL },
+        ),
         bodyMat,
       );
       group.add(body);
@@ -369,6 +400,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
 
       const home = this.homePositions.get(origIdx)!;
       group.position.set(home[0], home[1], home[2]);
+      group.rotation.y = SHELF_ROTATION_Y;
 
       this.blockEntities.set(origIdx, block);
       this.blockMaterials.set(origIdx, bodyMat);
@@ -432,6 +464,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
         maxWidth: BUTTON_SIZE * 2.2,
         maxHeight: BUTTON_SIZE * 0.7,
       });
+      this.buttonMaterials.set(entity.index, buttonMat);
       group.name = `ForestButton-${config.type}`;
       group.position.set(
         BUTTON_X,
@@ -443,226 +476,32 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Owl with instructions board ─────────────────────────
+  // ── Owl on the tree holding the instructions board ────────
 
   private createOwl(): void {
-    const owl = new Group();
-
-    const bodyMat = new MeshStandardMaterial({
-      color: 0x8b6f47,
-      roughness: 0.85,
-    });
-    const bellyMat = new MeshStandardMaterial({
-      color: 0xd4b896,
-      roughness: 0.85,
-    });
-    const eyeMat = new MeshStandardMaterial({
-      color: 0xffd700,
-      roughness: 0.4,
-      emissive: 0xffd700,
-      emissiveIntensity: 0.2,
-    });
-    const beakMat = new MeshStandardMaterial({
-      color: 0xd4651f,
-      roughness: 0.6,
-    });
-    const tuftMat = new MeshStandardMaterial({
-      color: 0x6b5a3a,
-      roughness: 0.85,
-    });
-
-    // Body (round)
-    const body = new Mesh(
-      new SphereGeometry(0.3 * S, 16, 16),
-      bodyMat,
+    // The owl perches on a branch of the tree at the player's right — the same
+    // tree that holds the round board's rope — and the instructions board hangs
+    // from that branch below it. forestOwl.ts owns that placement.
+    const { group, sign } = createOwlProp(
+      -BOARD_METRICS.treeX,
+      BOARD_CENTER[2],
     );
-    body.position.y = 1.2 * S;
-    body.scale.y = 1.2;
-    owl.add(body);
+    attachToForestRoot(group);
 
-    // Belly patch
-    const belly = new Mesh(
-      new SphereGeometry(0.2 * S, 12, 12),
-      bellyMat,
-    );
-    belly.position.set(0, 1.15 * S, -0.15 * S);
-    belly.scale.y = 1.3;
-    owl.add(belly);
-
-    // Eyes (two large golden spheres)
-    const leftEye = new Mesh(
-      new SphereGeometry(0.1 * S, 12, 12),
-      eyeMat,
-    );
-    leftEye.position.set(-0.12 * S, 1.42 * S, -0.22 * S);
-    owl.add(leftEye);
-
-    const rightEye = new Mesh(
-      new SphereGeometry(0.1 * S, 12, 12),
-      eyeMat,
-    );
-    rightEye.position.set(0.12 * S, 1.42 * S, -0.22 * S);
-    owl.add(rightEye);
-
-    // Pupils
-    const pupilMat = new MeshStandardMaterial({ color: 0x1a1a1a });
-    const leftPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
-    );
-    leftPupil.position.set(-0.12 * S, 1.42 * S, -0.3 * S);
-    owl.add(leftPupil);
-
-    const rightPupil = new Mesh(
-      new SphereGeometry(0.04 * S, 8, 8),
-      pupilMat,
-    );
-    rightPupil.position.set(0.12 * S, 1.42 * S, -0.3 * S);
-    owl.add(rightPupil);
-
-    // Beak
-    const beak = new Mesh(
-      new ConeGeometry(0.06 * S, 0.12 * S, 8),
-      beakMat,
-    );
-    beak.position.set(0, 1.3 * S, -0.3 * S);
-    beak.rotation.x = Math.PI;
-    owl.add(beak);
-
-    // Ear tufts
-    const leftTuft = new Mesh(
-      new ConeGeometry(0.06 * S, 0.15 * S, 8),
-      tuftMat,
-    );
-    leftTuft.position.set(-0.2 * S, 1.55 * S, -0.05 * S);
-    owl.add(leftTuft);
-
-    const rightTuft = new Mesh(
-      new ConeGeometry(0.06 * S, 0.15 * S, 8),
-      tuftMat,
-    );
-    rightTuft.position.set(0.2 * S, 1.55 * S, -0.05 * S);
-    owl.add(rightTuft);
-
-    // Wings (flat ellipsoids on the sides)
-    const wingMat = new MeshStandardMaterial({
-      color: 0x6b5a3a,
-      roughness: 0.85,
-    });
-    const leftWing = new Mesh(
-      new SphereGeometry(0.15 * S, 8, 8),
-      wingMat,
-    );
-    leftWing.position.set(-0.3 * S, 1.15 * S, -0.05 * S);
-    leftWing.scale.set(0.5, 1.2, 0.6);
-    owl.add(leftWing);
-
-    const rightWing = new Mesh(
-      new SphereGeometry(0.15 * S, 8, 8),
-      wingMat,
-    );
-    rightWing.position.set(0.3 * S, 1.15 * S, -0.05 * S);
-    rightWing.scale.set(0.5, 1.2, 0.6);
-    owl.add(rightWing);
-
-    // Branch the owl sits on
-    const branchMat = new MeshStandardMaterial({
-      color: 0x4a3a1a,
-      roughness: 0.9,
-    });
-    const branch = new Mesh(
-      new CylinderGeometry(0.05 * S, 0.06 * S, 0.8 * S, 8),
-      branchMat,
-    );
-    branch.position.set(0, 0.85 * S, 0);
-    branch.rotation.z = Math.PI / 2;
-    owl.add(branch);
-
-    // Feet
-    const footMat = new MeshStandardMaterial({ color: 0xd4651f });
-    const leftFoot = new Mesh(
-      new CylinderGeometry(0.03 * S, 0.03 * S, 0.1 * S, 6),
-      footMat,
-    );
-    leftFoot.position.set(-0.08 * S, 0.85 * S, 0);
-    owl.add(leftFoot);
-
-    const rightFoot = new Mesh(
-      new CylinderGeometry(0.03 * S, 0.03 * S, 0.1 * S, 6),
-      footMat,
-    );
-    rightFoot.position.set(0.08 * S, 0.85 * S, 0);
-    owl.add(rightFoot);
-
-    owl.position.set(OWL_X, 0, OWL_Z);
-    owl.lookAt(0, 1.3 * S, -1.0);
-    attachToForestRoot(owl);
-
-    // Instructions board hung on a tree — positioned between the owl and
-    // the player, facing the player directly.
-    const boardX = OWL_X + 0.3 * S;
-    const boardZ = OWL_Z - 0.6 * S;
-    const boardY = 1.3 * S;
-
-    // Tree trunk behind the board to hang it on
-    const treeTrunk = new Mesh(
-      new CylinderGeometry(0.28 * S, 0.35 * S, 4.5 * S, 12),
-      new MeshStandardMaterial({
-        color: 0x5a3a1a,
-        roughness: 0.95,
-      }),
-    );
-    treeTrunk.position.set(boardX, 2.0 * S, boardZ + 0.2 * S);
-    treeTrunk.lookAt(boardX, 2.0 * S, -1.0);
-    attachToForestRoot(treeTrunk);
-
-    // Branch sticking out to hold the board
-    const boardBranch = new Mesh(
-      new CylinderGeometry(0.04 * S, 0.05 * S, 0.5 * S, 8),
-      new MeshStandardMaterial({
-        color: 0x4a3a1a,
-        roughness: 0.9,
-      }),
-    );
-    boardBranch.position.set(boardX, boardY + 0.55 * S, boardZ + 0.08 * S);
-    boardBranch.rotation.x = Math.PI / 2;
-    boardBranch.lookAt(boardX, boardY + 0.55 * S, -1.0);
-    attachToForestRoot(boardBranch);
-
-    // Board backing panel
-    const boardBacking = new Mesh(
-      new BoxGeometry(0.75 * S, 1.0 * S, 0.03 * S),
-      new MeshStandardMaterial({
-        color: 0xf5f0e6,
-        roughness: 0.9,
-        side: DoubleSide,
-      }),
-    );
-    boardBacking.position.set(boardX, boardY, boardZ);
-    boardBacking.lookAt(0, boardY, -1.0);
-    attachToForestRoot(boardBacking);
-
-    // Rope/nail at top of board attaching it to the tree
-    const nailMat = new MeshStandardMaterial({ color: 0x8a7a5a, roughness: 0.7 });
-    const nail = new Mesh(
-      new CylinderGeometry(0.015 * S, 0.015 * S, 0.08 * S, 6),
-      nailMat,
-    );
-    nail.position.set(boardX, boardY + 0.48 * S, boardZ + 0.01 * S);
-    nail.lookAt(0, boardY + 0.48 * S, -1.0);
-    attachToForestRoot(nail);
-
+    // PanelUI for the instruction text, lifted a hair off the sign's backing
+    // toward the player, so the two never z-fight.
     const instructionsEntity = createForestEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-instructions.json",
-      maxWidth: 0.6875 * S,
-      maxHeight: 0.9375 * S,
+      maxWidth: 0.78 * S,
+      maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
-    instructionsEntity.object3D!.rotation.y = Math.atan2(
-      0 - boardX,
-      -1.0 - boardZ,
+    instructionsEntity.object3D!.position.set(
+      sign.centerX + sign.towardPlayerX * 0.02 * S,
+      sign.centerY,
+      sign.centerZ + sign.towardPlayerZ * 0.02 * S,
     );
+    instructionsEntity.object3D!.rotation.y = sign.yaw;
     attachToForestRoot(instructionsEntity.object3D!);
     this.instructionsEntity = instructionsEntity;
     this.instructionsEntityIndex = instructionsEntity.index;
@@ -671,12 +510,13 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     this.pendingInstructions = {
       "instructions-title": "Python Puzzle 3",
       "instructions-body":
-        "The guest list is given below. Ask for a name with input().\nIf the name is on the list, print Welcome, NAME!\nOtherwise print Sorry, NAME is not on the list.\nFinish by printing the guest count with len().",
+        "The guest list is given below. Ask for a name with input().\nIf the name is on the list, print Welcome, NAME!\n— otherwise print Sorry, NAME is not on the list.\nFinish by printing the guest count with len().\nRun it twice: once with a name on the list, once with a name that is not.",
       "instructions-given": "Given:  guests = ['Ava', 'Ben', 'Cai', 'Dee', 'Eli']",
       "instructions-expected-label": "Sample Run:",
       "instructions-expected": "Name: Cai\nWelcome, Cai!\nGuests on list: 5",
     };
   }
+
 
   // ── Feedback panel ────────────────────────────────────────
 
@@ -685,9 +525,9 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     entity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-feedback.json",
       maxWidth: 1.2 * S,
-      maxHeight: 0.6 * S,
+      maxHeight: FEEDBACK_HEIGHT,
     });
-    entity.object3D!.position.set(0, 2.3 * S, 4.8);
+    entity.object3D!.position.set(0, FEEDBACK_Y, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToForestRoot(entity.object3D!);
     this.feedbackEntity = entity;
@@ -701,7 +541,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     obj.getWorldPosition(this.tmpVec);
 
     const dz = Math.abs(this.tmpVec.z - BOARD_CENTER[2]);
-    if (dz > 1.0) {
+    if (dz > 3.0) {
       this.returnBlockHome(block);
       return;
     }
@@ -709,8 +549,8 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     const dx = this.tmpVec.x - BOARD_CENTER[0];
     const dy = this.tmpVec.y - BOARD_CENTER[1];
     if (
-      Math.abs(dx) > BOARD_WIDTH / 2 + 0.15 * S ||
-      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.15 * S
+      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
+      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
     ) {
       this.returnBlockHome(block);
       return;
@@ -743,6 +583,9 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   private handleButtonPress(button: Entity): void {
     if (!(window as any).isForestActive) return;
     const buttonType = button.getValue(ForestJigsawButton, "buttonType");
+
+    // A solved puzzle is finished: only Exit still responds.
+    if (this.solved && buttonType !== "exit") return;
 
     switch (buttonType) {
       case "indent":
@@ -794,12 +637,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     targetBlock.setValue(ForestJigsawBlock, "indent", indent);
 
     const pos = this.slotPositions[slot];
-    targetBlock.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    targetBlock.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(targetBlock.index, {
+      entity: targetBlock,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(targetBlock);
   }
 
@@ -853,7 +695,9 @@ export class ForestJigsawPuzzleSystem extends createSystem({
           `Correct! The code runs successfully.\n\nOutput:\n${result.output.trim()}`,
         );
         this.showFallingLeaves();
+        this.coinSplash.start();
         this.reportScoreToInstructor();
+        this.lockSolvedPuzzle();
       } else {
         this.showFeedback(
           "Wrong Output",
@@ -883,6 +727,81 @@ export class ForestJigsawPuzzleSystem extends createSystem({
 
     socket.emit("labProgressUpdated", puzzleResult);
     socket.emit("labCompleted", { result: puzzleResult });
+  }
+
+  // ── Solved-puzzle lock ────────────────────────────────────
+
+  /**
+   * Finishes the puzzle: after a correct submission the blocks can no longer be
+   * grabbed and every button except Exit stops responding, so the player cannot
+   * replay the board without leaving the clearing first.
+   */
+  private lockSolvedPuzzle(): void {
+    if (this.solved) return;
+    this.solved = true;
+
+    for (const block of this.queries.blocks.entities) {
+      this.setHitTestEnabled(block.object3D, false);
+    }
+    for (const button of this.queries.buttons.entities) {
+      if (button.getValue(ForestJigsawButton, "buttonType") === "exit") continue;
+      this.setHitTestEnabled(button.object3D, false);
+      this.setButtonDisabled(button, true);
+    }
+  }
+
+  /** Lifts the lock so the next visit to the clearing can play the puzzle again. */
+  private unlockSolvedPuzzle(): void {
+    for (const object of [...this.lockedHitTest.keys()]) {
+      this.setHitTestEnabled(object, true);
+    }
+    for (const button of this.queries.buttons.entities) {
+      this.setButtonDisabled(button, false);
+    }
+    this.solved = false;
+  }
+
+  /**
+   * Turns pointer hit testing on or off for one puzzle object, remembering the
+   * settings it had. Both flags are needed: UIKit children can opt back into
+   * pointer hits even under a root whose own pointer events are off.
+   */
+  private setHitTestEnabled(
+    object: Object3D | undefined,
+    enabled: boolean,
+  ): void {
+    if (!object) return;
+
+    const saved = this.lockedHitTest.get(object);
+    if (enabled) {
+      if (!saved) return;
+      object.pointerEvents = saved.pointerEvents;
+      object.intersectChildren = saved.intersectChildren;
+      this.lockedHitTest.delete(object);
+      return;
+    }
+
+    if (!saved) {
+      this.lockedHitTest.set(object, {
+        pointerEvents: object.pointerEvents,
+        intersectChildren: object.intersectChildren,
+      });
+    }
+    object.pointerEvents = "none";
+    object.intersectChildren = false;
+  }
+
+  /** Greys a locked button out so a finished board reads as disabled. */
+  private setButtonDisabled(button: Entity, disabled: boolean): void {
+    const material = this.buttonMaterials.get(button.index);
+    const config = BUTTON_CONFIGS.find(
+      (entry) => entry.type === button.getValue(ForestJigsawButton, "buttonType"),
+    );
+    if (!material || !config) return;
+
+    material.color.setHex(disabled ? DISABLED_BUTTON_COLOR : config.color);
+    material.emissive.setHex(disabled ? 0x000000 : config.color);
+    material.emissiveIntensity = disabled ? 0 : 0.15;
   }
 
   // ── Feedback ──────────────────────────────────────────────
@@ -1003,13 +922,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     block.setValue(ForestJigsawBlock, "slotIndex", slot);
     const indent = block.getValue(ForestJigsawBlock, "indent") ?? 0;
     const pos = this.slotPositions[slot];
-    block.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    block.object3D!.rotation.set(0, 0, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(block);
   }
 
@@ -1018,9 +935,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     block.setValue(ForestJigsawBlock, "indent", 0);
     const origIdx = block.getValue(ForestJigsawBlock, "originalIndex") ?? 0;
     const home = this.homePositions.get(origIdx)!;
-    block.object3D!.position.set(home[0], home[1], home[2]);
-    block.object3D!.rotation.set(0, 0, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(home[0], home[1], home[2]),
+      targetRotY: SHELF_ROTATION_Y,
+    });
     this.setBlockText(block);
   }
 
@@ -1050,6 +969,8 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       leaf.mesh.parent?.remove(leaf.mesh);
     }
     this.leaves = [];
+    this.coinSplash.clear();
+    this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();
     this.pendingBlockText.clear();

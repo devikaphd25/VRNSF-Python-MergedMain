@@ -47,6 +47,24 @@ start. Provide them via the Base44 secrets dashboard:
 | `SUPABASE_URL` | Server-side Supabase project URL (same as above) |
 | `SUPABASE_SECRET_KEY` | Server-side Supabase service-role key |
 
+### Scene brightness
+
+Scene brightness is spread over four places and must be tuned in step, since
+every value multiplies the same ACES pass:
+
+- `src/index.ts` — the `DomeGradient` sky stops and `intensity`, the
+  `IBLTexture` intensity, and `renderer.toneMappingExposure` (0.8 was too dark
+  for students; 1.05 with the current lighter sky stops is the readable
+  baseline). These apply to the classroom and to every room.
+- The classroom's `ClassroomBalancedFill` hemisphere and `ClassroomStageKey`
+  directional lights (also `src/index.ts`).
+- Each room's corner `PointLight`: castle torches, forest fireflies, ocean
+  glows. Those rooms have no other local light, so raising those intensities
+  (or the global exposure) is what removes their gloom.
+
+Brighten by raising intensity/exposure and keeping the hues — the palette was
+approved, only the luminance was low.
+
 ### Classroom connection and verification
 
 - Startup assets live in `src/config/classroom-assets.ts`. Both `classroom2`
@@ -61,6 +79,128 @@ start. Provide them via the Base44 secrets dashboard:
   `createForestEntity` with the environment's ECS parent. `Object3D.add` alone
   is overwritten by IWSDK's first TransformSystem update, detaching blocks,
   buttons, instructions and feedback from the environment visibility toggle.
+- All three environment visibility guards re-export the **same class** from
+  `src/systems/visible-interaction.system.ts`. Register it once per world at
+  priority -5 (before InputSystem at -4). Separate guards save each other's
+  disabled settings and leave puzzle rays permanently disabled after entry.
+  Hidden roots need both `pointerEvents = "none"` and `intersectChildren = false`
+  because UIKit children can explicitly opt back into pointer hits.
+  `node --experimental-test-module-mocks --import tsx --test tests/castle-input.test.ts`
+  covers all five buttons, block grabbing behind a hidden HUD, initially hidden
+  scenes with all environments installed, and HUD restoration/re-entry. It
+  uses the real SDK input/grab stack, not headset hardware. Test ray origins
+  must aim local -Z (`Camera.lookAt`, not `Object3D.lookAt`); register TransformSystem
+  before scene creation. Compare scene-object identity with boolean assertions:
+  failed object equality assertions can exhaust memory formatting the ECS graph.
+  `tests/forest-input.test.ts` drives the same real pointer/InputSystem stack for
+  the forest buttons. A fixture that aims the ray with `Object3D.lookAt` (+Z) does
+  not fail loudly: the ray leaves the button behind and meets the scene's sky dome,
+  and the object-equality assertion it then fails is what exhausts memory and gets
+  the whole file OOM-killed, so the failure otherwise surfaces only as `SIGKILL`.
+- Inside the castle the player enters at (0, 0, -1) facing +z, so world **-x is
+  their right** and +x their left: the code blocks' shelf sits at +x, and the
+  animated king who holds the instructions board stands at -x, with the board
+  held in front of him inside the 10 x 10 room. `node --experimental-test-module-mocks --import tsx --test tests/castle-instructions-board.test.ts`
+  covers that placement (right of the player, inside the room, facing the
+  player, within the forward view), the king's footprint, and that the idle
+  motion runs only while the castle is active.
+- The ocean's centre board is a large blue whale
+  (`src/ocean/jigsaw/oceanWhaleBoard.ts`): an extruded whale silhouette whose
+  flat front face sits half a block's thickness behind the code plane, so every
+  placed code row rests on it instead of hovering off a curve. It is built from
+  the code column's real bounds, and from `headLimit` — the feedback panel's
+  bottom edge — which its head stops just under (that panel hangs in front of
+  the board) while still reaching behind the top code row; the tail stock keeps
+  the column's width down to the sand so no row sits against open water. Its
+  instruction board is held up by a crab (`src/ocean/jigsaw/oceanCrab.ts`)
+  standing inside the coral clearing at the player's right, one yaw facing the
+  player; the system builds the backing and instructions panel from that
+  module's `INSTRUCTION_BOARD_*` constants, and `INSTRUCTION_BOARD_Y` is set so
+  the whole crab — body, eyes, claws — stays in the clear band below the sign
+  from the player's eye. `node --experimental-test-module-mocks --import tsx --test tests/ocean-board.test.ts`
+  pins both down (whale backs every code row and clears the buttons; a claw
+  clamps each of the board's lower corners). Neither prop can be seen in the
+  app preview — the reef is behind the student login — so that suite is the
+  regression guard, and a throwaway page importing the two builders is how to
+  actually look at them in a browser.
+- The forest's centre board is a round sign (`src/forest/jigsaw/forestBoard.ts`)
+  hung in the gap between the two trees that flank it: the disc is sized from the
+  code column's real bounds — the widest an indented row gets, not half a block —
+  so every code row rests on it, and a hook on each of the disc's upper sides
+  ties it to the tree beside it with a rope that rises to an iron hook on that
+  trunk. Its flat front cap sits half a block's thickness behind the block plane,
+  exactly as the whale's face does. `BOARD_CENTER[1]` moved from 1.4 to 1.9 so
+  the whole disc, bottom rim included, hangs clear of the ground — the shelf rows
+  ride up with it, since they are cut from the same `SLOT_START_Y`. The owl that
+  presents the instructions (`src/forest/jigsaw/forestOwl.ts`) perches on a branch
+  of the right-hand tree, the one holding the board's rope, above the control
+  buttons; the instruction board hangs from a crossbar lashed under that branch,
+  below the talons so the owl stays in view, and clear of both the disc and the
+  buttons. `node --experimental-test-module-mocks --import tsx --test tests/forest-board.test.ts`
+  pins all of that down (every code row backed by the disc, disc clear of ground
+  and buttons, a rope from each board hook to its own tree, owl above its sign
+  facing the player). As with the reef, the clearing only renders behind the
+  student login, so that suite is the regression guard and a throwaway page
+  importing the two builders is how to look at the props in a browser.
+- `buildProceduralForest` places its trees from a seeded `mulberry32(42)`
+  sequence, so a tree's position is fixed, not sampled per run. The board hangs
+  at (0, 4.5), outside the circular clearing the manager passes (3.5 m, centred
+  on the player's spawn), so a seeded tree can land **on the disc** and hide the
+  code rows placed on it — that was the tree beside the forest feedback panel.
+  Trees inside `PUZZLE_KEEPOUT_RADIUS` of the board are therefore dropped, but
+  they are still *built* first: `createTree` is what consumes the shared random
+  draws, and skipping them would shift every later tree, bush, rock and animal.
+  Changing the tree-placement `do/while` condition instead (an extra retry, a
+  larger clearing) moves the whole forest for the same reason: verify any change
+  here by building the forest in Node and comparing tree positions, not just by
+  counting trees.
+- Instruction boards are **75 x 100 px rasters**: a numeric UIKitML style value
+  becomes `px` (React appends the unit), and the whole document is rasterised and
+  then scaled onto the panel's `maxWidth`/`maxHeight`. Legibility is therefore
+  the document's pixel budget, not the panel's metres — a board only gets
+  readable by spending its width on glyphs. The forest board ("Python Puzzle 3")
+  has five paragraphs in that 75 px content width; at the old 2.75 px font its
+  longest line needed 86 px and ran off the sign, so its fonts now match the
+  castle's (5.5 title / 3.5 body) and its multi-line blocks use
+  `white-space: pre-wrap`, which keeps the authored breaks and wraps the rest
+  (64 of the 100 px of height). Going much bigger clips the overflow, so measure
+  before raising a size again — a fixed offscreen `div` carrying the same CSS,
+  read with `scrollWidth`/`offsetHeight`, is how.
+- Every puzzle's feedback panel (success, wrong output and Python errors) sits
+  **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
+  rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at
+  5.06 m — above the castle's 5 m ceiling — so a wrong Python result was never
+  visible. Keep the panel inside the walls and clear of the board's code slots;
+  the castle board layout test asserts both. The forest's board is a circle, so
+  its panel anchors to the disc's top edge (`BOARD_METRICS.top`) instead of the
+  old rectangular board's top.
+- Activity → environment: `python-puzzle-1` is the castle, `python-puzzle-2` the
+  ocean, `python-puzzle-3` the forest. Each manager listens only for its own
+  `gameChanged` id, so a test that expects e.g. the castle to open for
+  `python-puzzle-2` is asserting a mapping that no longer exists.
+  `tests/puzzle-loading.test.ts` covers all three, including the ocean, whose
+  `enter()` waits for its procedural scene before it becomes active.
+- Placed, indented and reset blocks move with a per-frame lerp rather than
+  snapping, so a test asserting a settled position must advance the frames first
+  (`tests/forest-jigsaw.test.ts` does this through a `settleAnimations()` helper);
+  the real-ECS suites get the same effect from `world.update()` in their `tick()`.
+- All three activities cut their code blocks from `src/utils/jigsaw-block.ts`:
+  each joint between two consecutive lines owns a unique key (knob position and
+  which of the two pieces carries it), so complementary cuts meet only where the
+  code sequence is right. A block must be built from the cut of its own line
+  (`pieceEdges[origIdx]`, not the shelf loop index), and the knob radius must
+  stay under the gap between two **shelf** rows (`SHELF_PITCH - BLOCK_HEIGHT`),
+  or shuffled blocks poke into their shelf neighbours while they are reordered.
+  On the castle's centre board the rows are pitched one block height apart
+  (`BOARD_PITCH = BLOCK_HEIGHT`, since the outward bevel never reaches the
+  visible faces), so placed pieces meet edge to edge and their keyed cuts
+  interlock like a real jigsaw instead of floating in separate slots; the shelf
+  keeps the wider pitch. `node --experimental-test-module-mocks --import tsx --test tests/jigsaw-shape.test.ts`
+  guards the pattern, the nesting and the extruded geometry;
+  `node --experimental-test-module-mocks --import tsx --test tests/castle-instructions-board.test.ts`
+  drops two blocks onto neighbouring board rows and asserts their visible edges
+  meet, that the stack starts at the board's top edge, and that the shelf pitch
+  still clears two knobs.
 - Connect the classroom socket only after all environment managers and global
   classroom references are installed. Registering earlier exposes a student to
   instructor launch/seat events before their game listeners exist. Seat retries
@@ -84,6 +224,18 @@ start. Provide them via the Base44 secrets dashboard:
 - Pyodide error messages can be empty after redirecting stderr. Read the stderr
   buffer for the traceback. Run each submitted program in its own globals dict
   so prior attempts cannot supply missing variables.
+- A submitted Python program runs in a Web Worker
+  (`src/castle/jigsaw/python.worker.ts`), which owns the Pyodide instance;
+  `pythonRunner.ts` only routes `{id, code}` messages to it and
+  `pyodide-exec.ts` holds the shared stdout/traceback logic. Keep the compiler
+  off the main thread: the ~10 MB download plus its WebAssembly instantiation
+  and stdlib unpacking are synchronous JS, and on the main thread they stalled
+  the render loop for the whole check — the scene blacked out until it
+  finished. Node has no Web Worker, so `pythonRunner.ts` falls back to running
+  on the current thread through `window.loadPyodide`; that fallback is the path
+  the puzzle tests exercise, which is why the worker protocol itself is
+  verified in the browser instead (`print(sum(range(10)))` → `45`, plus a real
+  `NameError`) while the page kept painting frames.
 - The connected Supabase project currently lacks `public.week_lessons`:
   `/api/instructor-content` returns 500. Apply the existing
   `supabase/weekly-content-migration.sql` in Supabase SQL Editor (then the

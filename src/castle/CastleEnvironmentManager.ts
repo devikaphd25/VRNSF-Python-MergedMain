@@ -17,6 +17,7 @@ import type { Object3D } from "three";
 
 import { socket } from "../network/socket";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
+import { CastleVisibleInteractionSystem } from "./CastleVisibleInteractionSystem.js";
 import { setCastleRoot } from "./jigsaw/castleRoot.js";
 import { JigsawBlock, JigsawButton } from "./jigsaw/jigsawComponents.js";
 import { JigsawPuzzleSystem } from "./jigsaw/JigsawPuzzleSystem.js";
@@ -74,6 +75,11 @@ export class CastleEnvironmentManager {
   }
 
   private installJigsaw(): void {
+    // One shared guard must own the original input settings across environments.
+    // Run before IWSDK input (-4), including headset controller hit tests.
+    if (!this.world.hasSystem(CastleVisibleInteractionSystem)) {
+      this.world.registerSystem(CastleVisibleInteractionSystem, { priority: -5 });
+    }
     this.world
       .registerComponent(JigsawBlock)
       .registerComponent(JigsawButton)
@@ -295,7 +301,7 @@ export class CastleEnvironmentManager {
       [halfW - 1.5, halfD - 1.5],
     ];
     for (const [tx, tz] of torchPositions) {
-      const torch = new PointLight(TORCH_COLOR, 2.5, 12, 1.8);
+      const torch = new PointLight(TORCH_COLOR, 3.6, 14, 1.6);
       torch.position.set(tx, WALL_HEIGHT - 1.2, tz);
       this.root.add(torch);
 
@@ -388,7 +394,7 @@ export class CastleEnvironmentManager {
 
   private connectNetwork(): void {
     socket.on("gameChanged", data => {
-      if (data?.gameId === "python-puzzle-1" || data?.gameId === "python-puzzle-2") {
+      if (data?.gameId === "python-puzzle-1") {
         this.enter();
       }
     });

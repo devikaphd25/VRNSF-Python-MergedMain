@@ -2249,7 +2249,7 @@ export class InstructorDashboardSystem extends createSystem({
   private activatePythonPuzzle2(): void {
     if (this.isEndingClass) return;
 
-    console.log("[InstructorDashboard] Activating Python Puzzle 2 (castle)");
+    console.log("[InstructorDashboard] Activating Python Puzzle 2 (ocean)");
 
     socket.emit("instructorSendAllToDestination", {
       destination: "Game 3",
@@ -2262,7 +2262,7 @@ export class InstructorDashboardSystem extends createSystem({
     this.hasObservedActiveLabStudent = false;
     this.labResultsFinalized = false;
 
-    this.showStatusMessage("Students sent to the castle");
+    this.showStatusMessage("Students sent to the ocean");
     this.setDashboardVisible(false);
     this.setLabMonitorAvailable(false);
     socket.emit("requestStudentList");
@@ -2531,7 +2531,14 @@ export class InstructorDashboardSystem extends createSystem({
         student.labStatus !== "completed" &&
         student.labStatus !== "returned" &&
         student.labStatus !== "instructor_return";
-      if (!saved || activelyWorking || !saved.savedResult) {
+      // A puzzle solved just now arrives as a live row: the server updates the
+      // student's score the moment the code produces the expected output. That
+      // fresh completion must replace the row saved on an earlier attempt,
+      // otherwise the board keeps showing the old score until the next
+      // database write lands.
+      const justCompleted =
+        student.labStatus === "completed";
+      if (!saved || activelyWorking || justCompleted || !saved.savedResult) {
         studentsByUser.set(key, student);
       }
     }
@@ -2798,7 +2805,14 @@ export class InstructorDashboardSystem extends createSystem({
         student.labStatus !== "completed" &&
         student.labStatus !== "returned" &&
         student.labStatus !== "instructor_return";
-      if (!saved || activelyWorking || !saved.savedResult) {
+      // A puzzle solved just now arrives as a live row: the server updates the
+      // student's score the moment the code produces the expected output. That
+      // fresh completion must replace the row saved on an earlier attempt,
+      // otherwise the board keeps showing the old score until the next
+      // database write lands.
+      const justCompleted =
+        student.labStatus === "completed";
+      if (!saved || activelyWorking || justCompleted || !saved.savedResult) {
         studentsByUser.set(key, student);
       }
     }

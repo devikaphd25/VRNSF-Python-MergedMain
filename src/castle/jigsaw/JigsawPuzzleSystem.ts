@@ -2,8 +2,8 @@
  * Python Jigsaw Puzzle system for the castle environment.
  *
  * Creates grabbable code-line blocks, a slotted board at the centre, control
- * buttons (indent / dedent / reset / exit / submit), a soldier holding an
- * instructions board, a feedback panel, and a gold-coin celebration animation.
+ * buttons (indent / dedent / reset / exit / submit), an animated king holding
+ * an instructions board, a feedback panel, and a gold-coin celebration.
  * The player grabs blocks via raycast, drops them into board slots, adjusts
  * indentation, and submits to validate the assembled Python program.
  */
@@ -30,11 +30,12 @@ import {
   createSystem,
   type Entity,
 } from "@iwsdk/core";
-import { ExtrudeGeometry, Shape } from "three";
-
+import type { Object3D } from "three";
 import { JigsawBlock, JigsawButton } from "./jigsawComponents.js";
 import { PUZZLE_LINES, SHUFFLED_ORDER, EXPECTED_OUTPUT } from "./puzzleData.js";
 import { attachToCastleRoot, createCastleEntity } from "./castleRoot.js";
+import { createJigsawBlockGeometry, jigsawPieceEdges } from "../../utils/jigsaw-block.js";
+import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runPython } from "./pythonRunner.js";
 import { socket } from "../../network/socket";
@@ -42,73 +43,89 @@ import { socket } from "../../network/socket";
 // ── Layout ────────────────────────────────────────────────────
 // Mounted on the front wall (inner face at z ≈ +4.8), rotated 180° to face the player at -z.
 const S = 2.2; // global scale factor for the entire puzzle assembly
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.8];
-const BOARD_WIDTH = 1.4 * S;
-const BOARD_HEIGHT = 1.0 * S;
-const SLOT_HEIGHT = 0.14 * S;
+const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
+const BOARD_WIDTH = 1.6 * S;
+const BOARD_HEIGHT = 1.6 * S;
 const NUM_SLOTS = 7;
 
-const BLOCK_WIDTH = 1.1 * S;
-const BLOCK_HEIGHT = 0.11 * S;
-const BLOCK_THICKNESS = 0.03 * S;
+const BLOCK_WIDTH = 0.9 * S;
+const BLOCK_HEIGHT = 0.14 * S;
+const BLOCK_THICKNESS = 0.05 * S;
 const INDENT_SHIFT = 0.15 * S;
-const TAB_RADIUS = BLOCK_HEIGHT * 0.35;
+const BLOCK_BEVEL = 0.004 * S;
+
+// Row pitch on the shelf: wider than a block, so a shuffled block's knob never
+// reaches the piece stacked above it and blocks can be reordered freely.
+const SHELF_PITCH = 0.17 * S;
+// Row pitch on the board: one block height, so the flat edge lines of two
+// neighbouring pieces meet exactly and their visible faces sit edge to edge.
+// Placed pieces therefore read as one interlocking column instead of planks
+// floating apart; only the hidden mid-depth bevel bulge, which the opaque faces
+// cover, reaches past the seam.
+const BOARD_PITCH = BLOCK_HEIGHT;
+
+// Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
+// and the knob stays shorter than the gap between two shelf rows so a shuffled
+// block never pokes into its neighbour on the shelf. Board rows are flush, so
+// the same key lets true neighbours nest knob into socket.
+const SHELF_GAP = SHELF_PITCH - BLOCK_HEIGHT;
+const KNOB_RADIUS = SHELF_GAP * 0.9;
+
+// The feedback panel (wrong output / Python errors) sits directly on top of the
+// centre board, where the player is already looking. It used to hang at
+// 2.3 * S = 5.06 m, above the room's 5 m ceiling, so a wrong result was never
+// visible.
+const FEEDBACK_HEIGHT = 0.6 * S;
+const FEEDBACK_Y =
+  BOARD_CENTER[1] + BOARD_HEIGHT / 2 + FEEDBACK_HEIGHT / 2 + 0.06 * S;
 
 /**
- * Builds a jigsaw-piece-shaped geometry: a rounded rectangle with a tab
- * (protrusion) on the top edge and a blank (indentation) on the bottom edge
- * so stacked blocks interlock like real puzzle pieces.
+ * Builds a limb segment running from `from` to `to` in the parent's local
+ * space. The cylinder's axis is rotated onto +z so a plain `lookAt` can aim the
+ * segment at the target, including its downward pitch.
  */
-function createJigsawBlockGeometry(
-  width: number,
-  height: number,
-  depth: number,
-): ExtrudeGeometry {
-  const w = width / 2;
-  const h = height / 2;
-  const r = TAB_RADIUS;
-
-  const shape = new Shape();
-  shape.moveTo(-w, -h);
-
-  // Bottom edge — blank (semicircular indentation into the piece)
-  shape.lineTo(-r, -h);
-  shape.absarc(0, -h, r, Math.PI, 0, true);
-  shape.lineTo(w, -h);
-
-  // Right edge
-  shape.lineTo(w, h);
-
-  // Top edge — tab (semicircular protrusion away from the piece)
-  shape.lineTo(r, h);
-  shape.absarc(0, h, r, 0, Math.PI, false);
-  shape.lineTo(-w, h);
-
-  // Left edge
-  shape.lineTo(-w, -h);
-
-  const geo = new ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: 0.004 * S,
-    bevelSize: 0.004 * S,
-    bevelSegments: 2,
-  });
-  // Centre on z so the face panel position stays the same as with BoxGeometry.
-  geo.translate(0, 0, -depth / 2);
-  return geo;
+function createLimb(
+  from: Vector3,
+  to: Vector3,
+  radius: number,
+  material: MeshStandardMaterial,
+): Mesh {
+  const direction = new Vector3().subVectors(to, from);
+  const geometry = new CylinderGeometry(
+    radius,
+    radius * 0.85,
+    direction.length(),
+    10,
+  );
+  geometry.rotateX(Math.PI / 2);
+  const limb = new Mesh(geometry, material);
+  limb.position.copy(from).addScaledVector(direction, 0.5);
+  limb.lookAt(to);
+  return limb;
 }
 
-const SHELF_X = 2.5 * S;
-const SHELF_Z = 4.6; // slightly in front of the wall so blocks are grabbable
+const SHELF_X = 2.8;
+const SHELF_Z = 1.0;
+const SHELF_ROTATION_Y = Math.PI / 2;
 
 const BUTTON_X = -(BOARD_WIDTH / 2 + 0.22 * S); // right side of the board (player's right = -x)
 const BUTTON_Z = BOARD_CENTER[2]; // mounted on wall, same plane as board
 const BUTTON_SPACING = 0.24 * S; // vertical spacing
 const BUTTON_SIZE = 0.14 * S;
 
-const SOLDIER_X = -2.5 * S;
-const SOLDIER_Z = 3.5 * S; // standing on the floor near the wall
+// ── King and instructions board ───────────────────────────────
+// World -x is the player's right (the player enters at (0, 0, -1) facing +z),
+// so the king stands on the floor to their right, mirroring the code blocks'
+// shelf at +x on their left. He stays inside the 10 x 10 room: at his old spot
+// (-7.7, 3.3) the board sat outside the walls, out of the player's view.
+const KING_X = -3.0;
+const KING_Z = 2.7;
+const KING_LOOK_X = 0;
+const KING_LOOK_Z = -1.0; // where the player enters the castle
+const INSTRUCTION_BOARD_WIDTH = 0.85 * S;
+const INSTRUCTION_BOARD_HEIGHT = 1.15 * S;
+const BOARD_DISTANCE = 0.85; // how far in front of the king the board is held
+const BOARD_Y = 2.15; // board centre height, at the king's chest
 
 // ── Colours ──────────────────────────────────────────────────
 const BLOCK_COLOR = 0xd4a76a;
@@ -116,6 +133,7 @@ const BOARD_COLOR = 0x4a3b2a;
 const SLOT_COLOR = 0x5a4a38;
 const GOLD_COLOR = 0xffd700;
 const ACTIVE_GLOW = 0xffd700;
+const DISABLED_BUTTON_COLOR = 0x6b7280; // greyed-out control on a solved board
 
 const BUTTON_CONFIGS: {
   type: "indent" | "dedent" | "reset" | "exit" | "submit";
@@ -146,32 +164,58 @@ export class JigsawPuzzleSystem extends createSystem({
   private pendingFeedback: { title: string; body: string } | null = null;
   private pendingBlockText: Map<number, string> = new Map();
   private pendingButtonLabels: Map<number, string> = new Map();
-  private coins: { mesh: Mesh; velocity: Vector3; life: number }[] = [];
-  private coinAnimation = false;
+  /** Gold-coin cheer shared by every puzzle (see src/utils/coin-splash.ts). */
+  private readonly coinSplash = createCoinSplash({
+    attach: (coin) => attachToCastleRoot(coin),
+    resolveOrigin: () => this.getPlayerPosition(),
+    scale: S,
+  });
   private tmpVec = new Vector3();
+  private animatingBlocks: Map<number, { entity: Entity; targetPos: Vector3; targetRotY: number }> = new Map();
+  private tmpLerp = new Vector3();
+  /** Set once the puzzle is solved: blocks and every button except Exit stop responding. */
+  private solved = false;
+  private environmentActive = false;
+  private lockedHitTest = new Map<
+    Object3D,
+    { pointerEvents: Object3D["pointerEvents"]; intersectChildren: boolean | undefined }
+  >();
+  private buttonMaterials = new Map<number, MeshStandardMaterial>();
+  private king: {
+    robe: Mesh;
+    head: Group;
+    cape: Mesh;
+    sceptre: Group;
+    clock: number;
+  } | null = null;
 
   // ── Lifecycle ──────────────────────────────────────────────
 
   init() {
     this.tmpVec = new Vector3();
 
-    const startY =
-      BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
+    // The board's top row sits with its visible upper edge on the board's top
+    // edge, and each row below it touches the one above, so the assembled
+    // program forms one joined stack.
+    const boardTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - BOARD_PITCH / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(
         new Vector3(
           BOARD_CENTER[0],
-          startY - i * SLOT_HEIGHT,
+          boardTopY - i * BOARD_PITCH,
           BOARD_CENTER[2],
         ),
       );
     }
 
+    // The shelf keeps its wider pitch, so a shuffled block's knob never reaches
+    // the piece stacked above it.
+    const shelfTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SHELF_PITCH / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = SHUFFLED_ORDER[i];
       this.homePositions.set(origIdx, [
         SHELF_X,
-        startY - i * SLOT_HEIGHT,
+        shelfTopY - i * SHELF_PITCH,
         SHELF_Z,
       ]);
     }
@@ -179,7 +223,7 @@ export class JigsawPuzzleSystem extends createSystem({
     this.buildBoard();
     this.createBlocks();
     this.createButtons();
-    this.createSoldier();
+    this.createKing();
     this.createFeedbackPanel();
 
     // Clear slot assignment when a block is grabbed off the board.
@@ -188,6 +232,9 @@ export class JigsawPuzzleSystem extends createSystem({
       if (slot >= 0) {
         block.setValue(JigsawBlock, "slotIndex", -1);
       }
+      // Reset rotation so the block faces the board while held.
+      block.object3D!.rotation.set(0, 0, 0);
+      block.object3D!.updateMatrixWorld(true);
     });
 
     // Handle block release — snap to nearest slot or return home.
@@ -263,10 +310,42 @@ export class JigsawPuzzleSystem extends createSystem({
       this.pendingFeedback = null;
     }
 
-    if (!(window as any).isCastleActive) return;
+    // Smoothly lerp blocks toward their target positions (placement / home / indent).
+    for (const [idx, anim] of this.animatingBlocks) {
+      if (anim.entity.hasComponent(Grabbed)) {
+        this.animatingBlocks.delete(idx);
+        continue;
+      }
+      const obj = anim.entity.object3D!;
+      this.tmpLerp.copy(obj.position).lerp(anim.targetPos, 0.15);
+      obj.position.copy(this.tmpLerp);
+      let diff = anim.targetRotY - obj.rotation.y;
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+      obj.rotation.y += diff * 0.15;
+      obj.updateMatrixWorld(true);
+      if (obj.position.distanceTo(anim.targetPos) < 0.01 && Math.abs(diff) < 0.01) {
+        obj.position.copy(anim.targetPos);
+        obj.rotation.set(0, anim.targetRotY, 0);
+        obj.updateMatrixWorld(true);
+        this.animatingBlocks.delete(idx);
+      }
+    }
 
-    if (this.coinAnimation) {
-      this.updateCoins(delta);
+    const active = (window as any).isCastleActive === true;
+    if (active !== this.environmentActive) {
+      this.environmentActive = active;
+      // Entering the room starts a fresh attempt, so the lock applied by
+      // lockSolvedPuzzle is lifted again (this system runs after the shared
+      // visibility guard, which restores the settings it saved while hidden).
+      if (active) this.unlockSolvedPuzzle();
+    }
+    if (!active) return;
+
+    this.updateKingIdle(delta);
+
+    if (this.coinSplash.active) {
+      this.coinSplash.update(delta);
     }
 
     this.updateActiveBlockHighlight();
@@ -276,6 +355,7 @@ export class JigsawPuzzleSystem extends createSystem({
 
   private buildBoard(): void {
     const boardGroup = new Group();
+    boardGroup.name = "CastlePuzzleBoard";
 
     const boardMat = new MeshStandardMaterial({
       color: BOARD_COLOR,
@@ -299,6 +379,9 @@ export class JigsawPuzzleSystem extends createSystem({
   // ── Blocks ────────────────────────────────────────────────
 
   private createBlocks(): void {
+    // Cuts keyed to the correct line order, so only true neighbours interlock.
+    const pieceEdges = jigsawPieceEdges(PUZZLE_LINES);
+
     for (let i = 0; i < NUM_SLOTS; i++) {
       const origIdx = SHUFFLED_ORDER[i];
       const line = PUZZLE_LINES[origIdx];
@@ -310,7 +393,13 @@ export class JigsawPuzzleSystem extends createSystem({
         roughness: 0.8,
       });
       const body = new Mesh(
-        createJigsawBlockGeometry(BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_THICKNESS),
+        createJigsawBlockGeometry(
+          BLOCK_WIDTH,
+          BLOCK_HEIGHT,
+          BLOCK_THICKNESS,
+          pieceEdges[origIdx],
+          { knobRadius: KNOB_RADIUS, bevel: BLOCK_BEVEL },
+        ),
         bodyMat,
       );
       group.add(body);
@@ -354,6 +443,7 @@ export class JigsawPuzzleSystem extends createSystem({
 
       const home = this.homePositions.get(origIdx)!;
       group.position.set(home[0], home[1], home[2]);
+      group.rotation.y = SHELF_ROTATION_Y;
 
       this.blockEntities.set(origIdx, block);
       this.blockMaterials.set(origIdx, bodyMat);
@@ -411,6 +501,7 @@ export class JigsawPuzzleSystem extends createSystem({
         buttonType: config.type,
       });
       entity.addComponent(RayInteractable);
+      this.buttonMaterials.set(entity.index, buttonMat);
 
       group.position.set(
         BUTTON_X,
@@ -433,117 +524,181 @@ export class JigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Soldier with instructions board ───────────────────────
+  // ── King holding the instructions board ───────────────────
 
-  private createSoldier(): void {
-    const soldier = new Group();
+  private createKing(): void {
+    const king = new Group();
+    king.name = "CastleKing";
 
-    const armorMat = new MeshStandardMaterial({
-      color: 0x6b6b6b,
-      roughness: 0.6,
-      metalness: 0.4,
+    // The room is lit only by its four corner torches, so the king carries a
+    // little emissive of his own — the same trick the puzzle buttons use — to
+    // stay readable from the player's side of the room.
+    const robeMat = new MeshStandardMaterial({
+      color: 0x53308f,
+      roughness: 0.72,
+      emissive: 0x53308f,
+      emissiveIntensity: 0.1,
     });
     const skinMat = new MeshStandardMaterial({
       color: 0xd4a76a,
       roughness: 0.8,
+      emissive: 0xd4a76a,
+      emissiveIntensity: 0.06,
     });
-    const darkMat = new MeshStandardMaterial({
-      color: 0x4a4a4a,
-      roughness: 0.8,
+    const goldMat = new MeshStandardMaterial({
+      color: GOLD_COLOR,
+      roughness: 0.35,
+      metalness: 0.7,
+      emissive: GOLD_COLOR,
+      emissiveIntensity: 0.3,
+    });
+    const capeMat = new MeshStandardMaterial({
+      color: 0x8b1e3f,
+      roughness: 0.85,
+      emissive: 0x8b1e3f,
+      emissiveIntensity: 0.1,
+      side: DoubleSide,
+    });
+    const beardMat = new MeshStandardMaterial({
+      color: 0xe6e2da,
+      roughness: 0.9,
     });
 
-    // Torso
-    const torso = new Mesh(
-      new CylinderGeometry(0.25 * S, 0.3 * S, 0.8 * S, 12),
-      armorMat,
-    );
-    torso.position.y = 1.0 * S;
-    soldier.add(torso);
+    // Robe — one tapered cylinder from the floor to the shoulders so the figure
+    // reads as a robed king at a glance. It also carries the breathing motion.
+    const robe = new Mesh(new CylinderGeometry(0.6, 0.95, 2.9, 20), robeMat);
+    robe.position.y = 1.45;
+    king.add(robe);
 
-    // Head
-    const head = new Mesh(
-      new SphereGeometry(0.15 * S, 12, 12),
-      skinMat,
-    );
-    head.position.set(0, 1.55 * S, -0.05 * S);
-    soldier.add(head);
+    const belt = new Mesh(new CylinderGeometry(0.8, 0.8, 0.18, 20), goldMat);
+    belt.position.y = 1.55;
+    king.add(belt);
 
-    // Helmet
-    const helmet = new Mesh(
-      new ConeGeometry(0.18 * S, 0.2 * S, 12),
-      armorMat,
-    );
-    helmet.position.set(0, 1.72 * S, -0.05 * S);
-    soldier.add(helmet);
+    const collar = new Mesh(new CylinderGeometry(0.52, 0.62, 0.28, 20), robeMat);
+    collar.position.y = 3.0;
+    king.add(collar);
 
-    // Left arm — extended forward to hold the board
-    const leftArm = new Mesh(
-      new CylinderGeometry(0.06 * S, 0.06 * S, 0.6 * S, 8),
-      armorMat,
-    );
-    leftArm.position.set(-0.25 * S, 1.2 * S, -0.25 * S);
-    leftArm.rotation.x = Math.PI / 3;
-    soldier.add(leftArm);
+    const cape = new Mesh(new BoxGeometry(1.7, 2.2, 0.06), capeMat);
+    cape.position.set(0, 1.75, -0.78);
+    cape.rotation.x = 0.18;
+    king.add(cape);
 
-    // Right arm
-    const rightArm = new Mesh(
-      new CylinderGeometry(0.06 * S, 0.06 * S, 0.5 * S, 8),
-      armorMat,
-    );
-    rightArm.position.set(0.3 * S, 1.1 * S, 0);
-    rightArm.rotation.z = -Math.PI / 6;
-    soldier.add(rightArm);
+    const neck = new Mesh(new CylinderGeometry(0.19, 0.19, 0.2, 12), skinMat);
+    neck.position.y = 3.2;
+    king.add(neck);
 
-    // Legs
-    const leftLeg = new Mesh(
-      new CylinderGeometry(0.08 * S, 0.08 * S, 0.6 * S, 8),
-      darkMat,
-    );
-    leftLeg.position.set(-0.12 * S, 0.3 * S, 0);
-    soldier.add(leftLeg);
-    const rightLeg = new Mesh(
-      new CylinderGeometry(0.08 * S, 0.08 * S, 0.6 * S, 8),
-      darkMat,
-    );
-    rightLeg.position.set(0.12 * S, 0.3 * S, 0);
-    soldier.add(rightLeg);
+    // Head, beard and crown hang off one pivot at the head's centre, so the idle
+    // nod never moves the shoulders or the board in his hands.
+    const head = new Group();
+    head.position.y = 3.62;
+    king.add(head);
 
-    soldier.position.set(SOLDIER_X, 0, SOLDIER_Z);
-    soldier.lookAt(0, 1.3 * S, -1.0);
-    attachToCastleRoot(soldier);
+    const skull = new Mesh(new SphereGeometry(0.4, 16, 16), skinMat);
+    head.add(skull);
 
-    // Standalone instructions board — positioned between the soldier and the
-    // player, facing the player directly (not parented to the soldier, so the
-    // lookAt rotation on the soldier doesn't interfere).
+    const beard = new Mesh(new ConeGeometry(0.26, 0.5, 12), beardMat);
+    beard.rotation.x = Math.PI;
+    beard.position.set(0, -0.26, 0.22);
+    head.add(beard);
+
+    const crownBand = new Mesh(new CylinderGeometry(0.4, 0.44, 0.2, 20), goldMat);
+    crownBand.position.y = 0.48;
+    head.add(crownBand);
+
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      const spike = new Mesh(new ConeGeometry(0.08, 0.22, 8), goldMat);
+      spike.position.set(Math.sin(angle) * 0.36, 0.68, Math.cos(angle) * 0.36);
+      head.add(spike);
+    }
+
+    // Both arms reach forward and out to grip the board's side edges at the
+    // board's own height, so the hands hold it instead of hovering near it.
+    const gripX = INSTRUCTION_BOARD_WIDTH / 2 + 0.03;
+    for (const side of [-1, 1]) {
+      const hand = new Vector3(side * gripX, BOARD_Y, BOARD_DISTANCE);
+      king.add(createLimb(new Vector3(side * 0.5, 3.0, 0), hand, 0.15, robeMat));
+      const fist = new Mesh(new SphereGeometry(0.17, 12, 12), skinMat);
+      fist.position.copy(hand);
+      king.add(fist);
+    }
+
+    // Sceptre planted on the floor beside the board's right edge, gripped by the
+    // same fist and swaying about its base with the idle motion.
+    const sceptre = new Group();
+    sceptre.position.set(gripX + 0.1, 0, BOARD_DISTANCE);
+    const shaft = new Mesh(new CylinderGeometry(0.06, 0.06, 3.0, 10), goldMat);
+    shaft.position.y = 1.5;
+    sceptre.add(shaft);
+    const orb = new Mesh(new SphereGeometry(0.15, 14, 14), goldMat);
+    orb.position.y = 3.15;
+    sceptre.add(orb);
+    king.add(sceptre);
+
+    king.position.set(KING_X, 0, KING_Z);
+    // Yaw only: lookAt would also pitch the figure up toward the player's eye
+    // and lean the whole king backwards.
+    king.rotation.y = Math.atan2(KING_LOOK_X - KING_X, KING_LOOK_Z - KING_Z);
+    attachToCastleRoot(king);
+
+    this.king = { robe, head, cape, sceptre, clock: 0 };
+
+    // Instructions board — left a child of the environment root rather than of
+    // the king, so it keeps facing the player while the king idles behind it.
+    const towardPlayerX = Math.sin(king.rotation.y);
+    const towardPlayerZ = Math.cos(king.rotation.y);
+    const boardX = KING_X + towardPlayerX * BOARD_DISTANCE;
+    const boardZ = KING_Z + towardPlayerZ * BOARD_DISTANCE;
+
     const boardBacking = new Mesh(
-      new BoxGeometry(0.75 * S, 1.0 * S, 0.03 * S),
+      new BoxGeometry(
+        INSTRUCTION_BOARD_WIDTH,
+        INSTRUCTION_BOARD_HEIGHT,
+        0.03 * S,
+      ),
       new MeshStandardMaterial({
         color: 0xf5f0e6,
         roughness: 0.9,
         side: DoubleSide,
       }),
     );
-    // Place toward the player from the soldier, at chest height.
-    const boardX = SOLDIER_X + 0.3 * S;
-    const boardZ = SOLDIER_Z - 0.6 * S;
-    boardBacking.position.set(boardX, 1.3 * S, boardZ);
-    // Face the player at (0, ~1.3, -1.0)
-    boardBacking.lookAt(0, 1.3 * S, -1.0);
+    boardBacking.position.set(boardX, BOARD_Y, boardZ);
+    boardBacking.lookAt(KING_LOOK_X, BOARD_Y, KING_LOOK_Z);
     attachToCastleRoot(boardBacking);
 
     const instructionsEntity = createCastleEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/jigsaw-instructions.json",
-      maxWidth: 0.6875 * S,
-      maxHeight: 0.9375 * S,
+      maxWidth: 0.78 * S,
+      maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, 1.3 * S, boardZ - 0.02 * S);
-    // PanelUI text faces +z by default; rotate to face the player.
-    instructionsEntity.object3D!.rotation.y = Math.atan2(
-      0 - boardX,
-      -1.0 - boardZ,
+    // Lift the text panel slightly off the backing, toward the player, so the
+    // two never z-fight.
+    instructionsEntity.object3D!.position.set(
+      boardX + towardPlayerX * 0.02 * S,
+      BOARD_Y,
+      boardZ + towardPlayerZ * 0.02 * S,
     );
+    // PanelUI text faces +z by default, and the king already faces the player.
+    instructionsEntity.object3D!.rotation.y = king.rotation.y;
     attachToCastleRoot(instructionsEntity.object3D!);
+  }
+
+  /** Standing idle: breathing robe, nodding head, swaying cape and sceptre. */
+  private updateKingIdle(delta: number): void {
+    const king = this.king;
+    if (!king) return;
+
+    king.clock += delta;
+    const t = king.clock;
+
+    const breath = Math.sin(t * 1.4);
+    king.robe.scale.set(1 + breath * 0.015, 1, 1 + breath * 0.015);
+    king.head.rotation.y = Math.sin(t * 0.6) * 0.09;
+    king.head.rotation.x = Math.sin(t * 0.9) * 0.035;
+    king.cape.rotation.x = 0.18 + Math.sin(t * 0.7) * 0.02;
+    king.sceptre.rotation.z = Math.sin(t * 1.1) * 0.025;
+    king.sceptre.rotation.x = Math.cos(t * 0.8) * 0.02;
   }
 
   // ── Feedback panel ────────────────────────────────────────
@@ -553,9 +708,9 @@ export class JigsawPuzzleSystem extends createSystem({
     entity.addComponent(PanelUI, {
       config: "./ui/jigsaw-feedback.json",
       maxWidth: 1.2 * S,
-      maxHeight: 0.6 * S,
+      maxHeight: FEEDBACK_HEIGHT,
     });
-    entity.object3D!.position.set(0, 2.3 * S, 4.8);
+    entity.object3D!.position.set(0, FEEDBACK_Y, BOARD_CENTER[2]);
     entity.object3D!.rotation.y = Math.PI;
     attachToCastleRoot(entity.object3D!);
     this.feedbackEntity = entity;
@@ -572,7 +727,7 @@ export class JigsawPuzzleSystem extends createSystem({
     // may release the block slightly in front of the wall, so use a generous
     // z tolerance instead of a tight 3D distance from the board centre.
     const dz = Math.abs(this.tmpVec.z - BOARD_CENTER[2]);
-    if (dz > 1.0) {
+    if (dz > 3.0) {
       this.returnBlockHome(block);
       return;
     }
@@ -581,8 +736,8 @@ export class JigsawPuzzleSystem extends createSystem({
     const dx = this.tmpVec.x - BOARD_CENTER[0];
     const dy = this.tmpVec.y - BOARD_CENTER[1];
     if (
-      Math.abs(dx) > BOARD_WIDTH / 2 + 0.15 * S ||
-      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.15 * S
+      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
+      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
     ) {
       this.returnBlockHome(block);
       return;
@@ -616,6 +771,9 @@ export class JigsawPuzzleSystem extends createSystem({
 
   private handleButtonPress(button: Entity): void {
     const buttonType = button.getValue(JigsawButton, "buttonType");
+
+    // A solved puzzle is finished: only Exit still responds.
+    if (this.solved && buttonType !== "exit") return;
 
     switch (buttonType) {
       case "indent":
@@ -669,12 +827,11 @@ export class JigsawPuzzleSystem extends createSystem({
     targetBlock.setValue(JigsawBlock, "indent", indent);
 
     const pos = this.slotPositions[slot];
-    targetBlock.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    targetBlock.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(targetBlock.index, {
+      entity: targetBlock,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(targetBlock);
   }
 
@@ -728,8 +885,9 @@ export class JigsawPuzzleSystem extends createSystem({
           "Success!",
           `Correct! The code runs successfully.\n\nOutput:\n${result.output.trim()}`,
         );
-        this.showGoldCoins();
+        this.coinSplash.start();
         this.reportScoreToInstructor();
+        this.lockSolvedPuzzle();
       } else {
         this.showFeedback(
           "Wrong Output",
@@ -761,49 +919,88 @@ export class JigsawPuzzleSystem extends createSystem({
     socket.emit("labCompleted", { result: puzzleResult });
   }
 
+  // ── Solved-puzzle lock ────────────────────────────────────
+
+  /**
+   * Finishes the puzzle: after a correct submission the blocks can no longer be
+   * grabbed and every button except Exit stops responding, so the player cannot
+   * replay the board without leaving the room first.
+   */
+  private lockSolvedPuzzle(): void {
+    if (this.solved) return;
+    this.solved = true;
+
+    for (const block of this.queries.blocks.entities) {
+      this.setHitTestEnabled(block.object3D, false);
+    }
+    for (const button of this.queries.buttons.entities) {
+      if (button.getValue(JigsawButton, "buttonType") === "exit") continue;
+      this.setHitTestEnabled(button.object3D, false);
+      this.setButtonDisabled(button, true);
+    }
+  }
+
+  /** Lifts the lock so the next visit to the room can play the puzzle again. */
+  private unlockSolvedPuzzle(): void {
+    for (const object of [...this.lockedHitTest.keys()]) {
+      this.setHitTestEnabled(object, true);
+    }
+    for (const button of this.queries.buttons.entities) {
+      this.setButtonDisabled(button, false);
+    }
+    this.solved = false;
+  }
+
+  /**
+   * Turns pointer hit testing on or off for one puzzle object, remembering the
+   * settings it had. Both flags are needed: UIKit children can opt back into
+   * pointer hits even under a root whose own pointer events are off.
+   */
+  private setHitTestEnabled(
+    object: Object3D | undefined,
+    enabled: boolean,
+  ): void {
+    if (!object) return;
+
+    const saved = this.lockedHitTest.get(object);
+    if (enabled) {
+      if (!saved) return;
+      object.pointerEvents = saved.pointerEvents;
+      object.intersectChildren = saved.intersectChildren;
+      this.lockedHitTest.delete(object);
+      return;
+    }
+
+    if (!saved) {
+      this.lockedHitTest.set(object, {
+        pointerEvents: object.pointerEvents,
+        intersectChildren: object.intersectChildren,
+      });
+    }
+    object.pointerEvents = "none";
+    object.intersectChildren = false;
+  }
+
+  /** Greys a locked button out so a finished board reads as disabled. */
+  private setButtonDisabled(button: Entity, disabled: boolean): void {
+    const material = this.buttonMaterials.get(button.index);
+    const config = BUTTON_CONFIGS.find(
+      (entry) => entry.type === button.getValue(JigsawButton, "buttonType"),
+    );
+    if (!material || !config) return;
+
+    material.color.setHex(disabled ? DISABLED_BUTTON_COLOR : config.color);
+    material.emissive.setHex(disabled ? 0x000000 : config.color);
+    material.emissiveIntensity = disabled ? 0 : 0.15;
+  }
+
   // ── Feedback ──────────────────────────────────────────────
 
   private showFeedback(title: string, body: string): void {
     this.pendingFeedback = { title, body };
   }
 
-  // ── Gold coin animation ───────────────────────────────────
-
-  private showGoldCoins(): void {
-    this.coinAnimation = true;
-    const coinGeo = new CylinderGeometry(0.03 * S, 0.03 * S, 0.008 * S, 12);
-    const coinMat = new MeshStandardMaterial({
-      color: GOLD_COLOR,
-      emissive: GOLD_COLOR,
-      emissiveIntensity: 0.4,
-      metalness: 0.9,
-      roughness: 0.2,
-      transparent: true,
-    });
-
-    // Splash coins from the player's position so they burst upward and rain
-    // back down on the user in a celebratory fountain.
-    const playerPos = this.getPlayerPosition();
-    const COIN_COUNT = 80;
-    for (let i = 0; i < COIN_COUNT; i++) {
-      const coin = new Mesh(coinGeo, coinMat);
-      const angle = (i / COIN_COUNT) * Math.PI * 2 + Math.random() * 0.3;
-      const radius = 0.1 + Math.random() * 0.5;
-      coin.position.set(
-        playerPos.x + Math.cos(angle) * radius,
-        playerPos.y + 1.0,
-        playerPos.z + Math.sin(angle) * radius,
-      );
-      // Shoot upward and outward; gravity brings them back down.
-      const velocity = new Vector3(
-        Math.cos(angle) * (1.5 + Math.random() * 2),
-        4 + Math.random() * 4,
-        Math.sin(angle) * (1.5 + Math.random() * 2),
-      );
-      this.coins.push({ mesh: coin, velocity, life: 1.5 });
-      attachToCastleRoot(coin);
-    }
-  }
+  // ── Player position ───────────────────────────────────────
 
   private getPlayerPosition(): Vector3 {
     const player = (this.world as any)?.player;
@@ -812,37 +1009,6 @@ export class JigsawPuzzleSystem extends createSystem({
       return new Vector3(obj.position.x, obj.position.y, obj.position.z);
     }
     return new Vector3(0, 0, -1.0);
-  }
-
-  private updateCoins(delta: number): void {
-    const gravity = -5;
-    let allDead = true;
-
-    for (let i = this.coins.length - 1; i >= 0; i--) {
-      const coin = this.coins[i];
-      coin.life -= delta * 0.5;
-
-      if (coin.life <= 0) {
-        coin.mesh.parent?.remove(coin.mesh);
-        this.coins.splice(i, 1);
-        continue;
-      }
-
-      allDead = false;
-      coin.velocity.y += gravity * delta;
-      coin.mesh.position.x += coin.velocity.x * delta;
-      coin.mesh.position.y += coin.velocity.y * delta;
-      coin.mesh.position.z += coin.velocity.z * delta;
-      coin.mesh.rotation.x += delta * 5;
-      coin.mesh.rotation.z += delta * 3;
-
-      const mat = coin.mesh.material as MeshStandardMaterial;
-      mat.opacity = Math.max(0, coin.life);
-    }
-
-    if (allDead) {
-      this.coinAnimation = false;
-    }
   }
 
   // ── Active block highlighting ─────────────────────────────
@@ -881,13 +1047,11 @@ export class JigsawPuzzleSystem extends createSystem({
     block.setValue(JigsawBlock, "slotIndex", slot);
     const indent = block.getValue(JigsawBlock, "indent") ?? 0;
     const pos = this.slotPositions[slot];
-    block.object3D!.position.set(
-      pos.x - indent * INDENT_SHIFT,
-      pos.y,
-      pos.z,
-    );
-    block.object3D!.rotation.set(0, 0, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(pos.x - indent * INDENT_SHIFT, pos.y, pos.z),
+      targetRotY: 0,
+    });
     this.setBlockText(block);
   }
 
@@ -896,9 +1060,11 @@ export class JigsawPuzzleSystem extends createSystem({
     block.setValue(JigsawBlock, "indent", 0);
     const origIdx = block.getValue(JigsawBlock, "originalIndex") ?? 0;
     const home = this.homePositions.get(origIdx)!;
-    block.object3D!.position.set(home[0], home[1], home[2]);
-    block.object3D!.rotation.set(0, 0, 0);
-    block.object3D!.updateMatrixWorld(true);
+    this.animatingBlocks.set(block.index, {
+      entity: block,
+      targetPos: new Vector3(home[0], home[1], home[2]),
+      targetRotY: SHELF_ROTATION_Y,
+    });
     this.setBlockText(block);
   }
 
@@ -923,10 +1089,8 @@ export class JigsawPuzzleSystem extends createSystem({
       button.dispose();
     }
     this.feedbackEntity?.dispose();
-    for (const coin of this.coins) {
-      coin.mesh.parent?.remove(coin.mesh);
-    }
-    this.coins = [];
+    this.coinSplash.clear();
+    this.animatingBlocks.clear();
     this.blockEntities.clear();
     this.blockMaterials.clear();
     this.pendingBlockText.clear();
