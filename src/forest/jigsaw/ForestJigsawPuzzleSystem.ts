@@ -1,17 +1,15 @@
 /**
  * Python Jigsaw Puzzle system for the forest environment.
  *
- * Creates grabbable code-line blocks, a slotted board on a tree trunk,
- * control buttons (indent / dedent / reset / exit / submit), an owl
- * holding an instructions board, a feedback panel, and a falling-leaf
- * celebration animation.  The player grabs blocks via raycast, drops
- * them into board slots, adjusts indentation, and submits to validate
+ * Creates grabbable code-line blocks, a round board hung between two trees,
+ * control buttons (indent / dedent / reset / exit / submit), an owl perched on
+ * one of those trees holding an instructions board, a feedback panel, and a
+ * falling-leaf celebration animation.  The player grabs blocks via raycast,
+ * drops them into board slots, adjusts indentation, and submits to validate
  * the assembled Python program.
  */
 import {
   BoxGeometry,
-  ConeGeometry,
-  CylinderGeometry,
   DistanceGrabbable,
   DoubleSide,
   Grabbed,
@@ -26,7 +24,6 @@ import {
   PlaneGeometry,
   Pressed,
   RayInteractable,
-  SphereGeometry,
   type UIKitDocument,
   Vector3,
   createSystem,
@@ -41,10 +38,15 @@ import { createCoinSplash } from "../../utils/coin-splash.js";
 import { setTextSafe } from "../../lab/systems/uiText.js";
 import { runForestPython } from "./forestPythonRunner.js";
 import { socket } from "../../network/socket";
+import { createForestBoard, forestBoardMetrics } from "./forestBoard.js";
+import { createOwlProp } from "./forestOwl.js";
 
 // ── Layout ────────────────────────────────────────────────────
 const S = 2.2;
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
+// Raised off the board's old 1.4: the round board is sized from the code
+// column's own bounds, and this keeps the whole disc — bottom rim included —
+// clear of the ground while it hangs in the gap between the two trees.
+const BOARD_CENTER: [number, number, number] = [0, 1.9, 4.5];
 const BOARD_WIDTH = 1.6 * S;
 const BOARD_HEIGHT = 1.6 * S;
 const SLOT_HEIGHT = 0.17 * S;
@@ -62,12 +64,29 @@ const BLOCK_BEVEL = 0.004 * S;
 const SLOT_GAP = SLOT_HEIGHT - BLOCK_HEIGHT;
 const KNOB_RADIUS = SLOT_GAP * 0.9;
 
+// The code column the blocks are placed in, in world metres: the round board
+// (src/forest/jigsaw/forestBoard.ts) is sized from these bounds, so a placed row
+// always has board behind it. The half-width is the widest a row ever gets — an
+// indented one — not just half a block.
+const SLOT_START_Y = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
+const CODE_COLUMN = {
+  centerX: BOARD_CENTER[0],
+  halfWidth: BLOCK_WIDTH / 2 + INDENT_SHIFT,
+  top: SLOT_START_Y + BLOCK_HEIGHT / 2,
+  bottom:
+    SLOT_START_Y - (NUM_SLOTS - 1) * SLOT_HEIGHT - BLOCK_HEIGHT / 2,
+  z: BOARD_CENTER[2],
+  blockThickness: BLOCK_THICKNESS,
+};
+const BOARD_METRICS = forestBoardMetrics(CODE_COLUMN);
+
 // The feedback panel (wrong output / Python errors) sits directly on top of the
-// centre board, where the player is already looking. It used to hang at
-// 2.3 * S = 5.06 m, far above the board and out of the player's view.
+// round board, where the player is already looking: anchored to the disc's top
+// edge, since the board is a circle now rather than a rectangle. It used to hang
+// at 2.3 * S = 5.06 m, far above the board and out of the player's view.
 const FEEDBACK_HEIGHT = 0.6 * S;
 const FEEDBACK_Y =
-  BOARD_CENTER[1] + BOARD_HEIGHT / 2 + FEEDBACK_HEIGHT / 2 + 0.06 * S;
+  BOARD_METRICS.top + FEEDBACK_HEIGHT / 2 + 0.06 * S;
 
 const SHELF_X = 2.8;
 const SHELF_Z = 1.0;
@@ -78,13 +97,8 @@ const BUTTON_Z = BOARD_CENTER[2];
 const BUTTON_SPACING = 0.24 * S;
 const BUTTON_SIZE = 0.14 * S;
 
-const BIRD_X = -3.5 * S;
-const BIRD_Z = 1.5 * S;
-const BIRD_Y = 2.0 * S;
-
 // ── Forest Colours ─────────────────────────────────────────────
 const BLOCK_COLOR = 0x8b6f47;      // wood brown
-const BOARD_COLOR = 0x3a5a3a;      // dark forest green
 const SLOT_COLOR = 0x4a6a4a;
 const LEAF_COLORS = [0xd4651f, 0xe8a838, 0xc04e1f, 0x6b8e23, 0x8baa3a];
 const ACTIVE_GLOW = 0x7fdf6a;
@@ -148,13 +162,11 @@ export class ForestJigsawPuzzleSystem extends createSystem({
   init() {
     this.tmpVec = new Vector3();
 
-    const startY =
-      BOARD_CENTER[1] + BOARD_HEIGHT / 2 - SLOT_HEIGHT / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(
         new Vector3(
           BOARD_CENTER[0],
-          startY - i * SLOT_HEIGHT,
+          SLOT_START_Y - i * SLOT_HEIGHT,
           BOARD_CENTER[2],
         ),
       );
@@ -164,7 +176,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       const origIdx = FOREST_SHUFFLED_ORDER[i];
       this.homePositions.set(origIdx, [
         SHELF_X,
-        startY - i * SLOT_HEIGHT,
+        SLOT_START_Y - i * SLOT_HEIGHT,
         SHELF_Z,
       ]);
     }
@@ -172,7 +184,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     this.buildBoard();
     this.createBlocks();
     this.createButtons();
-    this.createBird();
+    this.createOwl();
     this.createFeedbackPanel();
 
     this.queries.heldBlocks.subscribe("qualify", (block) => {
@@ -315,29 +327,12 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     this.updateActiveBlockHighlight();
   }
 
-  // ── Board (mounted on a tree trunk) ────────────────────────
+  // ── Board (a round sign hung between two trees) ────────────
 
   private buildBoard(): void {
-    const boardGroup = new Group();
-
-    // Board panel (wooden plank)
-    const boardMat = new MeshStandardMaterial({
-      color: BOARD_COLOR,
-      roughness: 0.85,
-    });
-    const board = new Mesh(
-      new BoxGeometry(BOARD_WIDTH, BOARD_HEIGHT, 0.04 * S),
-      boardMat,
-    );
-    board.position.z = 0.02 * S;
-    boardGroup.add(board);
-
-    boardGroup.position.set(
-      BOARD_CENTER[0],
-      BOARD_CENTER[1],
-      BOARD_CENTER[2],
-    );
-    attachToForestRoot(boardGroup);
+    // The board is a circle hung in the gap between the two trees that hold it;
+    // forestBoard.ts owns its size, its hooks, the ropes and both trees.
+    attachToForestRoot(createForestBoard(CODE_COLUMN));
   }
 
   // ── Blocks ────────────────────────────────────────────────
@@ -481,183 +476,32 @@ export class ForestJigsawPuzzleSystem extends createSystem({
     }
   }
 
-  // ── Bird holding instructions board ───────────────────────
+  // ── Owl on the tree holding the instructions board ────────
 
-  private createBird(): void {
-    const bird = new Group();
-
-    const bodyMat = new MeshStandardMaterial({
-      color: 0x2a6db5,
-      roughness: 0.7,
-    });
-    const bellyMat = new MeshStandardMaterial({
-      color: 0xe8a838,
-      roughness: 0.75,
-    });
-    const wingMat = new MeshStandardMaterial({
-      color: 0x1a4f8a,
-      roughness: 0.7,
-    });
-    const beakMat = new MeshStandardMaterial({
-      color: 0xe8a838,
-      roughness: 0.5,
-    });
-    const eyeMat = new MeshStandardMaterial({
-      color: 0x1a1a1a,
-      roughness: 0.3,
-    });
-    const eyeWhiteMat = new MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.3,
-    });
-
-    // Body (oval)
-    const body = new Mesh(
-      new SphereGeometry(0.28 * S, 16, 16),
-      bodyMat,
+  private createOwl(): void {
+    // The owl perches on a branch of the tree at the player's right — the same
+    // tree that holds the round board's rope — and the instructions board hangs
+    // from that branch below it. forestOwl.ts owns that placement.
+    const { group, sign } = createOwlProp(
+      -BOARD_METRICS.treeX,
+      BOARD_CENTER[2],
     );
-    body.scale.set(1, 1.3, 1.4);
-    bird.add(body);
+    attachToForestRoot(group);
 
-    // Belly patch (lighter underside)
-    const belly = new Mesh(
-      new SphereGeometry(0.22 * S, 12, 12),
-      bellyMat,
-    );
-    belly.position.set(0, -0.04 * S, -0.08 * S);
-    belly.scale.set(0.9, 1.1, 1.2);
-    bird.add(belly);
-
-    // Head (smaller sphere on top)
-    const head = new Mesh(
-      new SphereGeometry(0.18 * S, 14, 14),
-      bodyMat,
-    );
-    head.position.set(0, 0.32 * S, 0.08 * S);
-    bird.add(head);
-
-    // Eyes — white spheres with black pupils
-    const leftEyeWhite = new Mesh(
-      new SphereGeometry(0.06 * S, 10, 10),
-      eyeWhiteMat,
-    );
-    leftEyeWhite.position.set(-0.09 * S, 0.35 * S, 0.16 * S);
-    bird.add(leftEyeWhite);
-
-    const rightEyeWhite = new Mesh(
-      new SphereGeometry(0.06 * S, 10, 10),
-      eyeWhiteMat,
-    );
-    rightEyeWhite.position.set(0.09 * S, 0.35 * S, 0.16 * S);
-    bird.add(rightEyeWhite);
-
-    const leftPupil = new Mesh(
-      new SphereGeometry(0.03 * S, 8, 8),
-      eyeMat,
-    );
-    leftPupil.position.set(-0.09 * S, 0.35 * S, 0.21 * S);
-    bird.add(leftPupil);
-
-    const rightPupil = new Mesh(
-      new SphereGeometry(0.03 * S, 8, 8),
-      eyeMat,
-    );
-    rightPupil.position.set(0.09 * S, 0.35 * S, 0.21 * S);
-    bird.add(rightPupil);
-
-    // Beak — the bird holds the board in its beak
-    const upperBeak = new Mesh(
-      new ConeGeometry(0.05 * S, 0.14 * S, 8),
-      beakMat,
-    );
-    upperBeak.position.set(0, 0.28 * S, 0.24 * S);
-    upperBeak.rotation.x = -Math.PI / 2;
-    bird.add(upperBeak);
-
-    const lowerBeak = new Mesh(
-      new ConeGeometry(0.04 * S, 0.1 * S, 8),
-      beakMat,
-    );
-    lowerBeak.position.set(0, 0.22 * S, 0.22 * S);
-    lowerBeak.rotation.x = -Math.PI / 2;
-    bird.add(lowerBeak);
-
-    // Wings (spread for floating look)
-    const leftWing = new Mesh(
-      new SphereGeometry(0.2 * S, 10, 10),
-      wingMat,
-    );
-    leftWing.position.set(-0.3 * S, 0.05 * S, 0);
-    leftWing.scale.set(0.25, 0.7, 1.0);
-    leftWing.rotation.z = 0.3;
-    bird.add(leftWing);
-
-    const rightWing = new Mesh(
-      new SphereGeometry(0.2 * S, 10, 10),
-      wingMat,
-    );
-    rightWing.position.set(0.3 * S, 0.05 * S, 0);
-    rightWing.scale.set(0.25, 0.7, 1.0);
-    rightWing.rotation.z = -0.3;
-    bird.add(rightWing);
-
-    // Tail feathers
-    const tail = new Mesh(
-      new ConeGeometry(0.12 * S, 0.3 * S, 8),
-      wingMat,
-    );
-    tail.position.set(0, 0, -0.3 * S);
-    tail.rotation.x = Math.PI / 2;
-    bird.add(tail);
-
-    // Position the bird floating on the right side, facing the user
-    bird.position.set(BIRD_X, BIRD_Y, BIRD_Z);
-    bird.lookAt(0, BIRD_Y, -1.0);
-    attachToForestRoot(bird);
-
-    // ── Instructions board held in the bird's beak ──────────
-    // The board hangs just below the beak, facing the user.
-    const boardX = BIRD_X;
-    const boardZ = BIRD_Z + 0.05 * S;
-    const boardY = BIRD_Y - 0.75 * S;
-
-    // Board backing panel
-    const boardBacking = new Mesh(
-      new BoxGeometry(0.85 * S, 1.15 * S, 0.03 * S),
-      new MeshStandardMaterial({
-        color: 0xf5f0e6,
-        roughness: 0.9,
-        side: DoubleSide,
-      }),
-    );
-    boardBacking.position.set(boardX, boardY, boardZ);
-    boardBacking.lookAt(0, boardY, -1.0);
-    attachToForestRoot(boardBacking);
-
-    // Small rope/string from beak to board top
-    const stringMat = new MeshStandardMaterial({
-      color: 0x8a7a5a,
-      roughness: 0.8,
-    });
-    const string = new Mesh(
-      new CylinderGeometry(0.008 * S, 0.008 * S, 0.4 * S, 6),
-      stringMat,
-    );
-    string.position.set(boardX, boardY + 0.6 * S, boardZ);
-    attachToForestRoot(string);
-
-    // PanelUI for the instruction text
+    // PanelUI for the instruction text, lifted a hair off the sign's backing
+    // toward the player, so the two never z-fight.
     const instructionsEntity = createForestEntity(this.world);
     instructionsEntity.addComponent(PanelUI, {
       config: "./ui/forest-jigsaw-instructions.json",
       maxWidth: 0.78 * S,
       maxHeight: 1.08 * S,
     });
-    instructionsEntity.object3D!.position.set(boardX, boardY, boardZ - 0.02 * S);
-    instructionsEntity.object3D!.rotation.y = Math.atan2(
-      0 - boardX,
-      -1.0 - boardZ,
+    instructionsEntity.object3D!.position.set(
+      sign.centerX + sign.towardPlayerX * 0.02 * S,
+      sign.centerY,
+      sign.centerZ + sign.towardPlayerZ * 0.02 * S,
     );
+    instructionsEntity.object3D!.rotation.y = sign.yaw;
     attachToForestRoot(instructionsEntity.object3D!);
     this.instructionsEntity = instructionsEntity;
     this.instructionsEntityIndex = instructionsEntity.index;
@@ -672,6 +516,7 @@ export class ForestJigsawPuzzleSystem extends createSystem({
       "instructions-expected": "Name: Cai\nWelcome, Cai!\nGuests on list: 5",
     };
   }
+
 
   // ── Feedback panel ────────────────────────────────────────
 

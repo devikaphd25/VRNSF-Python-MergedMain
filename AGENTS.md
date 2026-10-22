@@ -123,12 +123,33 @@ approved, only the luminance was low.
   app preview — the reef is behind the student login — so that suite is the
   regression guard, and a throwaway page importing the two builders is how to
   actually look at them in a browser.
+- The forest's centre board is a round sign (`src/forest/jigsaw/forestBoard.ts`)
+  hung in the gap between the two trees that flank it: the disc is sized from the
+  code column's real bounds — the widest an indented row gets, not half a block —
+  so every code row rests on it, and a hook on each of the disc's upper sides
+  ties it to the tree beside it with a rope that rises to an iron hook on that
+  trunk. Its flat front cap sits half a block's thickness behind the block plane,
+  exactly as the whale's face does. `BOARD_CENTER[1]` moved from 1.4 to 1.9 so
+  the whole disc, bottom rim included, hangs clear of the ground — the shelf rows
+  ride up with it, since they are cut from the same `SLOT_START_Y`. The owl that
+  presents the instructions (`src/forest/jigsaw/forestOwl.ts`) perches on a branch
+  of the right-hand tree, the one holding the board's rope, above the control
+  buttons; the instruction board hangs from a crossbar lashed under that branch,
+  below the talons so the owl stays in view, and clear of both the disc and the
+  buttons. `node --experimental-test-module-mocks --import tsx --test tests/forest-board.test.ts`
+  pins all of that down (every code row backed by the disc, disc clear of ground
+  and buttons, a rope from each board hook to its own tree, owl above its sign
+  facing the player). As with the reef, the clearing only renders behind the
+  student login, so that suite is the regression guard and a throwaway page
+  importing the two builders is how to look at the props in a browser.
 - Every puzzle's feedback panel (success, wrong output and Python errors) sits
   **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
   rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at
   5.06 m — above the castle's 5 m ceiling — so a wrong Python result was never
   visible. Keep the panel inside the walls and clear of the board's code slots;
-  the castle board layout test asserts both.
+  the castle board layout test asserts both. The forest's board is a circle, so
+  its panel anchors to the disc's top edge (`BOARD_METRICS.top`) instead of the
+  old rectangular board's top.
 - Activity → environment: `python-puzzle-1` is the castle, `python-puzzle-2` the
   ocean, `python-puzzle-3` the forest. Each manager listens only for its own
   `gameChanged` id, so a test that expects e.g. the castle to open for
