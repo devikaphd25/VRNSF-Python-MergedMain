@@ -154,6 +154,18 @@ approved, only the luminance was low.
   larger clearing) moves the whole forest for the same reason: verify any change
   here by building the forest in Node and comparing tree positions, not just by
   counting trees.
+- Instruction boards are **75 x 100 px rasters**: a numeric UIKitML style value
+  becomes `px` (React appends the unit), and the whole document is rasterised and
+  then scaled onto the panel's `maxWidth`/`maxHeight`. Legibility is therefore
+  the document's pixel budget, not the panel's metres — a board only gets
+  readable by spending its width on glyphs. The forest board ("Python Puzzle 3")
+  has five paragraphs in that 75 px content width; at the old 2.75 px font its
+  longest line needed 86 px and ran off the sign, so its fonts now match the
+  castle's (5.5 title / 3.5 body) and its multi-line blocks use
+  `white-space: pre-wrap`, which keeps the authored breaks and wraps the rest
+  (64 of the 100 px of height). Going much bigger clips the overflow, so measure
+  before raising a size again — a fixed offscreen `div` carrying the same CSS,
+  read with `scrollWidth`/`offsetHeight`, is how.
 - Every puzzle's feedback panel (success, wrong output and Python errors) sits
   **on top of the centre board**, anchored to `BOARD_CENTER[1] + BOARD_HEIGHT / 2`
   rather than an absolute multiple of `S`. At the old `2.3 * S` it hung at

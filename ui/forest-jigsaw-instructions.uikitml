@@ -11,34 +11,34 @@
     flex-direction: column;
   }
   #instructions-title {
-    font-size: 4.4;
+    font-size: 5.5;
     font-weight: bold;
     color: #2d6a4f;
   }
   #instructions-body {
-    font-size: 2.75;
+    font-size: 3.5;
     color: #2a2a2a;
     margin-top: 1.875;
-    white-space: pre;
+    white-space: pre-wrap;
   }
   #instructions-given {
-    font-size: 2.75;
+    font-size: 3.5;
     color: #1b4332;
     margin-top: 1.875;
-    white-space: pre;
+    white-space: pre-wrap;
     font-weight: bold;
   }
   #instructions-expected-label {
-    font-size: 2.75;
+    font-size: 3.5;
     color: #b5651d;
     margin-top: 1.875;
     font-weight: bold;
   }
   #instructions-expected {
-    font-size: 2.75;
+    font-size: 3.5;
     color: #b5651d;
     margin-top: 0.625;
-    white-space: pre;
+    white-space: pre-wrap;
   }
 </style>
 <div class="forest-instructions-board">
