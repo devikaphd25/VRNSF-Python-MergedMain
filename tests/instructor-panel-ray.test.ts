@@ -282,3 +282,41 @@ test("controller models render over the menu and regain their original materials
   assert.equal(material.depthWrite, true);
   for (const object of [model, nested, mesh]) assert.equal(object.renderOrder, 0);
 });
+
+for (const rocket of [true, false]) {
+  test(`new Challenge 1 monitor Stop and Close are reachable in ${rocket ? 'rocket' : 'student-list'} view`, async () => {
+    const parsed = parse(readFileSync('ui/instructor-quiz-monitor.uikitml', 'utf8'));
+    function layoutOnly(element: any): any {
+      if (typeof element === 'string') return null;
+      return { ...element, type: 'container', children: (element.children ?? []).map(layoutOnly).filter(Boolean) };
+    }
+    parsed.element = layoutOnly(parsed.element);
+    const root = interpret(parsed)!;
+    const scene = new Scene(), panel = new Group(), space = new Object3D();
+    panel.position.z = -2.2;
+    panel.scale.setScalar(0.2);
+    panel.add(root); scene.add(panel);
+    const elements = new Map<string, any>();
+    root.traverse(object => { if (object.userData.id) elements.set(object.userData.id, object); });
+    for (const id of ['quiz-monitor-question', 'quiz-monitor-summary', 'quiz-monitor-footer', 'quiz-monitor-paging', 'quiz-monitor-columns', 'quiz-monitor-list']) {
+      const element = elements.get(id);
+      if (rocket && !element.classList.contains('quiz-row-hidden')) element.classList.add('quiz-row-hidden');
+    }
+    if (rocket) for (const id of ['quiz-five-parts-board', 'quiz-five-parts-status']) elements.get(id).classList.remove('quiz-row-hidden');
+    setInstructorPanelRayInteraction(panel, true);
+    const rays = new DashboardControllerRays(scene, new PerspectiveCamera());
+    for (let i = 0; i < 4; i++) { await new Promise(resolve => setTimeout(resolve, 20)); root.update(16); }
+    for (const id of ['quiz-monitor-stop', 'quiz-monitor-close']) {
+      const button = elements.get(id);
+      assert.ok(button.size.value[0] >= 70 && button.size.value[1] >= 70, `${id} must remain large enough`);
+      let activations = 0;
+      button.addEventListener('pointerdown', () => activations++);
+      button.updateWorldMatrix(true, false);
+      const position = new Vector3().setFromMatrixPosition(button.matrixWorld);
+      space.position.set(position.x, position.y, 0);
+      for (const pressed of [false, true, false]) rays.update(panel, [{ hand: 'right', space, pressed }]);
+      assert.equal(activations, 1, `${id} must remain reachable behind its new artwork`);
+    }
+    rays.dispose(); root.dispose();
+  });
+}

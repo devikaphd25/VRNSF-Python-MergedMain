@@ -1,3 +1,4 @@
+import { TRUE_FALSE_MAX_ATTEMPTS } from "../../shared/true-false-settings";
 import { TRUE_FALSE_CHALLENGE_TYPE } from "../../shared/challenge-types";
 import { STUDENT_RESULT_AUTO_CLOSE_MS } from "../config/student-result-settings";
 /**
@@ -43,6 +44,8 @@ const REVIEW_NOTES: Record<string, string> = {
   "'Loading...' means copying storage -> RAM.": "Loading transfers program data from storage into RAM for use.",
 };
 
+
+
 interface QuickChallengeQuestion {
   question: string;
   options: string[];
@@ -74,6 +77,8 @@ interface QuickChallengeResult {
   answeredCount?: number;
   totalQuestions?: number;
   completed?: boolean;
+  attemptCount?: number;
+  retriesRemaining?: number;
   results?: Array<{
     questionIndex: number;
     selectedIndex: number;
@@ -125,6 +130,7 @@ export class TrueFalseChallengeSystem extends createSystem({
   private buttonsConnected = false;
   private lastDesktopActivation = 0;
   private lastNavAt = 0;
+  private fivePartsAttempts = 0;
   private responseTimeSeconds = 0;
   private timerFaceCanvas?: HTMLCanvasElement;
   private stepsRailCanvas?: HTMLCanvasElement;
@@ -278,13 +284,8 @@ export class TrueFalseChallengeSystem extends createSystem({
         action = () => this.goToQuestion(stepIndex);
         actionName = `step-${stepIndex}`;
       } else if (this.isSummaryView() && y >= 0.80) {
-        if (x < 0.5) {
-          action = this.retryQuiz;
-          actionName = "retry";
-        } else {
-          action = this.closeResult;
-          actionName = "close";
-        }
+        action = this.retryQuiz;
+        actionName = "retry";
       } else if (!this.submitted && !this.showingResult && x < 0.84 && y >= 0.48 && y < 0.78) {
         const index = x < 0.42 ? 0 : 1;
         action = () => this.selectAnswer(index);
@@ -488,6 +489,7 @@ export class TrueFalseChallengeSystem extends createSystem({
     this.correctCount = 0;
     this.selectedIndex = null;
     this.submitted = false;
+    this.fivePartsAttempts = 0;
     this.challengeClosed = false;
     this.timeExpired = false;
     this.responseTimeSeconds = 0;
@@ -627,14 +629,17 @@ export class TrueFalseChallengeSystem extends createSystem({
     this.setText("quiz-result-winner", "");
     this.setText("quiz-result-hint", "tap to review");
     this.removeClass(this.document?.getElementById("quiz-result-hint"), "answer-hidden");
-    this.removeClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
+    if (this.canRetryFiveParts()) {
+      this.removeClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
+      this.paintHudFace("quiz-reset-face", C1.light, "RETRY QUIZ");
+    } else {
+      this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
+    }
     this.addClass(this.document?.getElementById("quiz-steps"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-timer-ring"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-kicker"), "answer-hidden");
     this.refreshTitleBanner("STUDENT CHALLENGE 1");
     this.setText("quiz-progress", "");
-    this.setCloseButtonLabel("Return to class");
-    this.paintHudFace("quiz-reset-face", C1.light, "RETRY QUIZ");
     const card = this.document?.getElementById("quiz-result-card");
     const status = this.document?.getElementById("quiz-result-status");
     const time = this.document?.getElementById("quiz-result-time");
@@ -1017,8 +1022,17 @@ export class TrueFalseChallengeSystem extends createSystem({
     return true;
   };
 
+  private canRetryFiveParts(): boolean {
+    return (
+      this.isFivePartsChallenge() &&
+      !this.challengeClosed &&
+      !this.timeExpired &&
+      this.fivePartsAttempts < TRUE_FALSE_MAX_ATTEMPTS
+    );
+  }
+
   private retryQuiz = (): void => {
-    if (!this.challenge || !this.submitted || this.challengeClosed || this.timeExpired || this.retryPending) return;
+    if (!this.challenge || !this.submitted || this.challengeClosed || this.timeExpired || this.retryPending || !this.canRetryFiveParts()) return;
     const quizId = this.challenge.id;
     this.retryPending = true;
     this.setFeedback("Saving your attempt...");
@@ -1146,6 +1160,11 @@ export class TrueFalseChallengeSystem extends createSystem({
     }
 
     if (this.isFivePartsChallenge()) {
+      if (Number.isInteger(result.attemptCount)) {
+        this.fivePartsAttempts = Number(result.attemptCount);
+      } else {
+        this.fivePartsAttempts += 1;
+      }
       this.reviewResults = Array.isArray(result.results)
         ? result.results.map(item => ({
             selectedIndex: item.selectedIndex,
@@ -1413,11 +1432,15 @@ export class TrueFalseChallengeSystem extends createSystem({
     const actions = this.document?.getElementById("quiz-result-actions");
     if (showResult) {
       this.removeClass(resultCard, "quiz-result-hidden");
-      this.removeClass(close, "quiz-result-hidden");
       this.addClass(toolbar, "answer-hidden");
       this.removeClass(actions, "answer-hidden");
-      if (this.isFivePartsChallenge()) this.removeClass(reset, "quiz-result-hidden");
-      else this.addClass(reset, "quiz-result-hidden");
+      if (this.isFivePartsChallenge()) {
+        this.addClass(close, "quiz-result-hidden");
+        this.removeClass(reset, "quiz-result-hidden");
+      } else {
+        this.removeClass(close, "quiz-result-hidden");
+        this.addClass(reset, "quiz-result-hidden");
+      }
     } else {
       this.addClass(resultCard, "quiz-result-hidden");
       this.addClass(close, "quiz-result-hidden");

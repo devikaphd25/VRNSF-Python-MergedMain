@@ -95,6 +95,7 @@ export interface QuickChallengeStudentProgress {
   completed: boolean;
   finishedAt?: number;
   totalTimeSeconds?: number;
+  attemptCount?: number;
 }
 
 export interface QuickChallenge {

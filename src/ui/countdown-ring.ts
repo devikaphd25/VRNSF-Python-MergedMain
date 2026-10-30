@@ -70,6 +70,7 @@ export function paintChallenge1Countdown(options: {
   durationSeconds: number;
   clockText: string;
   caption?: string;
+  clockSrc?: string;
   onReady?: () => void;
 }): string {
   const size = options.canvas.width;
@@ -86,7 +87,7 @@ export function paintChallenge1Countdown(options: {
   const line = Math.max(8, size * 0.055);
 
   ctx.clearRect(0, 0, size, size);
-  const plate = getImage(C1.clock, options.onReady);
+  const plate = getImage(options.clockSrc ?? C1.clock, options.onReady);
   if (plate) ctx.drawImage(plate, 0, 0, size, size);
 
   ctx.beginPath();

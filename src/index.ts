@@ -2154,8 +2154,8 @@ World.create(
         .createTransformEntity()
         .addComponent(PanelUI, {
           config: "./ui/instructor-quiz-monitor.json",
-          maxWidth: 2.8,
-          maxHeight: 2.45
+          maxWidth: 4.15,
+          maxHeight: 2.35
         })
         .addComponent(RayInteractable);
 

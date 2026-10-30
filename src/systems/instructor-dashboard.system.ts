@@ -26,7 +26,8 @@ import {
   socket
 } from "../network/socket-client";
 import { findNextChallengeIndex, type ClassroomActivity, type ClassroomContent } from "../content/classroom-content";
-import { paintCountdownRing } from "../ui/countdown-ring";
+import { paintChallenge1Countdown } from "../ui/countdown-ring";
+import { C1I, paintTitleBanner, preloadChallenge1InstructorArt } from "../challenges/true-false/question-art";
 
 import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation-settings";
 
@@ -231,6 +232,7 @@ export class InstructorDashboardSystem extends createSystem({
   private quizStudents: QuizMonitorStudent[] = [];
   private quizCountdownTimer?: number;
   private quizTimerFaceCanvas?: HTMLCanvasElement;
+  private quizTitleBannerCanvas?: HTMLCanvasElement;
   private quizCountdownStoppedText?: string;
   private quizMonitorPage = 0;
   private readonly quizMonitorPageSize = 10;
@@ -1162,6 +1164,7 @@ export class InstructorDashboardSystem extends createSystem({
       const setter = (window as any).setInstructorMistakesOpen;
       setter?.(true);
     });
+    preloadChallenge1InstructorArt(() => this.renderQuizMonitor());
     this.renderQuizMonitor();
   }
 
@@ -1289,8 +1292,9 @@ export class InstructorDashboardSystem extends createSystem({
       this.addClass(list, "quiz-row-hidden");
       this.removeClass(board, "quiz-row-hidden");
       this.removeClass(fpStatus, "quiz-row-hidden");
-      title?.setProperties({ text: "FIVE PARTS - LIVE CLASS" });
-      stop?.setProperties({ text: "Stop" });
+      title?.setProperties({ text: "STUDENT CHALLENGE 1" });
+      this.refreshMonitorTitleBanner("STUDENT CHALLENGE 1");
+      stop?.setProperties({ text: "" });
     } else {
       this.removeClass(title, "quiz-row-hidden");
       this.removeClass(question, "quiz-row-hidden");
@@ -1301,12 +1305,11 @@ export class InstructorDashboardSystem extends createSystem({
       this.removeClass(list, "quiz-row-hidden");
       this.addClass(board, "quiz-row-hidden");
       this.addClass(fpStatus, "quiz-row-hidden");
-      stop?.setProperties({ text: "STOP CHALLENGE" });
-      title?.setProperties({
-        text: this.activeQuizKind === "challenge-2"
-          ? "CHALLENGE 2 — LIVE MONITOR"
-          : "QUICK CHALLENGE — LIVE MONITOR"
-      });
+      stop?.setProperties({ text: "" });
+      const titleText =
+        this.activeQuizKind === "challenge-2" ? "CHALLENGE 2" : "QUICK CHALLENGE";
+      title?.setProperties({ text: titleText });
+      this.refreshMonitorTitleBanner(titleText);
     }
     footer?.setProperties({
       text: finished
@@ -1526,7 +1529,7 @@ export class InstructorDashboardSystem extends createSystem({
               ? "#fbbf24"
               : "#f87171";
       fill?.setProperties?.({
-        width: Math.max(8, Math.round(148 * ((answered === 0 ? 0 : stat.accuracy) / 100))),
+        width: Math.max(8, Math.round(168 * ((answered === 0 ? 0 : stat.accuracy) / 100))),
         backgroundColor: barColor
       });
       pct?.setProperties({ text: `${stat.accuracy}%` });
@@ -1623,6 +1626,25 @@ export class InstructorDashboardSystem extends createSystem({
     this.syncQuizMonitor();
   }
 
+  private refreshMonitorTitleBanner(text: string): void {
+    if (!this.quizTitleBannerCanvas) {
+      this.quizTitleBannerCanvas = document.createElement("canvas");
+      this.quizTitleBannerCanvas.width = 1024;
+      this.quizTitleBannerCanvas.height = 160;
+    }
+    const banner = this.quizMonitorDocument?.getElementById(
+      "quiz-monitor-title-banner"
+    ) as any;
+    banner?.setProperties?.({
+      src: paintTitleBanner({
+        canvas: this.quizTitleBannerCanvas,
+        text,
+        src: C1I.title,
+        onReady: () => this.refreshMonitorTitleBanner(text),
+      }),
+    });
+  }
+
   private updateQuizTimerRing(clockText: string): void {
     const face = this.quizMonitorDocument?.getElementById(
       "quiz-monitor-timer-progress"
@@ -1641,11 +1663,14 @@ export class InstructorDashboardSystem extends createSystem({
           duration - (Date.now() - this.activeQuiz.startedAt) / 1000
         );
     face.setProperties?.({
-      src: paintCountdownRing({
+      src: paintChallenge1Countdown({
         canvas: this.quizTimerFaceCanvas,
         remainingSeconds: remaining,
         durationSeconds: duration,
         clockText,
+        caption: "TIME REMAINING",
+        clockSrc: C1I.clock,
+        onReady: () => this.updateQuizTimerRing(clockText),
       }),
     });
   }

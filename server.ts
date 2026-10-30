@@ -58,6 +58,7 @@ import {
   initializeAppDataRepository,
   updateAppUserLocation,
 } from "./server/repositories/users.repository.js";
+import { TRUE_FALSE_MAX_ATTEMPTS } from "./shared/true-false-settings.js";
 import {
   TRUE_FALSE_CHALLENGE_TYPE,
   DEFAULT_CHALLENGE_DURATION_SECONDS,
@@ -847,6 +848,10 @@ io.on("connection", (socket: ClassroomSocket) => {
       reply({ success: false, message: "This challenge is no longer available for retry." });
       return;
     }
+    if ((progress.attemptCount ?? 0) >= TRUE_FALSE_MAX_ATTEMPTS) {
+      reply({ success: false, message: "You have used all three attempts.", attemptCount: progress.attemptCount });
+      return;
+    }
     challengeRetryPending = true;
     try {
       await saveChallengeResponses(challenge, "completed");
@@ -856,9 +861,9 @@ io.on("connection", (socket: ClassroomSocket) => {
         return;
       }
       const attemptStartedAt = Math.max(Date.now(), (progress.attemptStartedAt ?? challenge.startedAt) + 1);
-      challenge.studentProgress.set(socket.id, { answers: [], completed: false, attemptStartedAt });
+      challenge.studentProgress.set(socket.id, { answers: [], completed: false, attemptStartedAt, attemptCount: progress.attemptCount ?? 0 });
       notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
-      reply({ success: true, attemptStartedAt });
+      reply({ success: true, attemptStartedAt, attemptCount: progress.attemptCount ?? 0 });
     } catch (error) {
       console.error("[Challenge retry] Could not preserve completed attempt", error);
       reply({ success: false, message: "Could not save the previous attempt. Please try again." });
@@ -899,9 +904,34 @@ io.on("connection", (socket: ClassroomSocket) => {
       const progress = challenge.studentProgress.get(socket.id) ?? {
         answers: [],
         completed: false,
+        attemptCount: 0,
       };
       if (progress.completed || questions.length === 0 ||
           (progress.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt)) return;
+
+      const attemptsUsed = progress.attemptCount ?? 0;
+      if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE && attemptsUsed >= TRUE_FALSE_MAX_ATTEMPTS) {
+        const correctCount = getFivePartsScore(progress);
+        socket.emit("quickChallengeResult", {
+          quizId: challenge.id,
+          completed: true,
+          hasNext: false,
+          correctCount,
+          answeredCount: progress.answers.length,
+          totalQuestions: questions.length,
+          responseTimeSeconds: progress.totalTimeSeconds ?? 0,
+          attemptCount: attemptsUsed,
+          retriesRemaining: 0,
+          results: progress.answers.map((answer, questionIndex) => ({
+            questionIndex,
+            selectedIndex: answer.selectedIndex,
+            correctIndex: questions[questionIndex]?.correctIndex,
+            correct: answer.correct,
+          })),
+          message: `Score: ${correctCount}/${questions.length}`,
+        });
+        return;
+      }
 
       const rawAnswers = Array.isArray(data.answers) ? data.answers : null;
       if (!rawAnswers || rawAnswers.length !== questions.length) return;
@@ -930,6 +960,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       const answeredAt = Date.now();
       progress.answers = graded;
       progress.completed = true;
+      progress.attemptCount = attemptsUsed + 1;
       progress.finishedAt = answeredAt;
       progress.totalTimeSeconds = Math.max(
         0,
@@ -958,6 +989,11 @@ io.on("connection", (socket: ClassroomSocket) => {
           correctIndex: questions[questionIndex].correctIndex,
           correct: answer.correct,
         })),
+        attemptCount: progress.attemptCount,
+        retriesRemaining: Math.max(
+          0,
+          TRUE_FALSE_MAX_ATTEMPTS - (progress.attemptCount ?? 0)
+        ),
         message: `Score: ${correctCount}/${questions.length}`,
       });
       notifyInstructorStudentProgress(challenge, socket.id, student);

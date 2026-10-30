@@ -12,6 +12,15 @@ const C1 = {
   dark: "/textures/challenge1/DarkUIButton.png",
 };
 
+const C1I = {
+  board: "/textures/challenge1_instructor/UIBackground.png",
+  title: "/textures/challenge1_instructor/Title_for_Dashboard.png",
+  clock: "/textures/challenge1_instructor/Clock_Background.png",
+  question: "/textures/challenge1_instructor/QuestionBackground.png",
+  stop: "/textures/challenge1_instructor/StopButton.png",
+  close: "/textures/challenge1_instructor/XCloseButton.png",
+};
+
 const imageCache = new Map<string, HTMLImageElement>();
 
 function getImage(src: string, onReady?: () => void): HTMLImageElement | null {
@@ -51,9 +60,33 @@ export function preloadChallenge1Art(onReady: () => void): void {
   if (pending <= 0) onReady();
 }
 
+export function preloadChallenge1InstructorArt(onReady: () => void): void {
+  const sources = Object.values(C1I);
+  let pending = sources.length;
+  sources.forEach(src => {
+    const existing = imageCache.get(src);
+    if (existing?.complete) {
+      pending -= 1;
+      if (pending <= 0) onReady();
+      return;
+    }
+    const image = existing ?? new Image();
+    image.onload = () => {
+      pending -= 1;
+      if (pending <= 0) onReady();
+    };
+    if (!existing) {
+      image.src = src;
+      imageCache.set(src, image);
+    }
+  });
+  if (pending <= 0) onReady();
+}
+
 export function paintTitleBanner(options: {
   canvas: HTMLCanvasElement;
   text: string;
+  src?: string;
   onReady?: () => void;
 }): string {
   const ctx = options.canvas.getContext("2d");
@@ -61,7 +94,7 @@ export function paintTitleBanner(options: {
   const width = options.canvas.width;
   const height = options.canvas.height;
   ctx.clearRect(0, 0, width, height);
-  const plate = getImage(C1.title, options.onReady);
+  const plate = getImage(options.src ?? C1.title, options.onReady);
   if (plate) ctx.drawImage(plate, 0, 0, width, height);
   ctx.fillStyle = "#dff8ff";
   ctx.textAlign = "center";
@@ -113,4 +146,4 @@ export function paintReviewChip(options: {
   return options.canvas.toDataURL("image/png");
 }
 
-export { C1, getImage };
+export { C1, C1I, getImage };
