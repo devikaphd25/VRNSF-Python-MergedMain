@@ -1,8 +1,12 @@
 /** Local, procedural hardware gallery. Database-independent content with room-scoped multiplayer launch. */
-import { socket } from '../network/socket';
+import { socket } from '../network/socket-client';
 import { createSystem } from '@iwsdk/core';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { viewRelativeMovement } from '../input/headset-relative-movement';
+import { DisplayRoomGrab } from '../display-room/grab-controller';
+import { readDisplayGrabInput } from '../display-room/grab-input';
+import { DISPLAY_ROOM_RAY_DISTANCE } from '../display-room/ray-settings';
 
 export class DisplayRoomSystem extends createSystem({}) {
   private gallery = new THREE.Group();
@@ -13,14 +17,20 @@ export class DisplayRoomSystem extends createSystem({}) {
   private savedRotation = new THREE.Quaternion();
   private elapsed = 0;
   private turnLatch = false;
+  private movementFacing = new THREE.Quaternion();
+  private trackedFacing = new THREE.Quaternion();
+  private grabbing = new DisplayRoomGrab();
+  private leftGrabPressed = false;
+  private leftGrabSource?: XRInputSource;
   private returnPanel?: THREE.Mesh;
   private returnRay = new THREE.Raycaster();
   private returnPointer = new THREE.Vector2();
   private lastReturnRequest = 0;
   private rightTriggerPressed = false;
+  private returnRayVisuals = new THREE.Group();
   private rightReturnBeam = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-    new THREE.LineBasicMaterial({color: 0x67e8f9, depthTest: false, toneMapped: false})
+    new THREE.LineBasicMaterial({color: 0x67e8f9, transparent: true, depthTest: false, depthWrite: false, toneMapped: false})
   );
   private hud!: HTMLButtonElement;
   private get canReturnClass(): boolean { return (window as any).isInstructor === true; }
@@ -30,6 +40,7 @@ export class DisplayRoomSystem extends createSystem({}) {
     this.gallery.position.set(200, 0, 0);
     this.gallery.visible = false;
     this.scene.add(this.gallery);
+    this.scene.add(this.grabbing.root);
     this.buildRoom();
     // Explicit mesh picking avoids asynchronous UI-panel loading and ray-distance limits.
     this.renderer.domElement.addEventListener('click', event => {
@@ -41,8 +52,11 @@ export class DisplayRoomSystem extends createSystem({}) {
     });
     this.rightReturnBeam.visible = false;
     this.rightReturnBeam.frustumCulled = false;
-    this.rightReturnBeam.renderOrder = 65002;
-    this.scene.add(this.rightReturnBeam);
+    this.returnRayVisuals.renderOrder = 120000;
+    this.rightReturnBeam.renderOrder = 120000;
+    this.rightReturnBeam.pointerEvents = 'none';
+    this.returnRayVisuals.add(this.rightReturnBeam);
+    this.scene.add(this.returnRayVisuals);
     socket.on('displayRoomOpened', () => this.open());
     socket.on('displayRoomClosed', () => this.close());
     // Restore the classroom transform before another activity positions its UI.
@@ -110,6 +124,8 @@ export class DisplayRoomSystem extends createSystem({}) {
       const beam=new THREE.Mesh(new THREE.CylinderGeometry(.5,.95,1.65,32,1,true),new THREE.MeshBasicMaterial({color:'#3bdcff',transparent:true,opacity:.055,side:THREE.DoubleSide,depthWrite:false}));beam.position.set(item.x,1.08,item.z);this.gallery.add(beam);
       const light=new THREE.PointLight(0x48dfff,12,4,2);light.position.set(item.x,.5,item.z);this.gallery.add(light);
       const pivot=new THREE.Group();pivot.position.set(item.x,2,item.z);this.gallery.add(pivot);this.exhibits.push(pivot);
+      pivot.name = item.name;
+      pivot.userData.handCopySize = item.file === 'motherboard-highlighted' ? 0.24 : 0.18;
       loader.load(`/models/computer/${item.file}.glb`, gltf=>{
         const model=gltf.scene;
         const bounds=new THREE.Box3().setFromObject(model);const size=bounds.getSize(new THREE.Vector3());
@@ -122,18 +138,31 @@ export class DisplayRoomSystem extends createSystem({}) {
         pivot.add(mount);
       },undefined,error=>{console.error('[Display Room] Model failed',item.file,error);this.label(`${item.name} unavailable`,2,.3,item.x,2,item.z);});
       this.label(item.name,2,.32,item.x,3.75,item.z);
+      const pickup = this.label('PICK UP',1.5,.28,item.x,.65,item.z+1.5);
+      pickup.name = `Pick up ${item.name}`;
+      this.grabbing.registerPickupButton(pickup, pivot);
     }
     this.label('DISPLAY ROOM · COMPUTER HARDWARE',5,.5,0,4.7,-7.4);
     this.label('Move: left stick · Turn: right stick',5,.35,0,.75,-6.7);
+    this.label('Pinch thumb + index to pick up · Keep pinching',6,.35,0,4.1,-7.4);
+    this.label('Turn your wrist to rotate · Open fingers to release',6,.3,0,3.7,-7.4);
   }
 
   private open() {
     if(this.active) return;
+    (window as any).closeStudentResultForRoomTransition?.();
+    this.grabbing.reset();
+    this.leftGrabPressed = false;
+    this.leftGrabSource = undefined;
     this.rightTriggerPressed = true; // Release the launch trigger before returning.
     (window as any).presentationSystem?.exitPresentationMode?.();
     (window as any).setInstructorDebriefChoiceOpen?.(false);
     (window as any).setInstructorDashboardOpen?.(false);
     (window as any).isDisplayRoomOpen = true;
+    (window as any).setInstructorLabMonitorOpen?.(false);
+    (window as any).setInstructorLabMonitorAvailable?.(
+      Boolean((window as any).isInstructorLabMonitorAvailable)
+    );
     this.savedPosition.copy(this.rig.position);this.savedRotation.copy(this.rig.quaternion);
     this.active=true;this.gallery.visible=true;this.rig.position.set(200,0,4.5);this.rig.quaternion.identity();
     if (this.canReturnClass) {
@@ -183,7 +212,7 @@ export class DisplayRoomSystem extends createSystem({}) {
     this.returnRay.ray.origin.setFromMatrixPosition(raySpace.matrixWorld);
     this.returnRay.ray.direction.set(0,0,-1).transformDirection(raySpace.matrixWorld);
     this.returnRay.near = 0;
-    this.returnRay.far = 30; // Covers the full room from every permitted walking position.
+    this.returnRay.far = DISPLAY_ROOM_RAY_DISTANCE;
     this.returnPanel.updateWorldMatrix(true, false);
     const hit = this.returnRay.intersectObject(this.returnPanel)[0];
     const material = this.returnPanel.material as THREE.MeshBasicMaterial;
@@ -210,6 +239,7 @@ export class DisplayRoomSystem extends createSystem({}) {
     if(!this.active) return;
     (window as any).isDisplayRoomOpen = false;
     this.active=false;this.gallery.visible=false;this.keys.clear();this.hud.style.display='none';
+    this.grabbing.reset();
     if (this.returnPanel) this.returnPanel.visible = false;
     this.rightReturnBeam.visible = false;
     this.rightTriggerPressed = false;
@@ -218,6 +248,9 @@ export class DisplayRoomSystem extends createSystem({}) {
     // classroom visibility, controller attachment, and pointer interaction on exit.
     this.rig.updateMatrixWorld(true);
     (window as any).refreshInstructorMenuButton?.();
+    (window as any).setInstructorLabMonitorAvailable?.(
+      Boolean((window as any).isInstructorLabMonitorAvailable)
+    );
   }
   update(delta:number) {
     if(!this.active) return;
@@ -240,13 +273,42 @@ export class DisplayRoomSystem extends createSystem({}) {
     }
     if(Math.abs(turn)>.65&&!this.turnLatch){this.rig.rotation.y-=Math.sign(turn)*Math.PI/6;this.turnLatch=true;}
     if(Math.abs(turn)<.3)this.turnLatch=false;
-    const eye=this.renderer.xr.isPresenting?this.renderer.xr.getCamera():this.camera;
-    const forward=new THREE.Vector3();eye.getWorldDirection(forward);forward.y=0;forward.normalize();
-    const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0));
-    const motion=right.multiplyScalar(x).addScaledVector(forward,-z);if(motion.length()>1)motion.normalize();
+    if (this.renderer.xr.isPresenting) {
+      const frame = this.renderer.xr.getFrame();
+      const reference = this.renderer.xr.getReferenceSpace();
+      const pose = frame && reference ? frame.getViewerPose(reference) : null;
+      // Pause movement if tracking is unavailable rather than use a stale heading.
+      if (!pose) { this.grabbing.update(null, this.exhibits, this.movementFacing, performance.now()); return; }
+      const orientation = pose.transform.orientation;
+      this.trackedFacing.set(orientation.x, orientation.y, orientation.z, orientation.w);
+      // The live headset pose is relative to the tracking space. Apply the rig's
+      // current world rotation (including this frame's right-stick snap turn).
+      // The XR render camera can still contain a tracking-local pose at this point.
+      this.rig.getWorldQuaternion(this.movementFacing).multiply(this.trackedFacing);
+    } else {
+      this.camera.getWorldQuaternion(this.movementFacing);
+    }
+    const motion = viewRelativeMovement(x, z, this.movementFacing);
     const next=this.rig.position.clone().addScaledVector(motion,dt*1.8);
     next.x=THREE.MathUtils.clamp(next.x,193,207);next.z=THREE.MathUtils.clamp(next.z,-7,7);
     // Keep visitors outside the three display platforms.
     if(!this.exhibits.some(p=>Math.hypot(next.x-200-p.position.x,next.z-p.position.z)<1.55))this.rig.position.copy(next);
+    // Sample after locomotion so the miniature follows the current rig transform.
+    const frame = this.renderer.xr.getFrame();
+    const reference = this.renderer.xr.getReferenceSpace();
+    const source = [...(this.renderer.xr.getSession()?.inputSources ?? [])].find(s => s.handedness === 'right');
+    const input = this.renderer.xr.isPresenting && frame && reference && source
+      ? readDisplayGrabInput(frame, reference, source, this.rig,
+        source === this.grabbing.inputSource && this.grabbing.isPressed,
+        source === this.grabbing.inputSource && this.grabbing.isSelecting)
+      : null;
+    const leftSource = [...(this.renderer.xr.getSession()?.inputSources ?? [])].find(s => s.handedness === 'left');
+    const left = this.renderer.xr.isPresenting && frame && reference && leftSource
+      ? readDisplayGrabInput(frame, reference, leftSource, this.rig,
+        leftSource === this.leftGrabSource && this.leftGrabPressed) : null;
+    this.leftGrabPressed = left?.pressed ?? false;
+    this.leftGrabSource = leftSource;
+    this.grabbing.update(input, this.exhibits, this.movementFacing, performance.now(),
+      this.canReturnClass ? this.returnPanel : undefined, left);
   }
 }

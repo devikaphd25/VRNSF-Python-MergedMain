@@ -1,6 +1,6 @@
-import { instructorContentUrl } from "../services/classroom-session.services";
-import { setClassroomBoardCourse } from "../config/classroom-board-content";
-import { createClassroomBoardFrame } from "../components/classroom-board-frame";
+import { instructorContentUrl } from "../services/classroom-session.service";
+import { setClassroomBoardCourse } from "../classroom/board-content";
+import { createClassroomBoardFrame } from "../classroom/classroom-board-frame";
 /**
  * Synchronized presentation, video, briefing, and Mission Review renderer.
  * Goal: show instructor-controlled media to every participant, maintain video
@@ -29,16 +29,16 @@ import {
   UIKitDocument
 } from "@iwsdk/core";
 import { Box3, Object3D, CanvasTexture, Raycaster, SRGBColorSpace, TextureLoader, Vector2 } from "three";
-import { socket } from "../network/socket";
-import { INSTRUCTOR_LESSONS, replaceInstructorLessons } from "../config/instructor-menu-content";
+import { socket } from "../network/socket-client";
+import { summarizeActivities, type ClassroomContent } from "../content/classroom-content";
 import {
   restoreSeatMarkersAfterDebrief,
   setSeatMarkerTheme,
   setSeatMarkersSuppressed,
   showAllMarkers
-} from "../components/instructor/seat-markers";
-import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation";
-import { DebriefDoorTransition } from "./debrief-door-transition";
+} from "../classroom/seat-markers";
+import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation-settings";
+import { DebriefDoorTransition } from "../presentation/debrief-transition";
 
 type DebriefReviewData = {
   cycleLabel: string;
@@ -66,7 +66,7 @@ export class PresentationSystem extends createSystem({
   }
 }) {
   private studentControlsDocument?: UIKitDocument;
-  private databaseGameCount = 0;
+  private activitySummary = summarizeActivities([]);
   private studentHandRaised = false;
   private sideHandModel?: Object3D;
   private lastHandClickAt = 0;
@@ -1103,13 +1103,12 @@ export class PresentationSystem extends createSystem({
     try {
       const response = await fetch(instructorContentUrl());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const content = await response.json();
+      const content: ClassroomContent = await response.json();
       setClassroomBoardCourse(content);
-      this.databaseGameCount = (content.activities ?? []).filter((a: any) => a.activityType === "game").length;
-      replaceInstructorLessons(content);
+      this.activitySummary = summarizeActivities(content.activities ?? []);
       this.redrawDebriefScreens();
     } catch (error) {
-      console.warn("[Side screens] Using configured fallback activities", error);
+      console.warn("[Side screens] Could not refresh database activity counts", error);
     }
   }
 
@@ -1325,12 +1324,11 @@ export class PresentationSystem extends createSystem({
     context.fillStyle = "#cbd5e1";
     context.font = "600 34px Arial";
     context.fillText("Tasks of Today", 52, 70);
-    const tasks = INSTRUCTOR_LESSONS.flatMap(lesson => lesson.tasks);
     const rows = [
-      { label: "VIDEOS", count: tasks.filter(task => task.action === "presentation").length, color: "#38bdf8" },
-      { label: "CHALLENGES", count: tasks.filter(task => task.action === "challenge").length, color: "#fbbf24" },
-      { label: "GAMES", count: this.databaseGameCount, color: "#34d399" },
-      { label: "DEBRIEF ROOMS", count: tasks.filter(task => task.action === "briefing").length, color: "#a78bfa" }
+      { label: "VIDEOS", count: this.activitySummary.videos, color: "#38bdf8" },
+      { label: "CHALLENGES", count: this.activitySummary.challenges, color: "#fbbf24" },
+      { label: "GAMES", count: this.activitySummary.games, color: "#34d399" },
+      { label: "DEBRIEF ROOMS", count: this.activitySummary.debriefs, color: "#a78bfa" }
     ];
     rows.forEach((row, index) => {
       const y = 106 + index * 142;
@@ -1552,6 +1550,9 @@ export class PresentationSystem extends createSystem({
   }
 
   private togglePresentationMode() {
+    // Display Room owns the player pose; stale/local Screen actions cannot enter.
+    // Instructor activity broadcasts close Display Room before opening media.
+    if ((window as any).isDisplayRoomOpen && !this.isPresentationMode) return;
     if (this.transitionInProgress) {
       return;
     }

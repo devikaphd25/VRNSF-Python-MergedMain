@@ -1,4 +1,4 @@
-<!-- Alternative sequence menu; original instructor-menu.uikitml is preserved. -->
+<!-- Instructor activity sequence and end-class confirmation. -->
 <style>
   .dashboard-root { overflow: hidden; width: 1040; height: 820; flex-direction: column; gap: 14; padding: 26; background-color: #020b18; border-radius: 22; border-width: 2; border-color: #1689b7; pointer-events: auto; }
   .dashboard-header { height: 72; flex-direction: row; justify-content: space-between; align-items: center; padding-left: 8; padding-right: 4; border-bottom-width: 2; border-bottom-color: rgba(14, 165, 233, 0.5); }
@@ -49,11 +49,17 @@
   .footer-actions { width: 205; height: 54; flex-direction: row; gap: 8; }
   .end-class-button { width: 205; height: 54; align-items: center; justify-content: center; background-color: rgba(153, 27, 27, 0.65); border-radius: 10; border-width: 1; border-color: #f87171; color: #fecaca; font-size: 15; font-weight: 800; font-family: inter; cursor: pointer; pointer-events: auto; }
   .end-class-button:hover { background-color: rgba(185, 28, 28, 0.9); }
-  .end-confirm-row { width: 205; height: 54; flex-direction: row; gap: 7; }
-  .end-confirm-button, .end-cancel-button { width: 99; height: 54; align-items: center; justify-content: center; border-radius: 9; border-width: 1; color: #ffffff; font-size: 10; font-weight: 800; cursor: pointer; pointer-events: auto; }
-  .end-confirm-button { background-color: #991b1b; border-color: #f87171; }
+  .end-confirm-row { position-type: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; flex-direction: column; align-items: center; justify-content: center; gap: 24; padding: 32; background-color: #020b18; border-radius: 22; pointer-events: auto; }
+  .end-confirm-title { color: #ffffff; font-size: 30; font-weight: 800; text-align: center; }
+  .end-confirm-message { color: #cbd5e1; font-size: 20; text-align: center; }
+  .end-confirm-actions { flex-direction: row; gap: 18; height: 70; }
+  .end-confirm-action { width: 220; height: 70; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 16; border-width: 2; color: #ffffff; font-size: 20; font-weight: 800; cursor: pointer; pointer-events: auto; }
+  .end-confirm-button { background-color: #991b1b; border-color: #fca5a5; }
+  .end-confirm-button:hover { background-color: #dc2626; }
+  .end-cancel-button:hover { background-color: #475569; }
   .end-cancel-button { background-color: #334155; border-color: #94a3b8; }
   .is-hidden { display: none; }
+  .confirmation-obscured { display: none; }
   .status-area { flex-grow: 1; height: 54; flex-direction: row; align-items: center; justify-content: space-between; padding-left: 18; padding-right: 18; background-color: rgba(8, 47, 73, 0.62); border-radius: 10; border-width: 1; border-color: rgba(14, 165, 233, 0.44); }
   .status-text { color: #cbd5e1; font-size: 13; font-family: inter; }
   .current-mode { color: #22d3ee; font-size: 13; font-weight: 800; font-family: inter; }
@@ -61,7 +67,8 @@
   .dashboard-root { height: 870; gap: 12; }
   .dashboard-title { font-size: 26; }
   .header-right { gap: 8; }
-  .utility-button { height: 48; padding-left: 14; padding-right: 14; flex-direction: row; gap: 8; align-items: center; justify-content: center; background-color: #10253d; border-radius: 9; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 17; cursor: pointer; }
+  .utility-button { width: 150; height: 48; flex-shrink: 0; padding-left: 14; padding-right: 14; flex-direction: row; gap: 8; align-items: center; justify-content: center; background-color: #10253d; border-radius: 9; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 17; cursor: pointer; pointer-events: auto; }
+  .utility-button:hover { background-color: #0c5475; border-color: #a5f3fc; color: #ffffff; }
   .queue-shell { height: 580; }
   .queue-body { flex-direction: column; }
   .task-scroll { width: 948; height: 510; gap: 8; }
@@ -93,14 +100,23 @@
  .card-description { display: none; }
  .arrow-icon { width: 28; height: 28; flex-shrink: 0; }
  .scroll-button { flex-direction: row; gap: 18; }
+ .dashboard-compact { width: 800; height: 440; }
+ .queue-compact { height: 170; }
+ .list-compact { width: 748; height: 100; }
+ .card-compact { width: 676; }
+ .sequence-finished { color: #67e8f9; font-size: 24; padding-top: 20; }
+ .current-task-navigation { flex-grow: 1; height: 54; flex-direction: row; gap: 12; }
+ .current-task-nav-button { flex-grow: 1; height: 54; flex-direction: row; gap: 12; align-items: center; justify-content: center; background-color: #10253d; border-radius: 10; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 19; cursor: pointer; pointer-events: auto; }
+ .current-task-nav-button:hover { background-color: #0c5475; border-color: #a5f3fc; color: #ffffff; }
 </style>
 <Panel id="instructor-dashboard-root" class="dashboard-root">
  <Panel class="dashboard-header">
-  <Panel class="title-area"><Text class="dashboard-title">Lesson Task Sequence</Text><Text class="dashboard-subtitle">CLASS ACTIVITIES</Text></Panel>
-  <Panel class="header-right"><Button id="option2-home" class="utility-button">Home</Button><Button id="option2-students" class="utility-button"><Text>Students</Text><Text id="online-student-count" class="online-number">0</Text></Button><Button id="dashboard-close-button" class="close-button">X</Button></Panel>
+  <Panel class="title-area"><Text class="dashboard-title">Lesson Task Sequence</Text><Text class="dashboard-subtitle">POINT AND PRESS TRIGGER</Text></Panel>
+  <Panel class="header-right"><Button id="option2-home" class="utility-button">All Tasks</Button><Button id="option2-students" class="utility-button"><Text>Students</Text><Text id="online-student-count" class="online-number">0</Text></Button><Button id="dashboard-close-button" class="close-button">X</Button></Panel>
  </Panel>
  <Panel id="dashboard-main-content" class="queue-shell">
   <Panel class="queue-header"><Text id="option2-progress" class="queue-title">Tasks</Text><Text id="option2-remaining" class="status-text">Select a task to open</Text></Panel>
+  <Text id="sequence-finished" class="sequence-finished is-hidden">All activities have been run. Select All Tasks to revisit them.</Text>
   <Panel id="option2-task-list" class="task-scroll"><Panel id="queue-row-0" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-0" class="step-line"></Panel><Panel id="queue-step-0" class="step-circle"><Text id="queue-task-0-number" class="task-number">1</Text></Panel><Panel id="queue-line-bottom-0" class="step-line"></Panel></Panel><Button id="queue-task-0" class="menu-card"><Text id="queue-task-0-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-0-title" class="card-title">Task</Text><Text id="queue-task-0-description" class="card-description"></Text></Panel><Panel id="queue-task-0-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
 <Panel id="queue-row-1" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-1" class="step-line"></Panel><Panel id="queue-step-1" class="step-circle"><Text id="queue-task-1-number" class="task-number">2</Text></Panel><Panel id="queue-line-bottom-1" class="step-line"></Panel></Panel><Button id="queue-task-1" class="menu-card"><Text id="queue-task-1-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-1-title" class="card-title">Task</Text><Text id="queue-task-1-description" class="card-description"></Text></Panel><Panel id="queue-task-1-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
 <Panel id="queue-row-2" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-2" class="step-line"></Panel><Panel id="queue-step-2" class="step-circle"><Text id="queue-task-2-number" class="task-number">3</Text></Panel><Panel id="queue-line-bottom-2" class="step-line"></Panel></Panel><Button id="queue-task-2" class="menu-card"><Text id="queue-task-2-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-2-title" class="card-title">Task</Text><Text id="queue-task-2-description" class="card-description"></Text></Panel><Panel id="queue-task-2-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
@@ -110,6 +126,7 @@
 </Panel>
   <Panel id="option2-roster" class="task-scroll is-hidden"><Text id="option2-student-0" class="roster-row"></Text><Text id="option2-student-1" class="roster-row"></Text><Text id="option2-student-2" class="roster-row"></Text><Text id="option2-student-3" class="roster-row"></Text><Text id="option2-student-4" class="roster-row"></Text><Text id="option2-student-5" class="roster-row"></Text><Text id="option2-student-6" class="roster-row"></Text><Text id="option2-student-7" class="roster-row"></Text><Text id="option2-student-8" class="roster-row"></Text><Text id="option2-student-9" class="roster-row"></Text></Panel>
  </Panel>
- <Panel class="navigation"><Button id="task-scroll-up" class="scroll-button"><Image class="arrow-icon" src="/images/icons/chevron-left-option2.png"/><Text>Previous</Text></Button><Button id="task-scroll-down" class="scroll-button"><Text>Next</Text><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
-  <Panel class="footer-row"><Panel class="footer-actions"><Button id="end-class-button" class="end-class-button">END CLASS</Button><Panel id="end-class-confirm-row" class="end-confirm-row is-hidden"><Button id="end-class-confirm-button" class="end-confirm-button">CONFIRM END</Button><Button id="end-class-cancel-button" class="end-cancel-button">CANCEL</Button></Panel></Panel><Panel class="status-area"><Text id="dashboard-status-text" class="status-text">Select a task or game</Text><Text id="current-mode-text" class="current-mode">Classroom Mode</Text></Panel></Panel>
+ <Panel id="task-navigation" class="navigation"><Button id="task-scroll-up" class="scroll-button"><Image class="arrow-icon" src="/images/icons/chevron-left-option2.png"/><Text>Previous</Text></Button><Button id="task-scroll-down" class="scroll-button"><Text>Next</Text><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+  <Panel class="footer-row"><Panel class="footer-actions"><Button id="end-class-button" class="end-class-button">END CLASS</Button></Panel><Panel id="current-task-navigation" class="current-task-navigation"><Button id="current-task-previous" class="current-task-nav-button">Previous</Button><Button id="current-task-next" class="current-task-nav-button">Next</Button></Panel><Panel id="dashboard-status-area" class="status-area"><Text id="dashboard-status-text" class="status-text">Select a task or game</Text><Text id="current-mode-text" class="current-mode">Classroom Mode</Text></Panel></Panel>
+ <Panel id="end-class-confirm-row" class="end-confirm-row is-hidden"><Text class="end-confirm-title">End this class?</Text><Text class="end-confirm-message">All students will leave the current session.</Text><Panel class="end-confirm-actions"><Button id="end-class-cancel-button" class="end-confirm-action end-cancel-button">KEEP CLASS OPEN</Button><Button id="end-class-confirm-button" class="end-confirm-action end-confirm-button">CONFIRM END</Button></Panel></Panel>
 </Panel>

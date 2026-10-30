@@ -1,5 +1,6 @@
 import type { QuickChallenge, Challenge2Session } from '../types.js';
-import { writeChallengeAttempt, serial } from './results.repository.js';
+import { serial } from "../utils/serial-work-queue.js";
+import { writeChallengeAttempt } from '../repositories/activity-results.repository.js';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 /** Keep a recoverable snapshot until all responses and summary rows are saved. */
 async function persist(id: string, attempts: Parameters<typeof writeChallengeAttempt>[0][]) {
@@ -24,7 +25,7 @@ export function saveChallengeResponses(challenge: QuickChallenge, reason: string
             const answer = progress?.answers.find(a => a.questionIndex === i);
             return { question_id: Number(q.id), student_answer: answer ? { choice_index: answer.selectedIndex, value: q.options[answer.selectedIndex] } : null, is_correct: answer ? answer.selectedIndex === q.correctIndex : null };
         });
-        attempts.push({ participantId: Number(participantId), activityId: challenge.activityId, startedAt: challenge.startedAt,
+        attempts.push({ participantId: Number(participantId), activityId: challenge.activityId, startedAt: progress?.attemptStartedAt ?? challenge.startedAt,
             finishedAt: progress?.finishedAt ?? Date.now(), completed: !!progress?.completed, score: answers.filter(a => a.is_correct).length, answers });
     }
     return persist(challenge.id, attempts);

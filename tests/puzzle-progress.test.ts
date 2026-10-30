@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { puzzleProgress } from '../src/castle/jigsaw/puzzleProgress.ts';
+import { puzzleProgress } from '../src/games/python-puzzle/state/puzzle-progress.ts';
 test('placing all blocks does not award success before Python passes', () => {
   const result = puzzleProgress(7, 7, 2, 1000, 12500, false);
   assert.equal(result.completedCards, 7);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Raycaster, Vector3 } from "three";
-import { createClassroomBoardFrame } from "../src/components/classroom-board-frame.ts";
+import { createClassroomBoardFrame } from "../src/classroom/classroom-board-frame.ts";
 
 for (const [width, height] of [[3.8, 4.2], [10, 5]]) {
   test(`frame leaves the entire ${width} x ${height} display clear`, () => {

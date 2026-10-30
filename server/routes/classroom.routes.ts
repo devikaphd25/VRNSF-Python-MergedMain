@@ -1,9 +1,13 @@
 import express from 'express';
-import { createSession, joinSession } from '../services/class-sessions.repository.js';
-import { instructorContent } from '../services/content.repository.js';
+import { createSession, joinSession } from '../services/classroom-sessions.service.js';
+import { instructorContent, courseOutline } from '../repositories/course-content.repository.js';
 const router = express.Router();
+router.post('/class-sessions/options', async (req, res) => {
+    try { res.json(await courseOutline(req.body?.accessCode)); }
+    catch (e) { res.status(400).json({ message: e instanceof Error ? e.message : 'Could not load course' }); }
+});
 router.post('/class-sessions', async (req, res) => { try {
-    res.json(await createSession(Number(req.body?.instructorId), req.body?.accessCode));
+    res.json(await createSession(Number(req.body?.instructorId), req.body?.accessCode, req.body?.weekId, req.body?.dayId));
 }
 catch (e) {
     res.status(400).json({ message: e instanceof Error ? e.message : 'Could not create class' });

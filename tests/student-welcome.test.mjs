@@ -6,7 +6,7 @@ import ts from 'typescript';
 function setup({blocked=false}={}){
  const handlers={}, gestures={}, storage=new Map(), audio=[];
  class Audio {constructor(src){this.src=src;this.played=0;this.paused=false;audio.push(this);} async play(){this.played++;if(blocked)throw new Error('NotAllowedError');} pause(){this.paused=true;}}
- const code=ts.transpile(readFileSync('src/network/student-welcome.ts','utf8').replace("import { socket } from './socket';",''),{target:ts.ScriptTarget.ES2022});
+ const code=ts.transpile(readFileSync('src/audio/student-welcome.ts','utf8').replace("import { socket } from '../network/socket-client';",''),{target:ts.ScriptTarget.ES2022});
  vm.runInNewContext(code,{socket:{on:(n,f)=>handlers[n]=f},window:{addEventListener:(n,f)=>gestures[n]=f},sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},Audio});
  return {handlers,audio,gestures,storage,allowAudio:()=>{blocked=false;}};
 }

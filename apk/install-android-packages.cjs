@@ -1,0 +1,12 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const config = JSON.parse(fs.readFileSync('apk/tooling/bubblewrap-config.json','utf8'));
+const javaHome = path.join(config.jdkPath,'Contents/Home');
+const env = {...process.env,JAVA_HOME:javaHome,ANDROID_HOME:config.androidSdkPath};
+const manager = [path.join(config.androidSdkPath,'tools/bin/sdkmanager'),path.join(config.androidSdkPath,'bin/sdkmanager')].find(file=>fs.existsSync(file));
+if(!manager)throw Error('Android sdkmanager was not installed');
+const licenses=execFileSync(manager,['--licenses',`--sdk_root=${config.androidSdkPath}`],{env,input:'y\n'.repeat(100),encoding:'utf8',maxBuffer:10*1024*1024});
+console.log(licenses.slice(-2000));
+execFileSync(manager,['--install','platform-tools','platforms;android-32','build-tools;34.0.0','build-tools;35.0.0',`--sdk_root=${config.androidSdkPath}`],{env,input:'y\n'.repeat(100),stdio:['pipe','inherit','inherit'],maxBuffer:10*1024*1024});
+console.log('Android platform and signing/build tools are ready.');

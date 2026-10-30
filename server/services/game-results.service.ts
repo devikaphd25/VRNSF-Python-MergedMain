@@ -1,5 +1,6 @@
-import { supabaseAdmin as db } from './supabase-admin.service.js';
-import { ensureResult, serial } from './results.repository.js';
+import { supabaseAdmin as db } from '../database/supabase-client.js';
+import { serial } from "../utils/serial-work-queue.js";
+import { ensureResult } from '../repositories/activity-results.repository.js';
 import type { GameResultInput } from '../types.js';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 type Run = {

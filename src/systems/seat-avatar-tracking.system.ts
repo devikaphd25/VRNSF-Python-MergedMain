@@ -1,10 +1,13 @@
-import { readAvatarInputPose } from "../components/instructor/avatar-input-pose";
-import { createFirstPersonAvatar } from "../components/instructor/first-person-avatar";
-import { SeatAvatarPoseDriver } from "../components/instructor/seat-avatar-pose";
-import { AssetManager, createSystem } from "@iwsdk/core";
+import { getLocalSeatAnchor, seatedAvatarMetrics } from "../avatars/seated-avatar-layout";
+import { readAvatarInputPose } from "../avatars/avatar-input-pose";
+import { createFirstPersonAvatar } from "../avatars/first-person-avatar";
+import { SeatAvatarPoseDriver } from "../avatars/seat-avatar-pose";
+import { createSystem } from "@iwsdk/core";
 import { Quaternion, Vector3, Euler, Object3D } from "three";
-import { socket } from "../network/socket";
-import { applySeatAvatarPose, updateSeatAvatarPoses, setSeatAvatarHandRaised } from "../components/instructor/seat-markers";
+import { socket, getLocalAvatarId } from "../network/socket-client";
+import { VR_AVATARS } from "../../shared/vr-avatars";
+import { loadAvatarModel } from "../avatars/avatar-loader";
+import { applySeatAvatarPose, updateSeatAvatarPoses, setSeatAvatarHandRaised } from "../classroom/seat-markers";
 import { sanitizeSeatAvatarPose, type SeatAvatarPose, type AvatarRotation } from "../../shared/seat-avatar-tracking";
 
 /**
@@ -18,6 +21,14 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
   // Separate arms-only model seen by YOU; classmates use the seated model instead.
   private ownAvatar?: Object3D;
   private ownDriver?: SeatAvatarPoseDriver;
+  private ownAvatarId?: string;
+  private ownAvatarScale = 1;
+  private seatedEyeHeight?: number;
+  private referenceEyeHeight?: number;
+  private calibratedSeat?: Vector3;
+  private ownAvatarGeneration = 0;
+  private ownAvatarLoading = false;
+  private avatarRetryAt = 0;
   // Original head location inside the GLB, used to align its arms with your eyes.
   private ownHeadOrigin = new Vector3();
   private ownRaised = false;
@@ -59,6 +70,7 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
     this.handSeenAt = { left: 0, right: 0 };
     this.wasTracking = false;
     this.bodyYaw = undefined;
+    this.referenceEyeHeight = undefined;
   };
   update(): void {
     const now = performance.now();
@@ -92,6 +104,19 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
       .multiply(this.modelAxes.clone().invert()).toArray() as AvatarRotation;
     const packet: SeatAvatarPose = { head: mapped(head), left: null, right: null };
     const eye = viewer.transform.position;
+    const seatAnchor = getLocalSeatAnchor();
+    const inClassroom = !state.isDisplayRoomOpen && !state.isPresentationOpen && !state.isPresentationTransitionInProgress;
+    if (inClassroom && seatAnchor && this.seatedEyeHeight !== undefined) {
+      if (!this.calibratedSeat?.equals(seatAnchor)) {
+        this.calibratedSeat = seatAnchor.clone();
+        this.referenceEyeHeight = undefined;
+      }
+      // Calibrate the XR reference once, retaining subsequent physical leaning.
+      this.referenceEyeHeight ??= eye.y;
+      const rig = (this.player as any).object3D ?? this.player;
+      rig.position.y = seatAnchor.y + this.seatedEyeHeight - this.referenceEyeHeight;
+      rig.updateMatrixWorld(true);
+    }
     for (const source of session.inputSources) {
       if (source.handedness !== "left" && source.handedness !== "right") continue;
       const grip = readAvatarInputPose(frame, source, reference);
@@ -110,19 +135,42 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
         packet[side] = this.lastHands[side];
       }
     }
-    // Create our arms once from the loaded asset; never reload the GLB every frame.
-    if (!this.ownAvatar) {
-      const asset = AssetManager.getGLTF("studentSeatAlien");
-      if (asset) {
-        this.ownAvatar = createFirstPersonAvatar(asset.scene);
+    // Use the same assigned model as classmates; never show a legacy placeholder.
+    const avatarId = getLocalAvatarId();
+    if (avatarId !== this.ownAvatarId) {
+      this.clearOwnAvatar();
+      this.seatedEyeHeight = undefined;
+      this.ownAvatarId = avatarId;
+      this.ownAvatarGeneration++;
+      this.ownAvatarLoading = false;
+      this.avatarRetryAt = 0;
+    }
+    const selected = VR_AVATARS.find(avatar => avatar.id === avatarId);
+    if (!this.ownAvatar && selected && !this.ownAvatarLoading && now >= this.avatarRetryAt) {
+      const generation = this.ownAvatarGeneration;
+      this.ownAvatarLoading = true;
+      loadAvatarModel(selected.url).then(source => {
+        if (generation !== this.ownAvatarGeneration) return;
+        const metrics = seatedAvatarMetrics(source);
+        this.ownAvatarScale = metrics.worldScale;
+        this.seatedEyeHeight = metrics.eyeHeight;
+        this.ownAvatar = createFirstPersonAvatar(source);
+        this.ownAvatar.visible = false;
         this.ownAvatar.updateMatrixWorld(true);
-        const bone = this.ownAvatar.getObjectByName("Head");
+        this.ownHeadOrigin.set(0, 0, 0);
+        const bone = this.ownAvatar.getObjectByName("AvatarEyeAnchor") ?? this.ownAvatar.getObjectByName("Head");
         if (bone) this.ownHeadOrigin.copy(this.ownAvatar.worldToLocal(bone.getWorldPosition(new Vector3())));
-        // First-person size. Paired with the 0.8 hand offset in seat-avatar-pose.ts.
-        this.ownAvatar.scale.setScalar(1.25);
+        // Use the same normalized size as the seated avatar.
+        this.ownAvatar.scale.setScalar(this.ownAvatarScale);
         this.world.scene.add(this.ownAvatar);
         this.ownDriver = new SeatAvatarPoseDriver(this.ownAvatar);
-      }
+      }).catch(error => {
+        if (generation !== this.ownAvatarGeneration) return;
+        this.avatarRetryAt = performance.now() + 5000;
+        console.warn("[AvatarTracking] Assigned avatar download failed", error);
+      }).finally(() => {
+        if (generation === this.ownAvatarGeneration) this.ownAvatarLoading = false;
+      });
     }
     if (this.ownAvatar && this.ownDriver) {
       // Include the player rig transform (seat/teleport) when positioning local arms.
@@ -134,7 +182,7 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
       rotation.multiply(this.bodyYaw).multiply(this.modelAxes);
       this.ownAvatar.quaternion.copy(rotation);
       // Put the model's original head point at the tracked eye position.
-      this.ownAvatar.position.copy(position).sub(this.ownHeadOrigin.clone().multiplyScalar(1.25).applyQuaternion(rotation));
+      this.ownAvatar.position.copy(position).sub(this.ownHeadOrigin.clone().multiplyScalar(this.ownAvatarScale).applyQuaternion(rotation));
       this.ownAvatar.visible = Boolean(packet.left || packet.right || this.ownRaised);
       this.ownDriver.setRaised(this.ownRaised);
       this.ownDriver.setPose(packet);
@@ -147,13 +195,19 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
     }
     this.wasTracking = true;
   }
-  // Remove our cloned geometry and listeners when this system is destroyed.
-  destroy(): void {
-    this.resetTracking();
+  private clearOwnAvatar(): void {
     this.ownAvatar?.removeFromParent();
     this.ownAvatar?.traverse(object => {
       if ((object as any).isSkinnedMesh) (object as any).geometry.dispose();
     });
+    this.ownAvatar = undefined;
+    this.ownDriver = undefined;
+  }
+  // Invalidate pending downloads before removing our cloned geometry/listeners.
+  destroy(): void {
+    this.resetTracking();
+    this.ownAvatarGeneration++;
+    this.clearOwnAvatar();
     socket.off("seatAvatarPose", this.receivePose);
     socket.off("raiseHandUpdated", this.receiveHand);
     socket.off("disconnect", this.resetTracking);

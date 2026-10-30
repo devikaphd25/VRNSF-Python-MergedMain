@@ -10,7 +10,7 @@ import {io} from 'socket.io-client';
 const db=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false},realtime:{transport:WebSocket}});
 const code=`migration-test-${Date.now()}`,port=3012,base=`http://127.0.0.1:${port}`;
 const accessCode=String(randomInt(100000,1000000));
-let course,week,server,log='',users=[],sockets=[],session;
+let course,week,day,server,log='',users=[],sockets=[],session;
 const value=async q=>{const {data,error}=await q;if(error)throw Error(error.message);return data;};
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function poll(fn){for(let i=0;i<80;i++){const v=await fn();if(v)return v;await pause(250);}throw Error('Timed out waiting for database result');}
@@ -21,15 +21,16 @@ async function connect(user,join){const sock=io(base,{transports:['websocket'],a
 try{
  course=await value(db.from('courses').insert({course_code:code,title:'Temporary integration test',access_code:accessCode}).select().single());
  week=await value(db.from('weeks').insert({course_id:course.id,week_number:1,title:'Test Week'}).select().single());
+ day=await value(db.from('days').insert({week_id:week.id,day_number:1,title:'Test Day'}).select().single());
  const source=await value(db.from('activities').select('*').eq('week_id',1).order('activity_order'));
- const activities=[];for(const a of source){const copy=await value(db.from('activities').insert({week_id:week.id,title:a.title,activity_type:a.activity_type,activity_order:a.activity_order,file_path:a.file_path,activity_key:a.activity_key}).select().single());activities.push(copy);if(a.activity_type==='challenge'){const qs=await value(db.from('challenge_questions').select('*').eq('activity_id',a.id));await value(db.from('challenge_questions').insert(qs.map(({id,activity_id,...q})=>({...q,activity_id:copy.id}))));}}
+ const activities=[];for(const a of source){const copy=await value(db.from('activities').insert({week_id:week.id,day_id:day.id,title:a.title,activity_type:a.activity_type,activity_order:a.activity_order,file_path:a.file_path,activity_key:a.activity_key}).select().single());activities.push(copy);if(a.activity_type==='challenge'){const qs=await value(db.from('challenge_questions').select('*').eq('activity_id',a.id));await value(db.from('challenge_questions').insert(qs.map(({id,activity_id,...q})=>({...q,activity_id:copy.id}))));}}
  server=spawn(process.execPath,['--import','tsx','server.ts'],{env:{...process.env,PORT:String(port)},stdio:['ignore','pipe','pipe']});
  server.stdout.on('data',x=>log+=x);server.stderr.on('data',x=>log+=x);
  await poll(async()=>{try{return (await fetch(base+'/api/instructor-content')).status===400;}catch{return false;}});
  const instructor=await device('instructor',1);
  const invalid=await fetch(base+'/api/class-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instructorId:instructor.id,accessCode:'wrong'})});
  assert.equal(invalid.status,400);
- session=await post('class-sessions',{instructorId:instructor.id,accessCode});
+ session=await post('class-sessions',{instructorId:instructor.id,accessCode,weekId:week.id,dayId:day.id});
  assert.equal(session.courseCode,code);
  const content=await (await fetch(base+'/api/instructor-content?sessionId='+session.room_id)).json();assert.equal(content.activities.length,19);assert.equal(content.videos.length,11);
  assert.equal(content.courseCode,code);
@@ -43,13 +44,47 @@ try{
  console.log('PASS join: concurrent unique seats, persistent device and participant');
  const tf=activities.find(a=>a.activity_key==='true_false');
  const qs=await value(db.from('challenge_questions').select('*').eq('activity_id',tf.id).order('question_order'));
- let started=event(pupil,'quickChallengeStarted');teacher.emit('instructorQuickChallenge',{activityId:tf.id,challengeType:'five-parts'});const launch=await started;assert.equal(launch.questions.length,5);
+ let started=event(pupil,'quickChallengeStarted');teacher.emit('instructorQuickChallenge',{activityId:tf.id,challengeType:'TrueAndFalse'});const launch=await started;assert.equal(launch.questions.length,5);
+ // Live drafts must update the instructor before submit, even when Q3 is answered first.
+ const draft=async(socket,answers)=>{const update=event(teacher,'quickChallengeStudentAnswered');socket.emit('quickChallengeDraft',{quizId:launch.id,answers});return await update;};
+ let live=await draft(pupil,[null,null,qs[2].correct_answer.choice_index,null,null]);
+ assert.equal(live.completed,false);assert.equal(live.answeredCount,1);
+ assert.deepEqual(live.questionStats.map(q=>[q.correctCount,q.wrongCount]),[[0,0],[0,0],[1,0],[0,0],[0,0]]);
+ live=await draft(pupil,[null,null,1-qs[2].correct_answer.choice_index,null,null]);
+ assert.equal(live.questionStats[2].correctCount,0);assert.equal(live.questionStats[2].wrongCount,1);
+ live=await draft(pupil2,[null,null,qs[2].correct_answer.choice_index,null,null]);
+ assert.equal(live.questionStats[2].accuracy,50);
+ assert.equal(live.questionStats[2].correctCount,1);assert.equal(live.questionStats[2].wrongCount,1);
+ live=await draft(pupil,[null,null,null,null,null]);
+ assert.equal(live.answeredCount,0);assert.equal(live.questionStats[2].wrongCount,0);
+ assert.equal((await value(db.from('challenge_results').select('id').eq('activity_id',tf.id))).length,0);
+ console.log('PASS live selections: skipped questions, changed answers, two students, cleared answers, no premature result save');
  pupil.emit('quickChallengeAnswer',{quizId:launch.id,answers:qs.map(q=>q.correct_answer.choice_index)});
  await poll(async()=>{const r=await value(db.from('challenge_results').select('*').eq('activity_id',tf.id).eq('participant_id',join.participant_id));return r[0]?.status==='completed';});
- teacher.emit('stopQuickChallenge',{quizId:launch.id});
- await poll(async()=>{const r=await value(db.from('challenge_results').select('*').eq('activity_id',tf.id));return r.length===2&&r.some(r=>r.status==='stopped');});
- let results=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',tf.id));assert.equal(results.length,2);assert.equal(results.find(r=>r.status==='completed').score,5);assert.equal(results.find(r=>r.status==='stopped').challenge_responses.filter(a=>a.student_answer===null).length,5);
- console.log('PASS Challenge 1: completion + stop, unanswered rows, no duplicate attempts');
+ // Finishing everyone must keep Challenge 1 available for rocket assembly/retry.
+ let endedEarly=false;const onEnded=()=>endedEarly=true;pupil.on('quickChallengeEnded',onEnded);
+ const stats=event(teacher,'quickChallengeStudentAnswered');
+ pupil2.emit('quickChallengeAnswer',{quizId:launch.id,answers:qs.map(q=>1-q.correct_answer.choice_index)});
+ assert.ok((await stats).questionStats.every(q=>q.correctCount===1&&q.wrongCount===1&&q.accuracy===50));
+ await pause(150);assert.equal(endedEarly,false);
+ const retry=await new Promise(resolve=>pupil.emit('quickChallengeRetry',{quizId:launch.id},resolve));assert.equal(retry.success,true);
+ // A delayed duplicate of attempt 1 cannot answer the newly opened attempt.
+ pupil.emit('quickChallengeAnswer',{quizId:launch.id,answers:qs.map(q=>q.correct_answer.choice_index)});
+ const answer=event(pupil,'quickChallengeResult');
+ pupil.emit('quickChallengeAnswer',{quizId:launch.id,attemptStartedAt:retry.attemptStartedAt,answers:qs.map(q=>1-q.correct_answer.choice_index)});
+ assert.equal((await answer).correctCount,0);
+ await poll(async()=>{const r=await value(db.from('challenge_results').select('*').eq('activity_id',tf.id).eq('participant_id',join.participant_id));return r.length===2&&r.every(x=>x.status==='completed');});
+ const retry2=await new Promise(resolve=>pupil.emit('quickChallengeRetry',{quizId:launch.id},resolve));assert.equal(retry2.success,true);
+ pupil.emit('quickChallengeDraft',{quizId:launch.id,attemptStartedAt:retry2.attemptStartedAt,answers:[qs[0].correct_answer.choice_index,null,null,null,null]});
+ await pause(100);teacher.emit('stopQuickChallenge',{quizId:launch.id});
+ await poll(async()=>{const r=await value(db.from('challenge_results').select('*').eq('activity_id',tf.id));return r.length===4&&r.some(r=>r.status==='stopped');});
+ const results=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',tf.id));
+ const own=results.filter(r=>Number(r.participant_id)===Number(join.participant_id)).sort((a,b)=>a.attempt_number-b.attempt_number);
+ assert.deepEqual(own.map(r=>r.attempt_number),[1,2,3]);assert.deepEqual(own.map(r=>r.score),[5,0,1]);
+ assert.deepEqual(own.map(r=>r.status),['completed','completed','stopped']);
+ assert.equal(own[2].challenge_responses.filter(a=>a.student_answer===null).length,4);
+ pupil.off('quickChallengeEnded',onEnded);
+ console.log('PASS Challenge 1: database questions, live accuracy, rocket phase, separate retries, stale-answer rejection, stop saves drafts');
  const multi=activities.find(a=>a.activity_key==='multiple_choice');
  started=event(pupil,'quickChallengeStarted');teacher.emit('instructorQuickChallenge',{activityId:multi.id,challengeType:'database-series'});const m=await started;assert.equal(m.questions.length,2);
  const late=await device('student',4),lateJoin=await post('class-sessions/join',{deviceId:`${code}-4`}),lateSock=await connect(late,lateJoin);
@@ -87,7 +122,9 @@ finally{
   const sessions=await value(db.from('class_sessions').select('id').eq('week_id',week.id));if(sessions.length)await value(db.from('participants').delete().in('session_id',sessions.map(r=>r.id)));
   await value(db.from('class_sessions').delete().eq('week_id',week.id));
   if(ids.length)await value(db.from('challenge_questions').delete().in('activity_id',ids));
-  await value(db.from('activities').delete().eq('week_id',week.id));await value(db.from('weeks').delete().eq('id',week.id));
+  await value(db.from('activities').delete().eq('week_id',week.id));
+  if(day)await value(db.from('days').delete().eq('id',day.id));
+  await value(db.from('weeks').delete().eq('id',week.id));
  }
  if(users.length)await value(db.from('users').delete().in('id',users));
  if(course)await value(db.from('courses').delete().eq('id',course.id));

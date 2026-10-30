@@ -4,7 +4,7 @@
  * Goal: describe users, rooms, sockets, challenges, lab progress, and saved
  * results so server modules exchange predictable objects. These declarations
  * do not execute logic or store records; Supabase and the in-memory store do.
- * Used by: server.ts, repositories, services, socket handlers, and LabSession.
+ * Used by: server.ts, repositories, services, socket handlers, and LabAttemptState.
  */
 import type { Socket } from "socket.io";
 
@@ -30,6 +30,7 @@ export interface AppUser {
 }
 
 export interface ClassroomStudent {
+  avatarId?: string;
   id?: string;
   userId?: number;
   name: string;
@@ -79,9 +80,12 @@ export interface QuickChallengeQuestion {
   prompt: string;
   options: string[];
   correctIndex: number;
+  explanation?: string;
 }
 
 export interface QuickChallengeStudentProgress {
+  /** A deliberate retry gets its own persisted attempt; the class timer stays shared. */
+  attemptStartedAt?: number;
   answers: Array<{
     questionIndex: number;
     selectedIndex: number;
@@ -91,6 +95,7 @@ export interface QuickChallengeStudentProgress {
   completed: boolean;
   finishedAt?: number;
   totalTimeSeconds?: number;
+  attemptCount?: number;
 }
 
 export interface QuickChallenge {

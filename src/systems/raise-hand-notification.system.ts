@@ -15,8 +15,8 @@ import {
   Entity
 } from "@iwsdk/core";
 import * as THREE from "three";
-import { socket } from "../network/socket";
-import { PanelSystemComponent } from "../panel";
+import { socket } from "../network/socket-client";
+import { ClassroomPanelScene } from "../components/classroom-panel-scene.component";
 
 interface RaiseHandNotification {
   playerId: string;
@@ -32,7 +32,7 @@ export class RaiseHandNotificationSystem extends createSystem({
     required: [
       PanelUI,
       PanelDocument,
-      PanelSystemComponent
+      ClassroomPanelScene
     ],
 
     where: [

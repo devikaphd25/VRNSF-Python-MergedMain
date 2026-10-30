@@ -82,3 +82,11 @@ data/pending-game-results/
 
 # Prevent another complete project copy from being uploaded inside this repository.
 /VR-learning-main/
+
+# Local APK toolchains, signing keys, and generated Android builds
+apk/tooling/
+apk/signing/
+apk/android/
+apk/*.apk
+apk/runtime.json
+apk/*.log

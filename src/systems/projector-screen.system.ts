@@ -11,9 +11,9 @@ import {
 } from "@iwsdk/core";
 import * as THREE from "three";
 import {ProjectorScreenComponent} from "../components/projector-screen.component";
-import { CLASSROOM_BOARD_CONTENT } from "../config/classroom-board-content";
-import { CHALLENGE_2_ITEMS } from "../config/challenge-2-content";
-import { socket } from "../network/socket";
+import { CLASSROOM_BOARD_CONTENT } from "../classroom/board-content";
+import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-catalog";
+import { socket } from "../network/socket-client";
 
 type BoardChallengeResults = {
     rankings?: Array<{

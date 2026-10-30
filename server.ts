@@ -1,6 +1,8 @@
+import { saveAppGameResult, getRecentAppGameResults } from "./server/services/game-results.service.js";
+import { pickRandomAvatar } from "./shared/vr-avatars.js";
 import {bindGameRun,recordGameResponse} from "./server/services/game-results.service.js";
 import classroomRoutes from "./server/routes/classroom.routes.js";
-import {activityForSession, selectSessionActivity} from "./server/services/content.repository.js";
+import {activityForSession, selectSessionActivity} from "./server/repositories/course-content.repository.js";
 import { saveChallengeResponses, saveDragDropResponses } from "./server/services/challenge-results.service.js";
 import { sanitizeSeatAvatarPose } from "./shared/seat-avatar-tracking.js";
 import { RoomActivityStore } from "./server/state/room-activity.js";
@@ -34,36 +36,33 @@ import {
   labSessions,
   returningStudents,
   connectedUsers,
-} from "./server/state/store.js";
+} from "./server/state/classroom-state.js";
 
 import {
-  LabSession,
-} from "./server/state/LabSession.js";
+  LabAttemptState,
+} from "./server/state/lab-attempt.js";
 import {
   getStudentList,
   findStudent,
-} from "./server/services/student.service.js";
+} from "./server/services/connected-students.service.js";
 
 import {
   broadcastStudentList,
-} from "./server/services/broadcast.service.js";
-import loginRoutes from "./server/routes/login.routes.js";
-import { supabaseAdmin } from "./server/services/supabase-admin.service.js";
+} from "./server/services/student-list-broadcast.service.js";
+import loginRoutes from "./server/routes/device-registration.routes.js";
+import { supabaseAdmin } from "./server/database/supabase-client.js";
 import {
   getAppUserById,
   getAppUserByUsername,
   getAppUserCount,
-  getRecentAppGameResults,
   initializeAppDataRepository,
-  saveAppGameResult,
   updateAppUserLocation,
-} from "./server/services/app-data.repository.js";
+} from "./server/repositories/users.repository.js";
+import { TRUE_FALSE_MAX_ATTEMPTS } from "./shared/true-false-settings.js";
 import {
-  FIVE_PARTS_CHALLENGE_TYPE,
-  FIVE_PARTS_DURATION_SECONDS,
-  FIVE_PARTS_TRUE_FALSE_QUESTIONS,
-  TRUE_FALSE_OPTIONS,
-} from "./server/data/five-parts-challenge.js";
+  TRUE_FALSE_CHALLENGE_TYPE,
+  DEFAULT_CHALLENGE_DURATION_SECONDS,
+} from "./server/config/true-false-settings.js";
 
 // Separates saved results from different launches of the same lab. Historical
 // rows remain in Supabase, but the live monitor reads only this run.
@@ -222,6 +221,29 @@ function getRoomClassroomStudents(roomId: string) {
   });
 }
 
+function getFivePartsQuestionStats(challenge: QuickChallenge) {
+  const questions = challenge.questions ?? [];
+  const progress = Array.from(challenge.studentProgress.values());
+  return questions.map((_question, questionIndex) => {
+    // Count each student's latest selection, including unfinished attempts.
+    // Drafts can skip questions, so their array position is not the question index.
+    const answers = progress.flatMap(student =>
+      student.answers.filter(answer => answer.questionIndex === questionIndex)
+    );
+    const correctCount = answers.filter(answer => answer.correct).length;
+    const wrongCount = answers.filter(answer => !answer.correct).length;
+    const answered = correctCount + wrongCount;
+    return {
+      questionIndex,
+      label: `Q${questionIndex + 1}`,
+      prompt: questions[questionIndex]?.prompt ?? `Question ${questionIndex + 1}`,
+      correctCount,
+      wrongCount,
+      accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
+    };
+  });
+}
+
 function getFivePartsScore(progress: QuickChallengeStudentProgress) {
   return progress.answers.filter(answer => answer.correct).length;
 }
@@ -231,7 +253,7 @@ function getQuickChallengeWinner(challenge: QuickChallenge): {
   name: string | null;
   timeSeconds: number | null;
 } {
-  if ((challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
     const ranked = Array.from(challenge.studentProgress.entries())
       .filter(([, progress]) => progress.completed)
       .sort(([, left], [, right]) => {
@@ -293,7 +315,7 @@ function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeRev
     Math.round((Date.now() - challenge.startedAt) / 1000)
   );
 
-  if ((challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
     const progresses = Array.from(challenge.studentProgress.values());
     const completed = progresses.filter(progress => progress.completed);
     const correctCount = completed.reduce(
@@ -354,9 +376,10 @@ function notifyInstructorStudentProgress(
     name: student.name,
     answeredCount,
     correctCount,
-    totalQuestions: challenge.totalQuestions ?? FIVE_PARTS_TRUE_FALSE_QUESTIONS.length,
+    totalQuestions: challenge.totalQuestions ?? challenge.questions?.length ?? 0,
     completed: Boolean(progress?.completed),
     responseTimeSeconds: progress?.totalTimeSeconds,
+    questionStats: getFivePartsQuestionStats(challenge),
     ...extra,
   };
 
@@ -372,6 +395,10 @@ function notifyInstructorStudentProgress(
 }
 
 function finishFivePartsIfEveryoneDone(challenge: QuickChallenge): void {
+  if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE) {
+    publishQuickChallengeReview(challenge);
+    return;
+  }
   const roomStudents = getRoomClassroomStudents(challenge.roomId);
   if (roomStudents.length === 0) return;
   const everyoneDone = roomStudents.every(([socketId]) =>
@@ -595,6 +622,13 @@ app.use(express.json());
 app.use("/api", loginRoutes);
 
 app.use("/api", classroomRoutes);
+
+// Optional production web host for the packaged Quest app. Only dist/ is served.
+if (process.env.SERVE_WEB_APP === "true") {
+  const webRoot = path.resolve(process.cwd(), "dist");
+  app.use("/.well-known", express.static(path.join(webRoot, ".well-known")));
+  app.use(express.static(webRoot));
+}
 io.on("connection", (socket: ClassroomSocket) => {
   console.log("Connected:", socket.id);
 
@@ -705,51 +739,31 @@ io.on("connection", (socket: ClassroomSocket) => {
       emitQuickChallengeEnded(previous,{stoppedByInstructor:true});
     }
 
-    const activity=await activityForSession(roomId,data.challengeType==='five-parts'?'true_false':'multiple_choice',Number(data.activityId)||undefined);
+    const activity=await activityForSession(roomId,data.challengeType===TRUE_FALSE_CHALLENGE_TYPE?'true_false':'multiple_choice',Number(data.activityId)||undefined);
     if(activity.activity_type!=='challenge'||!['true_false','multiple_choice'].includes(activity.activity_key))throw Error('Select a question challenge');
     const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
     if(error)throw error;
     if(!rows?.length||rows.some(q=>!Array.isArray(q.options)||q.options.length<2||q.options.length>4||!Number.isInteger(q.correct_answer?.choice_index)||q.correct_answer.choice_index<0||q.correct_answer.choice_index>=q.options.length))throw Error('Challenge questions are missing or invalid');
-    const isTrueFalse=false, isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false';
-    const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||300));
+    const isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false';
+    const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||DEFAULT_CHALLENGE_DURATION_SECONDS));
     const cycleLabel=activity.title;
     const fivePartsQuestions=rows.map(q=>({id:String(q.id),prompt:q.question_text,options:q.options as string[],correctIndex:q.correct_answer.choice_index as number}));
     const fivePartsQuestion=fivePartsQuestions[0];
-    const databaseChoices:string[]|null=null;
-    const databaseQuestion:any=null;
     await selectSessionActivity(roomId,activity.id);
     const challenge: QuickChallenge = {
       activityId: activity.id,
       id: `quick-${roomId}-${Date.now()}`,
       roomId,
-      question: isFiveParts
-        ? fivePartsQuestion!.prompt
-        : isTrueFalse
-          ? "True or False: In Python, True is a Boolean value."
-          : databaseQuestion?.prompt ?? "Which part of a computer runs the instructions — the “brain”?",
-      options: isFiveParts ? [...fivePartsQuestion!.options] : isTrueFalse
-        ? [...TRUE_FALSE_OPTIONS]
-        : databaseChoices?.length === 4
-          ? databaseChoices
-          : ["CPU", "Main memory (RAM)", "Secondary storage", "Input devices"],
-      correctIndex: isFiveParts
-        ? fivePartsQuestion!.correctIndex
-        : isTrueFalse
-          ? 0
-          : databaseChoices?.length === 4
-            ? Number(databaseQuestion?.correct_index) || 0
-            : 0,
+      question: fivePartsQuestion!.prompt,
+      options: [...fivePartsQuestion!.options],
+      correctIndex: fivePartsQuestion!.correctIndex,
       durationSeconds,
       startedAt: Date.now(),
       cycleLabel,
-      challengeType: isFiveParts
-        ? (isDatabaseSeries ? "database-series" : FIVE_PARTS_CHALLENGE_TYPE)
-        : isTrueFalse
-          ? "true-false"
-          : undefined,
-      questionIndex: isFiveParts ? 0 : undefined,
-      totalQuestions: isFiveParts ? fivePartsQuestions.length : undefined,
-      questions: isFiveParts ? fivePartsQuestions : undefined,
+      challengeType: isDatabaseSeries ? "database-series" : TRUE_FALSE_CHALLENGE_TYPE,
+      questionIndex: 0,
+      totalQuestions: fivePartsQuestions.length,
+      questions: fivePartsQuestions,
       answers: new Map(),
       responseParticipants: new Map(getRoomClassroomStudents(roomId).flatMap(([id]) => {
         const participant = io.sockets.sockets.get(id)?.data.participantId;
@@ -805,6 +819,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       ...studentPayload,
       studentCount: roomStudents.length,
       students: roomStudents,
+      questionStats: isFiveParts ? getFivePartsQuestionStats(challenge) : undefined,
     });
 
     challenge.timeout = setTimeout(() => {
@@ -819,15 +834,57 @@ io.on("connection", (socket: ClassroomSocket) => {
 
   });
 
+  // A retry is explicit and acknowledged only after the previous result is durable.
+  let challengeRetryPending = false;
+  socket.on("quickChallengeRetry", async (data = {}, acknowledge) => {
+    const reply = typeof acknowledge === "function" ? acknowledge : () => {};
+    const roomId = String(socket.data.roomId ?? "");
+    const challenge = activeQuickChallenges.get(roomId);
+    const progress = challenge?.studentProgress.get(socket.id);
+    if (challengeRetryPending || !challenge || challenge.id !== data.quizId ||
+        challenge.challengeType !== TRUE_FALSE_CHALLENGE_TYPE || socket.data.role !== "student" ||
+        !students[socket.id] || !progress?.completed ||
+        Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+      reply({ success: false, message: "This challenge is no longer available for retry." });
+      return;
+    }
+    if ((progress.attemptCount ?? 0) >= TRUE_FALSE_MAX_ATTEMPTS) {
+      reply({ success: false, message: "You have used all three attempts.", attemptCount: progress.attemptCount });
+      return;
+    }
+    challengeRetryPending = true;
+    try {
+      await saveChallengeResponses(challenge, "completed");
+      if (activeQuickChallenges.get(roomId) !== challenge || !socket.connected ||
+          Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+        reply({ success: false, message: "The challenge has ended." });
+        return;
+      }
+      const attemptStartedAt = Math.max(Date.now(), (progress.attemptStartedAt ?? challenge.startedAt) + 1);
+      challenge.studentProgress.set(socket.id, { answers: [], completed: false, attemptStartedAt, attemptCount: progress.attemptCount ?? 0 });
+      notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
+      reply({ success: true, attemptStartedAt, attemptCount: progress.attemptCount ?? 0 });
+    } catch (error) {
+      console.error("[Challenge retry] Could not preserve completed attempt", error);
+      reply({ success: false, message: "Could not save the previous attempt. Please try again." });
+    } finally {
+      challengeRetryPending = false;
+    }
+  });
+
   socket.on("quickChallengeDraft", (data = {}) => {
     const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ""));
-    if (!challenge || challenge.id !== data.quizId || !["five-parts", "database-series"].includes(challenge.challengeType ?? "") ||
+    if (!challenge || challenge.id !== data.quizId || ![TRUE_FALSE_CHALLENGE_TYPE, "database-series"].includes(challenge.challengeType ?? "") ||
       socket.data.role !== "student" || !students[socket.id] || challenge.studentProgress.get(socket.id)?.completed) return;
+    const progress = challenge.studentProgress.get(socket.id);
+    if (progress?.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt) return;
     if (!Array.isArray(data.answers) || data.answers.length > (challenge.questions?.length ?? 0)) return;
     const answers = data.answers.flatMap((value, questionIndex) => Number.isInteger(value) && value >= 0 && value < (challenge.questions?.[questionIndex]?.options.length ?? 0)
       ? [{ questionIndex, selectedIndex: value, correct: value === challenge.questions![questionIndex].correctIndex, answeredAt: Date.now() }] : []);
-    challenge.studentProgress.set(socket.id, { answers, completed: false });
+    challenge.studentProgress.set(socket.id, { ...progress, answers, completed: false });
     if(socket.data.participantId) challenge.responseParticipants?.set(socket.id,String(socket.data.participantId));
+    // Refresh the instructor's live monitor without marking this attempt submitted.
+    notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
   });
 
   socket.on("quickChallengeAnswer", (data = {}) => {
@@ -842,13 +899,39 @@ io.on("connection", (socket: ClassroomSocket) => {
       data.quizId !== challenge.id
     ) return;
 
-    if ((challenge.challengeType === FIVE_PARTS_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+    if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
       const questions = challenge.questions ?? [];
       const progress = challenge.studentProgress.get(socket.id) ?? {
         answers: [],
         completed: false,
+        attemptCount: 0,
       };
-      if (progress.completed || questions.length === 0) return;
+      if (progress.completed || questions.length === 0 ||
+          (progress.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt)) return;
+
+      const attemptsUsed = progress.attemptCount ?? 0;
+      if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE && attemptsUsed >= TRUE_FALSE_MAX_ATTEMPTS) {
+        const correctCount = getFivePartsScore(progress);
+        socket.emit("quickChallengeResult", {
+          quizId: challenge.id,
+          completed: true,
+          hasNext: false,
+          correctCount,
+          answeredCount: progress.answers.length,
+          totalQuestions: questions.length,
+          responseTimeSeconds: progress.totalTimeSeconds ?? 0,
+          attemptCount: attemptsUsed,
+          retriesRemaining: 0,
+          results: progress.answers.map((answer, questionIndex) => ({
+            questionIndex,
+            selectedIndex: answer.selectedIndex,
+            correctIndex: questions[questionIndex]?.correctIndex,
+            correct: answer.correct,
+          })),
+          message: `Score: ${correctCount}/${questions.length}`,
+        });
+        return;
+      }
 
       const rawAnswers = Array.isArray(data.answers) ? data.answers : null;
       if (!rawAnswers || rawAnswers.length !== questions.length) return;
@@ -877,10 +960,11 @@ io.on("connection", (socket: ClassroomSocket) => {
       const answeredAt = Date.now();
       progress.answers = graded;
       progress.completed = true;
+      progress.attemptCount = attemptsUsed + 1;
       progress.finishedAt = answeredAt;
       progress.totalTimeSeconds = Math.max(
         0,
-        (answeredAt - challenge.startedAt) / 1000
+        (answeredAt - (progress.attemptStartedAt ?? challenge.startedAt)) / 1000
       );
       challenge.studentProgress.set(socket.id, progress);
       if (socket.data.participantId) challenge.responseParticipants?.set(socket.id, String(socket.data.participantId));
@@ -905,6 +989,11 @@ io.on("connection", (socket: ClassroomSocket) => {
           correctIndex: questions[questionIndex].correctIndex,
           correct: answer.correct,
         })),
+        attemptCount: progress.attemptCount,
+        retriesRemaining: Math.max(
+          0,
+          TRUE_FALSE_MAX_ATTEMPTS - (progress.attemptCount ?? 0)
+        ),
         message: `Score: ${correctCount}/${questions.length}`,
       });
       notifyInstructorStudentProgress(challenge, socket.id, student);
@@ -1318,6 +1407,10 @@ socket.on("registerClassroomClient", async data => {
   const previousClassroomSocketId =
     connectedUsers[userId]?.classroomSocketId;
 
+  const assignedAvatarId = students[socket.id]?.avatarId
+    ?? (previousClassroomSocketId ? students[previousClassroomSocketId]?.avatarId : undefined)
+    ?? pickRandomAvatar().id;
+
   if (
     previousClassroomSocketId &&
     previousClassroomSocketId !== socket.id
@@ -1403,6 +1496,7 @@ connectedUser.inLab =
    * Do not depend on automatic creation in io.on("connection").
    */
   students[socket.id] = {
+    avatarId: assignedAvatarId,
     id: socket.id,
 
     userId: databaseUser.id,
@@ -1710,7 +1804,7 @@ connectedUser.location = "python_lab";
 connectedUser.mode = "Game Mode";
 connectedUser.inLab = true;
 
-  const labSession = new LabSession(
+  const labSession = new LabAttemptState(
     user.id,
     user.fullName || user.username,
     user.seat
@@ -1818,7 +1912,7 @@ socket.on(
       session.status !== "working"
     ) {
       session =
-        new LabSession(
+        new LabAttemptState(
           userId,
           studentName,
           seat
@@ -2069,7 +2163,7 @@ socket.on(
 
     let session = labSessions[userId];
     if (!session) {
-      session = new LabSession(
+      session = new LabAttemptState(
         userId,
         connectedUser.fullName ?? connectedUser.username,
         connectedUser.seat ?? "Not selected"
@@ -3344,7 +3438,7 @@ socket.on(
 
           void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
-          const labSession = new LabSession(
+          const labSession = new LabAttemptState(
             student.userId,
             student.fullName ?? student.username,
             student.seat ?? "Not selected"
