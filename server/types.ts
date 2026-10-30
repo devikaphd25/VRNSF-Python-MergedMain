@@ -4,7 +4,7 @@
  * Goal: describe users, rooms, sockets, challenges, lab progress, and saved
  * results so server modules exchange predictable objects. These declarations
  * do not execute logic or store records; Supabase and the in-memory store do.
- * Used by: server.ts, repositories, services, socket handlers, and LabSession.
+ * Used by: server.ts, repositories, services, socket handlers, and LabAttemptState.
  */
 import type { Socket } from "socket.io";
 
@@ -14,12 +14,8 @@ export type LabStatus = "working" | "completed" | "incomplete" | "instructor_ret
 
 export interface AppUserRow {
   id: number | string;
-  username: string;
-  password_hash: string | null;
   full_name: string;
   role: UserRole;
-  seat: string | null;
-  location: UserLocation;
   device_id: string | null;
 }
 
@@ -31,10 +27,10 @@ export interface AppUser {
   seat: string | null;
   location: UserLocation;
   deviceId: string | null;
-  passwordHash: string | null;
 }
 
 export interface ClassroomStudent {
+  avatarId?: string;
   id?: string;
   userId?: number;
   name: string;
@@ -79,7 +75,30 @@ export interface RoomRecord {
   closed_at?: string | null;
 }
 
+export interface QuickChallengeQuestion {
+  id?: string;
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  explanation?: string;
+}
+
+export interface QuickChallengeStudentProgress {
+  /** A deliberate retry gets its own persisted attempt; the class timer stays shared. */
+  attemptStartedAt?: number;
+  answers: Array<{
+    questionIndex: number;
+    selectedIndex: number;
+    correct: boolean;
+    answeredAt: number;
+  }>;
+  completed: boolean;
+  finishedAt?: number;
+  totalTimeSeconds?: number;
+}
+
 export interface QuickChallenge {
+  activityId?: number;
   id: string;
   roomId: string;
   question: string;
@@ -88,12 +107,18 @@ export interface QuickChallenge {
   durationSeconds: number;
   startedAt: number;
   cycleLabel?: string;
+  challengeType?: string;
+  questionIndex?: number;
+  totalQuestions?: number;
+  questions?: QuickChallengeQuestion[];
   answers: Map<string, {
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
     responseTimeSeconds: number;
   }>;
+  responseParticipants?: Map<string, string>;
+  studentProgress: Map<string, QuickChallengeStudentProgress>;
   timeout: NodeJS.Timeout | null;
 }
 
@@ -109,6 +134,29 @@ export interface QuickChallengeReview {
   correctCount: number;
   wrongCount: number;
   elapsedSeconds: number;
+}
+
+export type Challenge2Category = "input" | "output" | "both" | "storage";
+
+export interface Challenge2StudentProgress {
+  completedItemIds: Set<string>;
+  attempts: number;
+  wrongAttempts: number;
+  wrongSelections: Map<string, Map<Challenge2Category, number>>;
+  startedAt: number;
+  completedAt: number | null;
+}
+
+export interface Challenge2Session {
+  activityId: number;
+  questions: Array<{ id: number; options: any; correct_answer: { category: Challenge2Category } }>;
+  participants: Map<string, string>;
+  id: string;
+  roomId: string;
+  durationSeconds: number;
+  startedAt: number;
+  progress: Map<string, Challenge2StudentProgress>;
+  timeout: NodeJS.Timeout | null;
 }
 
 export type ClassroomSocket = Socket & {

@@ -211,6 +211,14 @@
     margin-top: 12px;
   }
 
+  .selection-panel { width: 100%; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .course-heading { color: #7dd3fc; font-size: 18px; font-weight: 700; text-align: center; }
+  .selection-row { width: 100%; flex-direction: row; align-items: center; justify-content: center; gap: 10px; }
+  .selection-heading { color: #dbeafe; font-size: 22px; font-weight: 700; text-align: center; margin-bottom: 2px; }
+  .selection-value { width: 270px; height: 44px; color: white; font-size: 18px; font-weight: 600; text-align: center; vertical-align: center; background-color: #102b49; border-width: 1px; border-color: #526f8c; border-radius: 12px; }
+  .login-actions { width: 100%; flex-direction: row; gap: 12px; }
+  .selection-action { width: 218px; font-size: 15px; }
+  .selection-back { background-color: #1e3558; color: #dbeafe; }
   .is-hidden { display: none; }
 </style>
 
@@ -261,6 +269,24 @@
     </div>
   </div>
 
-  <button id="confirm-btn" class="btn-base btn-continue">Create Classroom</button>
+  <div id="class-selection" class="selection-panel is-hidden">
+    <text id="selected-course" class="course-heading">Course</text>
+    <text class="selection-heading">Week:</text>
+    <div class="selection-row">
+      <button id="week-prev" class="keypad-key key-btn">&lt;</button>
+      <text id="selected-week" class="selection-value">Select week</text>
+      <button id="week-next" class="keypad-key key-btn">&gt;</button>
+    </div>
+    <text class="selection-heading">Day:</text>
+    <div class="selection-row">
+      <button id="day-prev" class="keypad-key key-btn">&lt;</button>
+      <text id="selected-day" class="selection-value">Select day</text>
+      <button id="day-next" class="keypad-key key-btn">&gt;</button>
+    </div>
+  </div>
+  <div class="login-actions">
+    <button id="selection-back" class="btn-base selection-back selection-action is-hidden">Back to Course Code</button>
+    <button id="confirm-btn" class="btn-base btn-continue">Continue</button>
+  </div>
   <text id="helper-text" class="helper">Students automatically join the active classroom and receive a seat</text>
 </Panel>

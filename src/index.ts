@@ -1,3 +1,9 @@
+import { isPackagedQuestApp, startPackagedQuestSession } from "./presentation/packaged-quest-session";
+import { setInstructorPanelRayInteraction } from "./instructor/panel-ray-interaction";
+import { DisplayRoomSystem } from './systems/display-room.system';
+import "./audio/student-welcome";
+import { PythonPuzzleEnvironment } from "./games/python-puzzle/python-puzzle-environment";
+import { SeatAvatarTrackingSystem } from "./systems/seat-avatar-tracking.system";
 /// <reference types="vite/client" />
 /**
  * Browser/VR application entry point.
@@ -28,25 +34,23 @@ import * as THREE from "three";
 import { SeatComponent } from "./components/seat.component";
 import { ProjectorScreenComponent } from "./components/projector-screen.component";
 
-import { SeatSystem } from "./systems/seat.system";
+import { SeatAssignmentSystem } from "./systems/seat-assignment.system";
 
 import { ProjectorScreenSystem } from "./systems/projector-screen.system";
+import { DebriefDoorTransition } from "./presentation/debrief-transition";
 import { PresentationSystem } from "./systems/presentation.system";
-import { HintSystem } from "./systems/hint-system";
 import { RaiseHandSystem } from "./systems/raise-hand.system";
 import {
   InstructorDashboardSystem
-} from "./systems/instructor-menu.system";
-import {
-  PanelSystem,
-  PanelSystemComponent
-} from "./panel";
+} from "./systems/instructor-dashboard.system";
+import { SeatSelectionSystem } from "./systems/seat-selection.system";
+import { ClassroomPanelScene } from "./components/classroom-panel-scene.component";
 
-import { connectSocketForUser, socket } from "./network/socket";
+import { connectSocketForUser, socket } from "./network/socket-client";
 import {
   disposeVRLoginResources,
   showVRLoginPanel
-} from "./systems/vr-login.system";
+} from "./systems/classroom-login.system";
 if (typeof socket !== 'undefined') {
   socket.on("modeChanged", (data) => {
     console.log(`[Student] 🔔 TOP-LEVEL modeChanged received:`, data);
@@ -59,14 +63,19 @@ import {
   showAllMarkers,
   setSeatMarkersForcedVisible,
   setSeatMarkerTheme
-} from "./components/instructor/seat-markers";
+} from "./classroom/seat-markers";
 import { RaiseHandNotificationSystem }
 from "./systems/raise-hand-notification.system";
-import { StudentResultSystem }
-from "./systems/student-result.system";
-import { QuickChallengeSystem }
-from "./systems/quick-challenge.system";
-import { LabEnvironmentManager } from "./lab/LabEnvironmentManager";
+import { StudentResultsSystem }
+from "./systems/student-results.system";
+import { MultipleChoiceChallengeSystem } from "./systems/multiple-choice-challenge.system";
+import { TrueFalseChallengeSystem }
+from "./systems/true-false-challenge.system";
+import { DeviceClassificationSystem }
+from "./systems/device-classification.system";
+import { ClassificationDevice }
+from "./components/classification-device.component";
+import { PythonTypesEnvironment } from "./games/python-types/python-types-environment";
 
 // ============================================================
 // USER ROLE TYPES
@@ -98,12 +107,6 @@ const assets: AssetManifest = {
     url: "./gltf/classroom2/vrclass-nasa-classroom.glb",
     type: AssetType.GLTF,
     priority: "background"
-  },
-
-  instructorAvatar: {
-    url: "./gltf/avatars/instructor1.glb",
-    type: AssetType.GLTF,
-    priority: "critical"
   },
 
   sunsetHDR: {
@@ -246,7 +249,7 @@ function redirectToLogin(): void {
 
 function logout(): void {
   localStorage.removeItem("vrUser");
-  localStorage.removeItem("vrClassroomSession");
+  sessionStorage.removeItem("vrClassroomSession");
   window.location.replace("./");
 }
 
@@ -284,7 +287,7 @@ function registerCurrentClassroomUser(): void {
   let classroomSession: { roomId?: string; participantId?: string | null } = {};
   try {
     classroomSession = JSON.parse(
-      localStorage.getItem("vrClassroomSession") ?? "{}"
+      sessionStorage.getItem("vrClassroomSession") ?? "{}"
     );
   } catch (error) {
     console.error("[Classroom] Invalid saved classroom session:", error);
@@ -301,6 +304,27 @@ function registerCurrentClassroomUser(): void {
   );
 }
 
+let classroomSceneReady = false;
+let classroomRegistrationReady = false;
+let classroomSeatReady = false;
+const syncLateJoinActivity = () => {
+  if (classroomSceneReady && classroomRegistrationReady && classroomSeatReady && socket.connected) {
+    socket.emit("classroomSceneReady");
+  }
+};
+socket.on("classroomClientRegistered", data => {
+  classroomRegistrationReady = Boolean(data?.success);
+  syncLateJoinActivity();
+});
+window.addEventListener("classroomSeatReady", () => {
+  classroomSeatReady = true;
+  syncLateJoinActivity();
+});
+socket.on("disconnect", () => {
+  classroomRegistrationReady = false;
+  classroomSeatReady = false;
+});
+
 socket.on("connect", () => {
   console.log(
     "[Classroom] Socket connected:",
@@ -316,7 +340,7 @@ socket.on("classEnded", (data: { roomId?: string; message?: string }) => {
   // room id, so no student remains trapped after the instructor disconnects.
   console.log("[Classroom] Session ended:", data?.message ?? data?.roomId);
   localStorage.removeItem("vrUser");
-  localStorage.removeItem("vrClassroomSession");
+  sessionStorage.removeItem("vrClassroomSession");
   window.location.replace("./");
 });
 
@@ -336,7 +360,7 @@ World.create(
     assets,
     xr: {
       sessionMode: SessionMode.ImmersiveVR,
-      offer: "always",
+      offer: isPackagedQuestApp() ? "none" : "always",
       features: {
         handTracking: true,
         layers: true
@@ -365,6 +389,23 @@ World.create(
 )
   .then(async (world) => {
     const { renderer, scene, camera, player } = world;
+    void startPackagedQuestSession(world);
+    // Real headset triggers do not necessarily produce DOM pointer events.
+    // Forward the trusted XR gesture synchronously so pending welcome audio can start.
+    const retryWelcomeAudio = () => window.dispatchEvent(new Event("welcome-audio-gesture"));
+    const attachWelcomeAudioGestures = () => {
+      const session = renderer.xr.getSession();
+      session?.addEventListener("selectstart", retryWelcomeAudio);
+      session?.addEventListener("squeezestart", retryWelcomeAudio);
+      session?.addEventListener("end", () => {
+        session.removeEventListener("selectstart", retryWelcomeAudio);
+        session.removeEventListener("squeezestart", retryWelcomeAudio);
+      }, { once: true });
+      retryWelcomeAudio();
+    };
+    renderer.xr.addEventListener("sessionstart", attachWelcomeAudioGestures);
+    if (renderer.xr.getSession()) attachWelcomeAudioGestures();
+
     (window as any).renderer =
   renderer;
 
@@ -392,7 +433,18 @@ World.create(
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.8;
     renderer.xr.enabled = true;
-
+    const activityDoorTransition = new DebriefDoorTransition(scene);
+    let activityTransitionQueue = Promise.resolve();
+    (window as any).performActivityEntrance = (action: () => void): Promise<void> => {
+      const run = activityTransitionQueue.then(() => activityDoorTransition.play(
+        action,
+        renderer.xr.isPresenting ? renderer.xr.getCamera() : camera
+      ));
+      activityTransitionQueue = run.catch(error => {
+        console.error("[Activity entrance] Transition failed", error);
+      });
+      return activityTransitionQueue;
+    };
     const headsetDebugEnabled =
       new URLSearchParams(window.location.search).get("debug") === "1";
     let headsetDebugStatus: HTMLDivElement | null = null;
@@ -536,19 +588,14 @@ World.create(
     document.title = isInstructor ? "UMES VR – Instructor" : "UMES VR – Student";
 
     // ========================================================
-    // LOAD CLASSROOM AND INSTRUCTOR AVATAR
+    // LOAD CLASSROOM
     // ========================================================
 
     const classroomAsset = AssetManager.getGLTF("classroom2");
     const nasaSeatAsset = AssetManager.getGLTF("nasaSeatSource");
-    const instructorAsset = AssetManager.getGLTF("instructorAvatar");
 
     if (!classroomAsset) {
       throw new Error("The classroom2 asset could not be loaded.");
-    }
-
-    if (!instructorAsset) {
-      throw new Error("The instructorAvatar asset could not be loaded.");
     }
 
     if (!nasaSeatAsset) {
@@ -556,12 +603,14 @@ World.create(
     }
 
     const envMesh = classroomAsset.scene;
+    const stagePlatform = envMesh.getObjectByName("Stage");
+    if (stagePlatform) stagePlatform.visible = false;
     const useNasaSeatVisuals = true;
     const isPhysicalQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
     const lightweightSeatAnchors: THREE.Object3D[] = [];
 
     // Balanced Quest-safe classroom lighting. These two lights add no shadow
-    // maps, textures, or geometry and improve the seats, instructor, and walls
+    // maps, textures, or geometry and improve the seats and walls
     // from every viewing direction.
     const classroomFillLight = new THREE.HemisphereLight(
       0xbadfff,
@@ -607,8 +656,10 @@ World.create(
         shellPart.scale.z *= 1.35;
       }
     });
+    // Keep the board surround at its authored width, matching the original
+    // projector layout. Only the room shell expands for the extra seats.
     const frontWall = envMesh.getObjectByName("Wall_Front_Flat");
-    if (frontWall) frontWall.scale.x *= 1.35;
+    if (frontWall) frontWall.scale.x = 1;
 
     // Quest-safe NASA wall treatment: retain the original low-poly wall
     // geometry and replace only its materials with an opaque graphite/navy
@@ -631,6 +682,15 @@ World.create(
         mesh.receiveShadow = true;
       });
     });
+
+    // The front wall remains exposed when video mode hides the side screens.
+    // Give this dedicated board surround the same dark finish as the casing.
+    const boardSurround = envMesh.getObjectByName("Wall_Front_Flat");
+    if (boardSurround instanceof THREE.Mesh) {
+      boardSurround.material = new THREE.MeshBasicMaterial({
+        color: 0x071321, side: THREE.DoubleSide, toneMapped: false,
+      });
+    }
 
     // Add only the two large NASA panoramic observation windows. Their exact
     // frame geometry comes from the NASA model, while one shared image texture
@@ -1157,149 +1217,52 @@ World.create(
     });
     console.log("===== CLASSROOM OBJECTS END =====");
 
-    const instructorMesh = instructorAsset.scene;
-
     // ========================================================
-    // QUICK CHALLENGE FOCUS ENVIRONMENT
+    // CHALLENGE 2 USES THE 360 ENVIRONMENT; OTHER QUIZZES STAY IN CLASS
     // ========================================================
 
-    const quickChallengeEnvironment = new THREE.Group();
-    quickChallengeEnvironment.name = "QuickChallengeEnvironment";
-    quickChallengeEnvironment.visible = false;
-    // Keep this environment anchored to the classroom world so every student
-    // enters the same quiz room while retaining their assigned seat position.
-    quickChallengeEnvironment.position.set(0, 0, 0);
-
-    const quizBackdropMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.BackSide
-    });
-    const quizBackdrop = new THREE.Mesh(
-      new THREE.SphereGeometry(30, 64, 40),
-      quizBackdropMaterial
-    );
-    quizBackdrop.rotation.y = Math.PI;
-    quickChallengeEnvironment.add(quizBackdrop);
-
-    const cyanRing = new THREE.Mesh(
-      new THREE.TorusGeometry(2.55, 0.035, 10, 96),
-      new THREE.MeshBasicMaterial({
-        color: 0x67e8f9,
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: false
-      })
-    );
-    cyanRing.rotation.x = Math.PI / 2;
-    cyanRing.position.set(0, 2.42, -0.85);
-    quickChallengeEnvironment.add(cyanRing);
-
-    const lavenderRing = new THREE.Mesh(
-      new THREE.TorusGeometry(3.15, 0.025, 10, 96),
-      new THREE.MeshBasicMaterial({
-        color: 0xc4b5fd,
-        transparent: true,
-        opacity: 0.55,
-        depthWrite: false
-      })
-    );
-    lavenderRing.rotation.x = Math.PI / 2;
-    lavenderRing.position.set(0, 2.48, -0.85);
-    quickChallengeEnvironment.add(lavenderRing);
-
-    const lakeShimmerMaterial = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
-      transparent: true,
-      opacity: 0.12,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-    const lakeShimmer = new THREE.Mesh(
-      new THREE.PlaneGeometry(6.5, 0.7),
-      lakeShimmerMaterial
-    );
-    lakeShimmer.position.set(0, -0.2, -6.7);
-    quickChallengeEnvironment.add(lakeShimmer);
-
-    const particlePositions = new Float32Array(36 * 3);
-    for (let index = 0; index < particlePositions.length; index += 3) {
-      particlePositions[index] = (Math.random() - 0.5) * 7;
-      particlePositions[index + 1] = Math.random() * 3.2 - 0.8;
-      particlePositions[index + 2] = -2.5 - Math.random() * 3.5;
-    }
-    const particleGeometry = new THREE.BufferGeometry();
-    particleGeometry.setAttribute(
-      "position",
-      new THREE.BufferAttribute(particlePositions, 3)
-    );
-    const ambientParticles = new THREE.Points(
-      particleGeometry,
-      new THREE.PointsMaterial({
-        color: 0xc4b5fd,
-        size: 0.025,
-        transparent: true,
-        opacity: 0.38,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    );
-    quickChallengeEnvironment.add(ambientParticles);
-
-    new THREE.TextureLoader().load(
-      "./textures/quiz/quick-challenge-space-360.png",
-      texture => {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        quizBackdropMaterial.map = texture;
-        quizBackdropMaterial.needsUpdate = true;
-      },
-      undefined,
-      error => console.error(
-        "[Quick Challenge] Could not load the space panorama:",
-        error
-      )
-    );
-    scene.add(quickChallengeEnvironment);
-
-    const animateQuickChallengeEnvironment = (): void => {
-      const elapsed = performance.now() * 0.001;
-      if (quickChallengeEnvironment.visible) {
-        cyanRing.rotation.z = elapsed * 0.06;
-        lavenderRing.rotation.z = -elapsed * 0.035;
-        lakeShimmerMaterial.opacity =
-          0.09 + Math.sin(elapsed * 1.8) * 0.035;
-        lakeShimmer.position.x = Math.sin(elapsed * 0.22) * 0.08;
-        ambientParticles.rotation.y = elapsed * 0.025;
+    let challenge2Panorama: THREE.Mesh | null = null;
+    let challenge2SavedVisibility: { classroom: boolean; tiers: boolean } | null = null;
+    const setChallenge2PanoramaVisible = (visible: boolean): void => {
+      if (visible) {
+        if (!challenge2Panorama) {
+          const texture = new THREE.TextureLoader().load(
+            "./textures/quiz/quick-challenge-space-360-enhanced.png"
+          );
+          texture.colorSpace = THREE.SRGBColorSpace;
+          challenge2Panorama = new THREE.Mesh(
+            new THREE.SphereGeometry(40, 48, 32),
+            new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide })
+          );
+          challenge2Panorama.name = "Challenge2Panorama";
+          scene.add(challenge2Panorama);
+        }
+        if (!challenge2SavedVisibility) {
+          challenge2SavedVisibility = { classroom: envMesh.visible, tiers: tierEndCaps.visible };
+        }
+        challenge2Panorama.visible = true;
+        envMesh.visible = false;
+        tierEndCaps.visible = false;
+      } else {
+        if (challenge2Panorama) challenge2Panorama.visible = false;
+        if (challenge2SavedVisibility) {
+          envMesh.visible = challenge2SavedVisibility.classroom;
+          tierEndCaps.visible = challenge2SavedVisibility.tiers;
+          challenge2SavedVisibility = null;
+        }
       }
-      requestAnimationFrame(animateQuickChallengeEnvironment);
-    };
-    animateQuickChallengeEnvironment();
-
-    const setQuickChallengeEnvironmentVisible = (visible: boolean): void => {
-      if (!isStudent) return;
-
-      quickChallengeEnvironment.visible = visible;
-      envMesh.visible = !visible;
-      instructorMesh.visible = !visible && !(window as any).isInstructor;
-      // Tier end caps are attached directly to the scene rather than envMesh,
-      // so they must be hidden explicitly with the rest of the classroom.
-      tierEndCaps.visible = !visible;
-      // Seat markers remain visible in the shared challenge room so each
-      // student keeps the same classroom identity and assigned place.
-      setSeatMarkerTheme(visible ? "astronaut" : "default");
-      setSeatMarkersForcedVisible(visible);
-      if (visible) showAllMarkers();
-
-      quickChallengeEnvironment.updateMatrixWorld(true);
-      envMesh.updateMatrixWorld(true);
-      instructorMesh.updateMatrixWorld(true);
-      tierEndCaps.updateMatrixWorld(true);
     };
 
     window.addEventListener(
       "quickChallengeVisibilityChanged",
-      ((event: CustomEvent<{ visible?: boolean }>) => {
-        setQuickChallengeEnvironmentVisible(Boolean(event.detail?.visible));
+      ((event: CustomEvent<{ visible?: boolean; challengeType?: string }>) => {
+        if (!isStudent) return;
+        const visible = Boolean(event.detail?.visible);
+        const isChallenge2 = event.detail?.challengeType === "challenge-2";
+        if (isChallenge2) setChallenge2PanoramaVisible(visible);
+        setSeatMarkerTheme(isChallenge2 && visible ? "astronaut" : "default");
+        setSeatMarkersForcedVisible(visible);
+        if (visible) showAllMarkers();
       }) as EventListener
     );
 
@@ -1391,32 +1354,13 @@ World.create(
 
     const instructorAnchor = envMesh.getObjectByName("InstructorAvatar_Anchor");
     const instructorStagePosition = new THREE.Vector3(0, 0, -3);
-    const instructorStageQuaternion = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(0, Math.PI, 0)
-    );
 
     if (instructorAnchor) {
       instructorAnchor.getWorldPosition(instructorStagePosition);
-      instructorAnchor.getWorldQuaternion(instructorStageQuaternion);
       console.log("[Instructor] Anchor found:", instructorStagePosition);
     } else {
       console.warn("[Instructor] InstructorAvatar_Anchor was not found. Using fallback position.");
     }
-
-    // ========================================================
-    // POSITION STATIC INSTRUCTOR AVATAR
-    // ========================================================
-
-    instructorMesh.position.copy(instructorStagePosition);
-    instructorMesh.position.y += 1.3;
-    instructorMesh.quaternion.copy(instructorStageQuaternion);
-    instructorMesh.scale.set(2.5, 2.5, 2.5);
-    world.createTransformEntity(instructorMesh);
-    // Students should see the instructor on the stage, but the instructor
-    // must not see their own static GLB avatar. Apply visibility after entity
-    // registration because the SDK may update the object during registration.
-    instructorMesh.visible = !isInstructor;
-    console.log("[Instructor] Static avatar visible:", instructorMesh.visible);
 
     // ========================================================
     // REGISTER COMPONENTS
@@ -1424,27 +1368,35 @@ World.create(
 
     world
       .registerComponent(SeatComponent)
-      .registerComponent(ProjectorScreenComponent);
+      .registerComponent(ProjectorScreenComponent)
+      .registerComponent(ClassificationDevice);
 
     // ========================================================
     // REGISTER SYSTEMS
     // ========================================================
 
     world
-      .registerSystem(PanelSystem, { priority: 1 })
+      .registerSystem(DisplayRoomSystem, { priority: 20 })
+      .registerSystem(SeatSelectionSystem, { priority: 1 })
       .registerSystem(ProjectorScreenSystem, { priority: 3 })
-      .registerSystem(PresentationSystem, { priority: 4 });
+      .registerSystem(PresentationSystem, { priority: 4 })
+      // Runs for students AND instructors so both can animate received avatar poses.
+      .registerSystem(SeatAvatarTrackingSystem, { priority: 5 });
+
+    const studentRaiseHandEnabled = false;
 
     if (isStudent) {
       world
-        .registerSystem(SeatSystem, { priority: 2 })
-        .registerSystem(HintSystem, { priority: 5 })
-        .registerSystem(RaiseHandSystem, { priority: 7 })
-        .registerSystem(StudentResultSystem, { priority: 10 })
-        .registerSystem(QuickChallengeSystem, { priority: 11 });
+        .registerSystem(SeatAssignmentSystem, { priority: 2 })
+        .registerSystem(StudentResultsSystem, { priority: 10 })
+        .registerSystem(TrueFalseChallengeSystem, { priority: 11 })
+        .registerSystem(MultipleChoiceChallengeSystem, { priority: 11 })
+        .registerSystem(DeviceClassificationSystem, { priority: 12 });
 
-      const raiseHandSystemInstance = world.getSystem(RaiseHandSystem);
-      (window as any).RaiseHandSystem = raiseHandSystemInstance;
+      if (studentRaiseHandEnabled) {
+        world.registerSystem(RaiseHandSystem, { priority: 7 });
+        (window as any).RaiseHandSystem = world.getSystem(RaiseHandSystem);
+      }
       console.log("[Systems] Student systems registered.");
     } else {
       world
@@ -1531,6 +1483,7 @@ World.create(
     let notificationEntity: any = null;
     let transitionEntity: any = null;
     let studentResultEntity: any = null;
+    let studentBoardViewButtonEntity: any = null;
     let quickChallengeEntity: any = null;
 
     // ========================================================
@@ -1549,8 +1502,10 @@ World.create(
 
     (window as any).isMenuOpen = false;
     (window as any).isPresentationOpen = false;
-    (window as any).isHintVisible = isStudent;
-    (window as any).isRaiseHandReady = false;
+    // Startup controller hints are intentionally disabled. Student controls
+    // are ready together as soon as the classroom UI is created.
+    (window as any).isHintVisible = false;
+    (window as any).isRaiseHandReady = isStudent;
 
     // ========================================================
     // MARKER VISIBILITY LOOP
@@ -1564,7 +1519,9 @@ World.create(
         ) {
           hideAllMarkers();
         } else {
-          updateMarkerVisibility(player);
+          // Physical head rotation lives on the XR camera, not necessarily on
+          // the locomotion rig. Use it when deciding whether seats are ahead.
+          updateMarkerVisibility(camera);
         }
       }
       requestAnimationFrame(updateMarkersLoop);
@@ -1576,19 +1533,6 @@ World.create(
     // ========================================================
     panelEntity = { object3D: null };
     console.log("[Seat Panel] Disabled - using SeatAssignmentSystem");
-
-    // ========================================================
-    // STUDENT HINT PANEL
-    // ========================================================
-
-    if (isStudent) {
-      hintEntity = world
-        .createTransformEntity()
-        .addComponent(PanelUI, { config: "./ui/hint-panel.json", maxHeight: 0.3, maxWidth: 1.6 })
-        .addComponent(PanelSystemComponent, { scene: envMesh });
-      hintEntity.object3D?.position.set(0, 1.85, -1.9);
-      console.log("[Hint Panel] Created for student.");
-    }
 
     if (isStudent) {
       // Presentation, briefing, challenge, and classroom assets already live in
@@ -1607,8 +1551,8 @@ World.create(
         .createTransformEntity()
         .addComponent(PanelUI, {
           config: "./ui/student-result-panel.json",
-          maxWidth: 1.3,
-          maxHeight: 1.15
+          maxWidth: 1.8,
+          maxHeight: 1.5
         })
         .addComponent(RayInteractable);
 
@@ -1623,46 +1567,127 @@ World.create(
 
       (window as any).studentResultEntity =
         studentResultEntity;
+
+      studentBoardViewButtonEntity = world
+        .createTransformEntity()
+        .addComponent(PanelUI, {
+          config: "./ui/student-board-view-button.json",
+          maxWidth: 0.48,
+          maxHeight: 0.24
+        })
+        .addComponent(RayInteractable);
+      if (studentBoardViewButtonEntity.object3D) {
+        camera.add(studentBoardViewButtonEntity.object3D);
+        // Browser fallback: keep the complete icon inside the lower-left view.
+        studentBoardViewButtonEntity.object3D.position.set(-0.46, -0.28, -1.12);
+        studentBoardViewButtonEntity.object3D.scale.setScalar(1);
+        studentBoardViewButtonEntity.object3D.visible = true;
+        studentBoardViewButtonEntity.object3D.pointerEvents = "auto";
+        studentBoardViewButtonEntity.object3D.pointerEventsOrder = 71000;
+        studentBoardViewButtonEntity.object3D.frustumCulled = false;
+      }
+      (window as any).studentBoardViewButtonEntity = studentBoardViewButtonEntity;
+      (window as any).isStudentBoardViewAvailable = true;
     }
+
+    const attachStudentBoardButton = (): void => {
+      const button = studentBoardViewButtonEntity?.object3D as
+        THREE.Object3D | undefined;
+      if (!isStudent || !button) return;
+      const leftRay = world.player?.raySpaces?.left;
+      const useController = renderer.xr.isPresenting && Boolean(leftRay);
+      const parent = useController ? leftRay! : camera;
+      if (button.parent !== parent) parent.add(button);
+      if (useController) {
+        // Float just above and forward of the left controller without sitting
+        // directly on its ray, so the trigger remains comfortable to use.
+        button.position.set(0, 0.095, -0.2);
+        // UIKit already inherits the target-ray orientation. Adding a half
+        // roll here made the Screen label appear upside down in the headset.
+        button.rotation.set(0, 0, 0);
+        button.scale.setScalar(0.8);
+      } else {
+        // Mirror the Raise Hand HUD position so both controls have the same
+        // apparent size, height, and distance from the student.
+        button.position.set(-0.46, -0.28, -1.12);
+        button.rotation.set(0, 0, 0);
+        button.scale.setScalar(1);
+      }
+      button.updateMatrixWorld(true);
+    };
+    (window as any).refreshStudentBoardButton = attachStudentBoardButton;
+    if (isStudent) requestAnimationFrame(() => attachStudentBoardButton());
 
     if (isStudent) {
       quickChallengeEntity = world
-        .createTransformEntity()
+        .createTransformEntity(undefined, { persistent: true })
         .addComponent(PanelUI, {
           config: "./ui/quick-challenge.json",
-          maxWidth: 1.75,
-          maxHeight: 1.35
+          maxWidth: 2.42,
+          maxHeight: 1.62
         })
         .addComponent(RayInteractable);
 
       if (quickChallengeEntity.object3D) {
-        camera.add(quickChallengeEntity.object3D);
-        quickChallengeEntity.object3D.pointerEventsOrder = 50000;
-        // Keep the quiz within a comfortable controller-ray distance in a
-        // physical headset while retaining enough space for all four answers.
-        quickChallengeEntity.object3D.position.set(0, -0.02, -1.35);
+        const panel = quickChallengeEntity.object3D;
+        scene.add(panel);
+        panel.pointerEventsOrder = 50000;
+        // Positioned in front of the student when the challenge opens.
+        // Its scene parent keeps it stationary after placement.
+        panel.updateMatrixWorld(true);
         quickChallengeEntity.object3D.visible = false;
         quickChallengeEntity.object3D.frustumCulled = false;
       }
 
       (window as any).quickChallengeEntity = quickChallengeEntity;
+      const databaseChallengeEntity = world
+        .createTransformEntity(undefined, { persistent: true })
+        .addComponent(PanelUI, {
+          config: "./ui/database-challenge.json",
+          maxWidth: 1.75,
+          maxHeight: 1.35
+        })
+        .addComponent(RayInteractable);
+
+      if (databaseChallengeEntity.object3D) {
+        const panel = databaseChallengeEntity.object3D;
+        scene.add(panel);
+        panel.pointerEventsOrder = 50000;
+        // Positioned in front of the student when the challenge opens.
+        // Its scene parent keeps it stationary after placement.
+        panel.updateMatrixWorld(true);
+        databaseChallengeEntity.object3D.visible = false;
+        databaseChallengeEntity.object3D.frustumCulled = false;
+      }
+
+      (window as any).databaseChallengeEntity = databaseChallengeEntity;
     }
 
     // ========================================================
     // STUDENT RAISE-HAND PANEL
     // ========================================================
 
-    if (isStudent) {
+    if (isStudent && studentRaiseHandEnabled) {
       raiseHandEntity = world
         .createTransformEntity()
         .addComponent(PanelUI, { config: "./ui/raise-hand-button.json", maxHeight: 0.24, maxWidth: 0.48 })
         .addComponent(RayInteractable)
-        .addComponent(PanelSystemComponent, { scene: envMesh });
+        .addComponent(ClassroomPanelScene, { scene: envMesh });
 
       const raiseHandObject = raiseHandEntity.object3D;
       if (raiseHandObject) {
         const positionRaiseHandForMode = (presentationMode: boolean) => {
-          if (presentationMode) {
+          const rightRay = world.player?.raySpaces?.right;
+          const useController = renderer.xr.isPresenting && Boolean(rightRay);
+          if (useController) {
+            // Match the Screen control exactly on the opposite controller.
+            // Both controls now have the same height, distance, scale, and
+            // upright orientation in a physical headset.
+            rightRay!.add(raiseHandObject);
+            raiseHandObject.position.set(0, 0.095, -0.2);
+            raiseHandObject.rotation.set(0, 0, 0);
+            raiseHandObject.scale.setScalar(0.8);
+          } else if (presentationMode) {
             camera.add(raiseHandObject);
             // Keep the complete control inside the lower-right black media
             // bar. The former 1.28 scale straddled the image edge and made
@@ -1682,7 +1707,7 @@ World.create(
         (window as any).positionStudentRaiseHand = positionRaiseHandForMode;
         positionRaiseHandForMode(false);
         raiseHandObject.pointerEventsOrder = 60000;
-        raiseHandObject.visible = false;
+        raiseHandObject.visible = true;
         raiseHandObject.frustumCulled = false;
       }
       console.log("[Raise Hand] Created for student.");
@@ -1694,6 +1719,7 @@ World.create(
 
     let instructorMenuButtonEntity: any = null;
     let instructorMenuButtonObject: THREE.Object3D | null = null;
+    (window as any).isInstructorMenuButtonReady = false;
 
     if (isInstructor) {
       console.log("[Instructor Menu] Creating menu icon...");
@@ -1705,7 +1731,9 @@ World.create(
       instructorMenuButtonObject = instructorMenuButtonEntity.object3D ?? null;
       if (instructorMenuButtonObject) {
         instructorMenuButtonObject.name = "InstructorMenuButton";
-        instructorMenuButtonObject.visible = true;
+        // Do not expose an inactive visual before UIKit has connected its
+        // first-click handler.
+        instructorMenuButtonObject.visible = false;
         instructorMenuButtonObject.frustumCulled = false;
         (window as any).instructorMenuButtonObject = instructorMenuButtonObject;
         console.log("[Instructor Menu] Menu entity created.");
@@ -1773,10 +1801,15 @@ World.create(
       }
 
       instructorMenuButtonObject.visible =
+        Boolean((window as any).isInstructorMenuButtonReady) &&
         !dashboardOpen &&
         !presentationOpen &&
         !presentationTransitionInProgress &&
-        !anotherInstructorPanelOpen;
+        !anotherInstructorPanelOpen &&
+        !(window as any).isDisplayRoomOpen;
+      instructorMenuButtonObject.pointerEvents =
+        instructorMenuButtonObject.visible ? "auto" : "none";
+      instructorMenuButtonObject.pointerEventsOrder = 65000;
       instructorMenuButtonObject.updateMatrix();
       instructorMenuButtonObject.updateMatrixWorld(true);
       console.log(
@@ -1863,11 +1896,40 @@ World.create(
       });
     });
 
+    renderer.xr.addEventListener("sessionstart", () => {
+      if (!isStudent) return;
+      requestAnimationFrame(() => attachStudentBoardButton());
+      [250, 600, 1000].forEach(delay => {
+        setTimeout(() => {
+          attachStudentBoardButton();
+          (window as any).positionStudentRaiseHand?.(
+            Boolean((window as any).isPresentationOpen)
+          );
+        }, delay);
+      });
+      const session = renderer.xr.getSession();
+      session?.addEventListener("selectstart", (event: XRInputSourceEvent) => {
+        if (
+          event.inputSource.handedness === "left" &&
+          Boolean((window as any).isStudentBoardViewAvailable)
+        ) {
+          (window as any).toggleStudentBoardView?.();
+        }
+      });
+    });
+
     renderer.xr.addEventListener("sessionend", () => {
-      if (!isInstructor) return;
-      requestAnimationFrame(
-        () => attachInstructorMenuToCamera()
-      );
+      if (isInstructor) {
+        requestAnimationFrame(() => attachInstructorMenuToCamera());
+      }
+      if (isStudent) {
+        requestAnimationFrame(() => {
+          attachStudentBoardButton();
+          (window as any).positionStudentRaiseHand?.(
+            Boolean((window as any).isPresentationOpen)
+          );
+        });
+      }
     });
 
     // ========================================================
@@ -1892,16 +1954,35 @@ World.create(
     // the panel under the scene. It opens in front of the instructor but does
     // not continue following later headset movement or rotation.
     const positionLargeInstructorPanel = (
-      panel: THREE.Object3D,
-      scale: number,
-      verticalOffset: number,
-      distance: number
+      panel: THREE.Object3D
     ): void => {
-      camera.updateMatrixWorld(true);
+      const inHeadset = renderer.xr.isPresenting;
+      const scale = inHeadset ? 0.46 : 0.9;
+      const distance = inHeadset ? 2.2 : 3.0;
+      const verticalOffset = 0;
+      const eyeLevel = true;
+      const viewer = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
       const cameraPosition = new THREE.Vector3();
       const cameraQuaternion = new THREE.Quaternion();
-      camera.getWorldPosition(cameraPosition);
-      camera.getWorldQuaternion(cameraQuaternion);
+      if (renderer.xr.isPresenting) {
+        // WebXRManager composes the rig transform into this matrix. Calling
+        // getWorldPosition/updateWorldMatrix on its unparented camera can
+        // overwrite that pose with reference-space coordinates.
+        camera.parent?.updateWorldMatrix(true, false);
+        renderer.xr.updateCamera(camera);
+        viewer.matrixWorld.decompose(cameraPosition, cameraQuaternion, new THREE.Vector3());
+      } else {
+        camera.updateWorldMatrix(true, false);
+        camera.matrixWorld.decompose(cameraPosition, cameraQuaternion, new THREE.Vector3());
+      }
+      if (eyeLevel) {
+        // Use headset yaw only: looking down must not lower or tilt the menu.
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cameraQuaternion);
+        forward.y = 0;
+        if (forward.lengthSq() < 0.0001) forward.set(0, 0, -1);
+        forward.normalize();
+        cameraQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(-forward.x, -forward.z));
+      }
       const cameraRelativeOffset = new THREE.Vector3(
         0,
         verticalOffset,
@@ -1921,10 +2002,7 @@ World.create(
       panel: THREE.Object3D,
       interactive: boolean
     ): void => {
-      panel.pointerEvents = interactive ? "auto" : "none";
-      panel.traverse((child: any) => {
-        child.pointerEvents = interactive ? "auto" : "none";
-      });
+      setInstructorPanelRayInteraction(panel, interactive);
     };
 
     const hideLargeInstructorPanel = (panel: THREE.Object3D): void => {
@@ -1936,16 +2014,47 @@ World.create(
       panel.updateMatrixWorld(true);
     };
 
-    const showLargeInstructorPanel = (
+    const bringInstructorOverlayPanelForward = (
       panel: THREE.Object3D,
-      scale: number,
-      verticalOffset: number,
-      distance: number
+      renderOrder = 10000
     ): void => {
-      positionLargeInstructorPanel(panel, scale, verticalOffset, distance);
+      if (!panel) return;
+      panel.renderOrder = renderOrder;
+      panel.traverse((object) => {
+        let current: THREE.Object3D | null = object;
+        while (current) {
+          if (current.name === "ClassRocketCompanion" || current.name === "StudentRocketRig" || current.userData?.isClassRocket || current.userData?.isStudentRocket) {
+            return;
+          }
+          current = current.parent;
+        }
+        object.renderOrder = renderOrder;
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const materials = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
+        materials.forEach((material) => {
+          if (material.depthTest || material.depthWrite) {
+            material.depthTest = false;
+            material.depthWrite = false;
+            material.needsUpdate = true;
+          }
+        });
+      });
+    };
+
+    const showLargeInstructorPanel = (
+      panel: THREE.Object3D
+    ): void => {
+      positionLargeInstructorPanel(panel);
       panel.visible = true;
       setLargeInstructorPanelInteractive(panel, true);
+      bringInstructorOverlayPanelForward(panel);
       panel.updateMatrixWorld(true);
+      requestAnimationFrame(() => {
+        if (panel.visible) bringInstructorOverlayPanelForward(panel);
+      });
     };
 
     if (isInstructor) {
@@ -1988,12 +2097,12 @@ World.create(
 
       instructorDashboardEntity = world
         .createTransformEntity()
-        .addComponent(PanelUI, { config: "./ui/instructor-menu.json", maxWidth: 2.7, maxHeight: 2.4 })
+        .addComponent(PanelUI, { config: "./ui/instructor-menu-option2.json", maxWidth: 2.7, maxHeight: 2.4 })
         .addComponent(RayInteractable);
 
       instructorDashboardObject = instructorDashboardEntity.object3D ?? null;
       if (instructorDashboardObject) {
-        positionLargeInstructorPanel(instructorDashboardObject, 0.92, -0.14, 2.8);
+        positionLargeInstructorPanel(instructorDashboardObject);
         instructorDashboardObject.pointerEventsOrder = 1000;
         instructorDashboardObject.renderOrder = 10000;
         hideLargeInstructorPanel(instructorDashboardObject);
@@ -2020,16 +2129,18 @@ World.create(
         instructorDebriefChoiceObject.pointerEventsOrder = 14000;
         // Keep the static UIKit tree alive offscreen so its text geometry is
         // fully built before the first time the instructor opens it.
-        instructorDebriefChoiceObject.visible = true;
+        instructorDebriefChoiceObject.visible = false;
         instructorDebriefChoiceObject.frustumCulled = false;
       }
 
       (window as any).isInstructorDebriefChoiceOpen = false;
       (window as any).setInstructorDebriefChoiceOpen = (open: boolean): void => {
         if (!instructorDebriefChoiceObject) return;
+        open = open && !(window as any).isDisplayRoomOpen;
+        instructorDebriefChoiceObject.visible = open;
         (window as any).isInstructorDebriefChoiceOpen = open;
         if (open) {
-          showLargeInstructorPanel(instructorDebriefChoiceObject, 1, -0.12, 2.25);
+          showLargeInstructorPanel(instructorDebriefChoiceObject);
           instructorDebriefChoiceObject.pointerEventsOrder = 14000;
         } else {
           setLargeInstructorPanelInteractive(instructorDebriefChoiceObject, false);
@@ -2052,7 +2163,7 @@ World.create(
         instructorQuizMonitorEntity.object3D ?? null;
 
       if (instructorQuizMonitorObject) {
-        positionLargeInstructorPanel(instructorQuizMonitorObject, 1, -0.32, 2.85);
+        positionLargeInstructorPanel(instructorQuizMonitorObject);
         instructorQuizMonitorObject.pointerEventsOrder = 13000;
         hideLargeInstructorPanel(instructorQuizMonitorObject);
         instructorQuizMonitorObject.frustumCulled = false;
@@ -2064,14 +2175,13 @@ World.create(
 
         (window as any).isInstructorQuizMonitorOpen = open;
         if (open) {
-          showLargeInstructorPanel(instructorQuizMonitorObject, 1, -0.32, 2.85);
+          showLargeInstructorPanel(instructorQuizMonitorObject);
         } else {
           hideLargeInstructorPanel(instructorQuizMonitorObject);
         }
         instructorQuizMonitorObject.pointerEventsOrder = 13000;
-        instructorQuizMonitorObject.traverse((child: any) => {
-          child.pointerEventsOrder = 13001;
-        });
+        instructorQuizMonitorObject.renderOrder = 10000;
+        bringInstructorOverlayPanelForward(instructorQuizMonitorObject, 10000);
         instructorQuizMonitorObject.updateMatrixWorld(true);
 
         if (open && instructorQuizMonitorEntity) {
@@ -2126,7 +2236,7 @@ World.create(
         instructorLabMonitorEntity.object3D ?? null;
 
       if (instructorLabMonitorObject) {
-        positionLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
+        positionLargeInstructorPanel(instructorLabMonitorObject);
         instructorLabMonitorObject.pointerEventsOrder = 11000;
         hideLargeInstructorPanel(instructorLabMonitorObject);
         instructorLabMonitorObject.frustumCulled = false;
@@ -2165,7 +2275,7 @@ World.create(
         instructorMistakesEntity.object3D ?? null;
 
       if (instructorMistakesObject) {
-        positionLargeInstructorPanel(instructorMistakesObject, 1, -0.32, 2.85);
+        positionLargeInstructorPanel(instructorMistakesObject);
         instructorMistakesObject.pointerEventsOrder = 12000;
         hideLargeInstructorPanel(instructorMistakesObject);
         instructorMistakesObject.frustumCulled = false;
@@ -2177,7 +2287,7 @@ World.create(
           (window as any).isInstructorMistakesOpen = open;
           instructorMistakesObject.pointerEventsOrder = 12000;
           if (open) {
-            showLargeInstructorPanel(instructorMistakesObject, 1, -0.32, 2.85);
+            showLargeInstructorPanel(instructorMistakesObject);
           } else {
             hideLargeInstructorPanel(instructorMistakesObject);
           }
@@ -2186,7 +2296,7 @@ World.create(
             const showLabMonitor =
               !open && Boolean((window as any).isInstructorLabMonitorOpen);
             if (showLabMonitor) {
-              showLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
+              showLargeInstructorPanel(instructorLabMonitorObject);
             } else {
               hideLargeInstructorPanel(instructorLabMonitorObject);
             }
@@ -2233,6 +2343,7 @@ World.create(
             instructorLabMonitorButtonObject.position.set(
               -0.38,
               available &&
+            !(window as any).isDisplayRoomOpen &&
               !(window as any).isInstructorLabMonitorOpen &&
               !(window as any).isInstructorQuizMonitorOpen
                 ? -0.2
@@ -2243,6 +2354,7 @@ World.create(
             instructorLabMonitorButtonObject.position.set(
               0,
               available &&
+            !(window as any).isDisplayRoomOpen &&
               !(window as any).isInstructorLabMonitorOpen &&
               !(window as any).isInstructorQuizMonitorOpen
                 ? 0.08
@@ -2263,6 +2375,7 @@ World.create(
           );
           instructorLabMonitorButtonObject.visible =
             available &&
+            !(window as any).isDisplayRoomOpen &&
             !(window as any).isInstructorLabMonitorOpen &&
             !(window as any).isInstructorQuizMonitorOpen;
           instructorLabMonitorButtonObject.updateMatrixWorld(
@@ -2272,12 +2385,13 @@ World.create(
 
       (window as any).setInstructorLabMonitorOpen =
         (open: boolean): void => {
+          if (open && (window as any).isDisplayRoomOpen) return;
           if (!instructorLabMonitorObject) return;
 
           (window as any).isInstructorLabMonitorOpen = open;
           instructorLabMonitorObject.pointerEventsOrder = 11000;
           if (open) {
-            showLargeInstructorPanel(instructorLabMonitorObject, 1, -0.32, 2.85);
+            showLargeInstructorPanel(instructorLabMonitorObject);
           } else {
             hideLargeInstructorPanel(instructorLabMonitorObject);
           }
@@ -2342,6 +2456,7 @@ World.create(
             );
             instructorLabMonitorButtonObject.visible =
               !open &&
+              !(window as any).isDisplayRoomOpen &&
               Boolean(
                 (window as any).isInstructorLabMonitorAvailable
               );
@@ -2359,7 +2474,26 @@ World.create(
     let isInstructorDashboardOpen = false;
     (window as any).isInstructorDashboardOpen = false;
 
+    // Refit whichever instructor panel is open when switching display modes.
+    const refitOpenInstructorPanels = () => {
+      for (const panel of [instructorDashboardObject, instructorDebriefChoiceObject,
+        instructorQuizMonitorObject, instructorLabMonitorObject, instructorMistakesObject]) {
+        if (panel?.visible && panel.position.y > -50 && !(window as any).isDisplayRoomOpen) positionLargeInstructorPanel(panel);
+      }
+    };
+    renderer.xr.addEventListener("sessionstart", () => {
+      renderer.xr.getSession()?.requestAnimationFrame(() => {
+        refitOpenInstructorPanels();
+      });
+    });
+    renderer.xr.addEventListener("sessionend", () => {
+      requestAnimationFrame(() => {
+        refitOpenInstructorPanels();
+      });
+    });
+
     function setInstructorDashboardOpen(open: boolean): void {
+      if (open && (window as any).isDisplayRoomOpen) return;
       if (!isInstructor || !instructorDashboardObject) return;
 
       // A controller trigger can remain active after selecting Emergency
@@ -2395,7 +2529,7 @@ World.create(
       // Capture a world-space pose directly in front of the current headset.
       // Because the panel remains a scene child, it stays there after opening.
       if (open) {
-        showLargeInstructorPanel(instructorDashboardObject, 0.92, -0.14, 2.8);
+        showLargeInstructorPanel(instructorDashboardObject);
       } else {
         hideLargeInstructorPanel(instructorDashboardObject);
       }
@@ -2409,9 +2543,11 @@ World.create(
           ? mesh.material
           : [mesh.material];
         materials.forEach((material) => {
-          material.depthTest = false;
-          material.depthWrite = false;
-          material.needsUpdate = true;
+          if (material.depthTest || material.depthWrite) {
+            material.depthTest = false;
+            material.depthWrite = false;
+            material.needsUpdate = true;
+          }
         });
         mesh.renderOrder = 10000;
       });
@@ -2426,6 +2562,7 @@ World.create(
       if (instructorLabMonitorButtonObject) {
         instructorLabMonitorButtonObject.visible =
           !open &&
+          !(window as any).isDisplayRoomOpen &&
           Boolean(
             (window as any).isInstructorLabMonitorAvailable
           );
@@ -2453,19 +2590,31 @@ World.create(
         .createTransformEntity()
         .addComponent(PanelUI, { config: "./ui/raise-hand-notification.json", maxWidth: 1.9, maxHeight: 0.28 })
         .addComponent(RayInteractable)
-        .addComponent(PanelSystemComponent, { scene: envMesh });
+        .addComponent(ClassroomPanelScene, { scene: envMesh });
 
       const notificationObject = notificationEntity.object3D;
       if (notificationObject) {
-        // Anchor this banner directly below the fixed video controls. It no
-        // longer follows the instructor headset when the instructor turns.
-        world.scene.add(notificationObject);
-        notificationObject.position.set(0, 0.72, 3.35);
-        notificationObject.rotation.set(0, Math.PI, 0);
-        notificationObject.scale.set(1, 1, 1);
+        // This is a compact transient alert rather than a large dashboard.
+        // Keep it in the instructor's view so it cannot remain behind the
+        // projector after a challenge/environment transition.
+        camera.add(notificationObject);
+        notificationObject.position.set(0, -0.31, -1.08);
+        notificationObject.rotation.set(0, 0, 0);
+        notificationObject.scale.setScalar(0.88);
         notificationObject.pointerEventsOrder = 60000;
         notificationObject.visible = false;
         notificationObject.frustumCulled = false;
+        notificationObject.traverse((object: any) => {
+          object.renderOrder = 2100;
+          const materials = object.material
+            ? (Array.isArray(object.material) ? object.material : [object.material])
+            : [];
+          materials.forEach((material: THREE.Material) => {
+            material.depthTest = false;
+            material.depthWrite = false;
+            material.needsUpdate = true;
+          });
+        });
         notificationObject.updateMatrixWorld(true);
         console.log("[Notification] Panel created and hidden.");
       }
@@ -2478,6 +2627,7 @@ World.create(
 
     const presentationSystem = world.getSystem(PresentationSystem);
     if (presentationSystem) {
+      presentationSystem.initializeClassroomSideScreens();
       (window as any).presentationSystem = presentationSystem;
       console.log("[Index] PresentationSystem exposed globally");
     }
@@ -2517,13 +2667,18 @@ World.create(
     }
 
     const labEnvironmentManager = isStudent
-      ? new LabEnvironmentManager(world, [
+      ? new PythonTypesEnvironment(world, [
           envMesh,
-          instructorMesh,
           hintEntity?.object3D,
           raiseHandEntity?.object3D,
         ])
       : null;
+
+    // Existing Puzzle button events now open Devika's playable castle puzzle.
+    const castleEnvironmentManager = isStudent
+      ? new PythonPuzzleEnvironment(world, [envMesh, hintEntity?.object3D, raiseHandEntity?.object3D])
+      : null;
+    (window as any).castleEnvironmentManager = castleEnvironmentManager;
 
     // ========================================================
     // DEBUGGING REFERENCES
@@ -2542,10 +2697,15 @@ World.create(
     (window as any).studentResultEntity = studentResultEntity;
     (window as any).world = world;
     (window as any).player = player;
-    (window as any).instructorMesh = instructorMesh;
+    // Retain a null compatibility reference for optional legacy visibility
+    // checks; the instructor GLB and its environment entity no longer exist.
+    (window as any).instructorMesh = null;
     (window as any).classroomMesh = envMesh;
     (window as any).positionInstructorOnStage = positionInstructorOnStage;
     (window as any).prepareInstructorView = prepareInstructorView;
+    (window as any).instructorQuizMonitorObject = instructorQuizMonitorObject;
+    (window as any).bringInstructorOverlayPanelForward =
+      bringInstructorOverlayPanelForward;
     (window as any).instructorDashboardEntity = instructorDashboardEntity;
     (window as any).instructorDashboardObject = instructorDashboardObject;
     (window as any).instructorDebriefChoiceEntity = instructorDebriefChoiceEntity;
@@ -2573,6 +2733,8 @@ World.create(
     envMesh.updateMatrixWorld(true);
     renderer.render(scene, camera);
     disposeVRLoginResources();
+    classroomSceneReady = true;
+    syncLateJoinActivity();
 
     console.log(`[Index] ✅ Application initialized for ${activeUser.role}: ${activeUser.username}`);
   })

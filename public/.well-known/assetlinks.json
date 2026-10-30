@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "edu.umes.vrclassroom.test",
+      "sha256_cert_fingerprints": [
+        "B8:E3:BF:59:F2:0E:67:E2:7D:C5:92:04:BB:77:7E:63:41:96:45:20:CA:49:58:3F:02:17:92:E7:1B:5A:EA:BA"
+      ]
+    }
+  }
+]

@@ -1,0 +1,132 @@
+<!-- Instructor activity sequence and end-class confirmation. -->
+<style>
+  .dashboard-root { overflow: hidden; width: 1040; height: 820; flex-direction: column; gap: 14; padding: 26; background-color: #020b18; border-radius: 22; border-width: 2; border-color: #1689b7; pointer-events: auto; }
+  .dashboard-header { height: 72; flex-direction: row; justify-content: space-between; align-items: center; padding-left: 8; padding-right: 4; border-bottom-width: 2; border-bottom-color: rgba(14, 165, 233, 0.5); }
+  .title-area { flex-direction: column; gap: 5; }
+  .dashboard-title { color: #ffffff; font-size: 30; font-weight: 800; font-family: inter; }
+  .dashboard-subtitle { color: #38bdf8; font-size: 13; font-weight: 700; font-family: inter; }
+  .header-right { flex-direction: row; gap: 13; align-items: center; }
+  .online-counter { width: 170; height: 50; flex-direction: row; gap: 10; align-items: center; justify-content: center; background-color: #082f49; border-radius: 10; border-width: 1; border-color: #38bdf8; }
+  .task-counter { width: 120; height: 50; flex-direction: row; gap: 8; align-items: center; justify-content: center; background-color: #10253d; border-radius: 10; border-width: 1; border-color: #f59e0b; }
+  .task-counter-number { color: #ffffff; font-size: 24; font-weight: 800; font-family: inter; }
+  .task-counter-label { color: #ffffff; font-size: 11; font-weight: 700; font-family: inter; }
+  .online-number { color: #67e8f9; font-size: 27; font-weight: 800; font-family: inter; }
+  .online-label { color: #e0f2fe; font-size: 11; font-weight: 700; font-family: inter; }
+  .close-button { width: 48; height: 48; align-items: center; justify-content: center; background-color: rgba(30, 41, 59, 0.9); border-radius: 10; border-width: 1; border-color: rgba(148, 163, 184, 0.5); color: #ffffff; font-size: 19; font-weight: 800; cursor: pointer; pointer-events: auto; }
+  .close-button:hover { background-color: rgba(127, 29, 29, 0.8); border-color: #f87171; }
+  .queue-shell { height: 576; flex-direction: column; gap: 10; padding: 14; background-color: #061629; border-radius: 16; border-width: 1; border-color: #176b91; }
+  .queue-header { height: 30; flex-direction: row; justify-content: space-between; align-items: center; }
+  .queue-title { color: #ffffff; font-size: 20; font-weight: 800; font-family: inter; }
+  .queue-body { flex-grow: 1; flex-direction: row; gap: 12; }
+  .task-scroll { width: 910; height: 510; flex-direction: column; gap: 8; overflow: hidden; }
+  .lesson-page { flex-direction: column; gap: 8; }
+  .game-list { flex-direction: column; gap: 8; }
+  .lesson-page-hidden { display: none; }
+  .menu-card { height: 94; flex-shrink: 0; flex-direction: row; align-items: center; gap: 12; padding-left: 14; padding-right: 14; background-color: #0a2341; border-radius: 10; border-width: 1; border-color: #18577a; cursor: pointer; pointer-events: auto; }
+  .game-card { height: 60; flex-direction: row; align-items: center; gap: 12; padding-left: 14; padding-right: 14; background-color: #0a2341; border-radius: 10; border-width: 1; border-color: #18577a; cursor: pointer; pointer-events: auto; }
+  .menu-card:hover { background-color: #0c375c; border-color: #22d3ee; }
+  .game-card:hover { background-color: #0c375c; border-color: #22d3ee; }
+  .mode-button-active { border-color: #22d3ee; background-color: rgba(8, 70, 105, 0.88); }
+  .task-number { width: 28; color: #7dd3fc; font-size: 15; font-weight: 800; font-family: inter; }
+  .task-type { width: 140; height: 40; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 6; color: #ffffff; font-size: 14; font-weight: 800; font-family: inter; }
+  .video-type { background-color: #0369a1; }
+  .challenge-type { background-color: #d97706; }
+  .briefing-type { background-color: #4f46e5; }
+  .game-type { background-color: #059669; }
+  .card-copy { flex-grow: 1; flex-direction: column; gap: 3; }
+  .card-title { color: #ffffff; font-size: 20; font-weight: 750; font-family: inter; }
+  .game-name { color: #ffffff; font-size: 17; font-weight: 750; font-family: inter; }
+  .card-description { color: #ffffff; font-size: 14; font-family: inter; }
+  .game-description { color: #ffffff; font-size: 12; font-family: inter; }
+  .game-code { display: none; }
+  .task-status-dot { width: 18; height: 18; background-color: #64748b; border-radius: 9; border-width: 1; border-color: #94a3b8; flex-shrink: 0; }
+  .task-status-complete { background-color: #22c55e; border-color: #86efac; }
+  .scroll-controls { width: 62; flex-direction: column; justify-content: center; gap: 12; }
+  .scroll-button { width: 62; height: 105; align-items: center; justify-content: center; background-color: rgba(3, 105, 161, 0.38); border-radius: 10; border-width: 1; border-color: rgba(34, 211, 238, 0.72); color: #cffafe; font-size: 13; font-weight: 800; font-family: inter; cursor: pointer; pointer-events: auto; }
+  .scroll-button:hover { background-color: rgba(8, 145, 178, 0.7); border-color: #67e8f9; }
+  .scroll-button-unavailable { background-color: rgba(30, 41, 59, 0.45); border-color: #475569; color: #64748b; }
+  .footer-row { height: 60; flex-direction: row; align-items: center; gap: 14; }
+  .footer-actions { width: 205; height: 54; flex-direction: row; gap: 8; }
+  .end-class-button { width: 205; height: 54; align-items: center; justify-content: center; background-color: rgba(153, 27, 27, 0.65); border-radius: 10; border-width: 1; border-color: #f87171; color: #fecaca; font-size: 15; font-weight: 800; font-family: inter; cursor: pointer; pointer-events: auto; }
+  .end-class-button:hover { background-color: rgba(185, 28, 28, 0.9); }
+  .end-confirm-row { position-type: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; flex-direction: column; align-items: center; justify-content: center; gap: 24; padding: 32; background-color: #020b18; border-radius: 22; pointer-events: auto; }
+  .end-confirm-title { color: #ffffff; font-size: 30; font-weight: 800; text-align: center; }
+  .end-confirm-message { color: #cbd5e1; font-size: 20; text-align: center; }
+  .end-confirm-actions { flex-direction: row; gap: 18; height: 70; }
+  .end-confirm-action { width: 220; height: 70; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 16; border-width: 2; color: #ffffff; font-size: 20; font-weight: 800; cursor: pointer; pointer-events: auto; }
+  .end-confirm-button { background-color: #991b1b; border-color: #fca5a5; }
+  .end-confirm-button:hover { background-color: #dc2626; }
+  .end-cancel-button:hover { background-color: #475569; }
+  .end-cancel-button { background-color: #334155; border-color: #94a3b8; }
+  .is-hidden { display: none; }
+  .confirmation-obscured { display: none; }
+  .status-area { flex-grow: 1; height: 54; flex-direction: row; align-items: center; justify-content: space-between; padding-left: 18; padding-right: 18; background-color: rgba(8, 47, 73, 0.62); border-radius: 10; border-width: 1; border-color: rgba(14, 165, 233, 0.44); }
+  .status-text { color: #cbd5e1; font-size: 13; font-family: inter; }
+  .current-mode { color: #22d3ee; font-size: 13; font-weight: 800; font-family: inter; }
+
+  .dashboard-root { height: 870; gap: 12; }
+  .dashboard-title { font-size: 26; }
+  .header-right { gap: 8; }
+  .utility-button { width: 150; height: 48; flex-shrink: 0; padding-left: 14; padding-right: 14; flex-direction: row; gap: 8; align-items: center; justify-content: center; background-color: #10253d; border-radius: 9; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 17; cursor: pointer; pointer-events: auto; }
+  .utility-button:hover { background-color: #0c5475; border-color: #a5f3fc; color: #ffffff; }
+  .queue-shell { height: 580; }
+  .queue-body { flex-direction: column; }
+  .task-scroll { width: 948; height: 510; gap: 8; }
+  .menu-card { height: 78; }
+  .task-number { width: 40; font-size: 23; }
+  .task-type { display: none; }
+  .card-title { font-size: 21; }
+  .card-description { font-size: 13; color: #a7bdd6; }
+  .chevron { font-size: 26; color: #ffffff; }
+  .navigation { height: 60; flex-direction: row; gap: 18; }
+  .scroll-button { width: 475; height: 60; font-size: 21; }
+  .selected-task { background-color: #084566; border-color: #22d3ee; border-width: 2; }
+  .roster-row { height: 44; font-size: 17; color: #ffffff; }
+  .online-number { font-size: 18; }
+  .end-class-button { background-color: #1b1726; height: 46; }
+
+ .queue-shell { background-color: #020b18; border-width: 0; padding-left: 0; padding-right: 0; }
+ .task-scroll { width: 980; }
+ .sequence-row { height: 78; flex-shrink: 0; flex-direction: row; align-items: center; gap: 16; }
+ .step-rail { width: 56; height: 86; flex-shrink: 0; flex-direction: column; align-items: center; justify-content: center; }
+ .step-line { width: 3; height: 19; flex-shrink: 0; background-color: #5e819f; }
+ .step-line-empty { background-color: transparent; }
+ .step-circle { width: 48; height: 48; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 24; border-width: 2; border-color: #7698b5; background-color: #172d45; }
+ .step-current { background-color: #22d3ee; border-color: #67e8f9; }
+ .task-number { width: 44; text-align: center; color: #ffffff; font-size: 25; }
+ .menu-card { width: 908; justify-content: flex-start; gap: 18; padding-left: 20; padding-right: 20; }
+ .card-copy { align-items: flex-start; justify-content: center; padding-right: 24; }
+ .card-title { text-align: left; }
+ .card-description { display: none; }
+ .arrow-icon { width: 28; height: 28; flex-shrink: 0; }
+ .scroll-button { flex-direction: row; gap: 18; }
+ .dashboard-compact { width: 800; height: 440; }
+ .queue-compact { height: 170; }
+ .list-compact { width: 748; height: 100; }
+ .card-compact { width: 676; }
+ .sequence-finished { color: #67e8f9; font-size: 24; padding-top: 20; }
+ .current-task-navigation { flex-grow: 1; height: 54; flex-direction: row; gap: 12; }
+ .current-task-nav-button { flex-grow: 1; height: 54; flex-direction: row; gap: 12; align-items: center; justify-content: center; background-color: #10253d; border-radius: 10; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 19; cursor: pointer; pointer-events: auto; }
+ .current-task-nav-button:hover { background-color: #0c5475; border-color: #a5f3fc; color: #ffffff; }
+</style>
+<Panel id="instructor-dashboard-root" class="dashboard-root">
+ <Panel class="dashboard-header">
+  <Panel class="title-area"><Text class="dashboard-title">Lesson Task Sequence</Text><Text class="dashboard-subtitle">POINT AND PRESS TRIGGER</Text></Panel>
+  <Panel class="header-right"><Button id="option2-home" class="utility-button">All Tasks</Button><Button id="option2-students" class="utility-button"><Text>Students</Text><Text id="online-student-count" class="online-number">0</Text></Button><Button id="dashboard-close-button" class="close-button">X</Button></Panel>
+ </Panel>
+ <Panel id="dashboard-main-content" class="queue-shell">
+  <Panel class="queue-header"><Text id="option2-progress" class="queue-title">Tasks</Text><Text id="option2-remaining" class="status-text">Select a task to open</Text></Panel>
+  <Text id="sequence-finished" class="sequence-finished is-hidden">All activities have been run. Select All Tasks to revisit them.</Text>
+  <Panel id="option2-task-list" class="task-scroll"><Panel id="queue-row-0" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-0" class="step-line"></Panel><Panel id="queue-step-0" class="step-circle"><Text id="queue-task-0-number" class="task-number">1</Text></Panel><Panel id="queue-line-bottom-0" class="step-line"></Panel></Panel><Button id="queue-task-0" class="menu-card"><Text id="queue-task-0-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-0-title" class="card-title">Task</Text><Text id="queue-task-0-description" class="card-description"></Text></Panel><Panel id="queue-task-0-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+<Panel id="queue-row-1" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-1" class="step-line"></Panel><Panel id="queue-step-1" class="step-circle"><Text id="queue-task-1-number" class="task-number">2</Text></Panel><Panel id="queue-line-bottom-1" class="step-line"></Panel></Panel><Button id="queue-task-1" class="menu-card"><Text id="queue-task-1-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-1-title" class="card-title">Task</Text><Text id="queue-task-1-description" class="card-description"></Text></Panel><Panel id="queue-task-1-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+<Panel id="queue-row-2" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-2" class="step-line"></Panel><Panel id="queue-step-2" class="step-circle"><Text id="queue-task-2-number" class="task-number">3</Text></Panel><Panel id="queue-line-bottom-2" class="step-line"></Panel></Panel><Button id="queue-task-2" class="menu-card"><Text id="queue-task-2-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-2-title" class="card-title">Task</Text><Text id="queue-task-2-description" class="card-description"></Text></Panel><Panel id="queue-task-2-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+<Panel id="queue-row-3" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-3" class="step-line"></Panel><Panel id="queue-step-3" class="step-circle"><Text id="queue-task-3-number" class="task-number">4</Text></Panel><Panel id="queue-line-bottom-3" class="step-line"></Panel></Panel><Button id="queue-task-3" class="menu-card"><Text id="queue-task-3-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-3-title" class="card-title">Task</Text><Text id="queue-task-3-description" class="card-description"></Text></Panel><Panel id="queue-task-3-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+<Panel id="queue-row-4" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-4" class="step-line"></Panel><Panel id="queue-step-4" class="step-circle"><Text id="queue-task-4-number" class="task-number">5</Text></Panel><Panel id="queue-line-bottom-4" class="step-line"></Panel></Panel><Button id="queue-task-4" class="menu-card"><Text id="queue-task-4-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-4-title" class="card-title">Task</Text><Text id="queue-task-4-description" class="card-description"></Text></Panel><Panel id="queue-task-4-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+<Panel id="queue-row-5" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-5" class="step-line"></Panel><Panel id="queue-step-5" class="step-circle"><Text id="queue-task-5-number" class="task-number">6</Text></Panel><Panel id="queue-line-bottom-5" class="step-line"></Panel></Panel><Button id="queue-task-5" class="menu-card"><Text id="queue-task-5-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-5-title" class="card-title">Task</Text><Text id="queue-task-5-description" class="card-description"></Text></Panel><Panel id="queue-task-5-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+</Panel>
+  <Panel id="option2-roster" class="task-scroll is-hidden"><Text id="option2-student-0" class="roster-row"></Text><Text id="option2-student-1" class="roster-row"></Text><Text id="option2-student-2" class="roster-row"></Text><Text id="option2-student-3" class="roster-row"></Text><Text id="option2-student-4" class="roster-row"></Text><Text id="option2-student-5" class="roster-row"></Text><Text id="option2-student-6" class="roster-row"></Text><Text id="option2-student-7" class="roster-row"></Text><Text id="option2-student-8" class="roster-row"></Text><Text id="option2-student-9" class="roster-row"></Text></Panel>
+ </Panel>
+ <Panel id="task-navigation" class="navigation"><Button id="task-scroll-up" class="scroll-button"><Image class="arrow-icon" src="/images/icons/chevron-left-option2.png"/><Text>Previous</Text></Button><Button id="task-scroll-down" class="scroll-button"><Text>Next</Text><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
+  <Panel class="footer-row"><Panel class="footer-actions"><Button id="end-class-button" class="end-class-button">END CLASS</Button></Panel><Panel id="current-task-navigation" class="current-task-navigation"><Button id="current-task-previous" class="current-task-nav-button">Previous</Button><Button id="current-task-next" class="current-task-nav-button">Next</Button></Panel><Panel id="dashboard-status-area" class="status-area"><Text id="dashboard-status-text" class="status-text">Select a task or game</Text><Text id="current-mode-text" class="current-mode">Classroom Mode</Text></Panel></Panel>
+ <Panel id="end-class-confirm-row" class="end-confirm-row is-hidden"><Text class="end-confirm-title">End this class?</Text><Text class="end-confirm-message">All students will leave the current session.</Text><Panel class="end-confirm-actions"><Button id="end-class-cancel-button" class="end-confirm-action end-cancel-button">KEEP CLASS OPEN</Button><Button id="end-class-confirm-button" class="end-confirm-action end-confirm-button">CONFIRM END</Button></Panel></Panel>
+</Panel>

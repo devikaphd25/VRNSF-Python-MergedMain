@@ -1,10 +1,18 @@
+import { saveAppGameResult, getRecentAppGameResults } from "./server/services/game-results.service.js";
+import { pickRandomAvatar } from "./shared/vr-avatars.js";
+import {bindGameRun,recordGameResponse} from "./server/services/game-results.service.js";
+import classroomRoutes from "./server/routes/classroom.routes.js";
+import {activityForSession, selectSessionActivity} from "./server/repositories/course-content.repository.js";
+import { saveChallengeResponses, saveDragDropResponses } from "./server/services/challenge-results.service.js";
+import { sanitizeSeatAvatarPose } from "./shared/seat-avatar-tracking.js";
+import { RoomActivityStore } from "./server/state/room-activity.js";
 /**
  * Main multiplayer server.
  *
  * Goal: coordinate classroom, video, challenge, hand-raise, and Python-lab
  * events over Socket.IO while persisting identities/results through Supabase.
- * Data dependencies: app_users, game_results, rooms, participants,
- * week_activities, quiz_questions, and quiz_responses.
+ * Data dependencies: users, game_results, rooms, participants,
+ * activities, challenge_questions, and challenge_responses.
  * Called by: `npm run dev:server`; browser clients connect through
  * `src/network/socket.ts`.
  */
@@ -13,37 +21,47 @@ import http from "http";
 import fs from "node:fs";
 import path from "node:path";
 import { Server } from "socket.io";
-import type { ClassroomSocket, ClassroomStudent, QuickChallenge, QuickChallengeReview } from "./server/types.js";
+import type {
+  QuickChallengeStudentProgress,
+  Challenge2Category,
+  Challenge2Session,
+  ClassroomSocket,
+  ClassroomStudent,
+  QuickChallenge,
+  QuickChallengeReview
+} from "./server/types.js";
 
 import {
   students,
   labSessions,
   returningStudents,
   connectedUsers,
-} from "./server/state/store.js";
+} from "./server/state/classroom-state.js";
 
 import {
-  LabSession,
-} from "./server/state/LabSession.js";
+  LabAttemptState,
+} from "./server/state/lab-attempt.js";
 import {
   getStudentList,
   findStudent,
-} from "./server/services/student.service.js";
+} from "./server/services/connected-students.service.js";
 
 import {
   broadcastStudentList,
-} from "./server/services/broadcast.service.js";
-import loginRoutes from "./server/routes/login.routes.js";
-import { supabaseAdmin } from "./server/services/supabase-admin.service.js";
+} from "./server/services/student-list-broadcast.service.js";
+import loginRoutes from "./server/routes/device-registration.routes.js";
+import { supabaseAdmin } from "./server/database/supabase-client.js";
 import {
   getAppUserById,
   getAppUserByUsername,
   getAppUserCount,
-  getRecentAppGameResults,
   initializeAppDataRepository,
-  saveAppGameResult,
   updateAppUserLocation,
-} from "./server/services/app-data.repository.js";
+} from "./server/repositories/users.repository.js";
+import {
+  TRUE_FALSE_CHALLENGE_TYPE,
+  DEFAULT_CHALLENGE_DURATION_SECONDS,
+} from "./server/config/true-false-settings.js";
 
 // Separates saved results from different launches of the same lab. Historical
 // rows remain in Supabase, but the live monitor reads only this run.
@@ -63,14 +81,265 @@ const io = new Server(httpServer, {
 
 const instructorRoomCloseTimers = new Map<string, NodeJS.Timeout>();
 const INSTRUCTOR_DISCONNECT_GRACE_MS = 1_500;
+const roomActivities = new RoomActivityStore();
+const clearLiveActivity=roomActivities.clear.bind(roomActivities);
+roomActivities.clear=(roomId,activityId)=>{
+  if(activityId&&roomActivities.get(roomId)?.payload.id!==activityId)return;
+  clearLiveActivity(roomId,activityId);
+  void selectSessionActivity(roomId,null).catch(error=>console.error('[Session activity]',error));
+};
 const activeQuickChallenges = new Map<string, QuickChallenge>();
 const lastQuickChallengeReviews = new Map<string, QuickChallengeReview>();
+const activeChallenge2Sessions = new Map<string, Challenge2Session>();
+
+// Leave just enough time for the final correct feedback to render, then stop
+// both instructor and student timers and publish the ranking immediately.
+const CHALLENGE_2_ALL_COMPLETE_DELAY_MS = 150;
+
+function buildChallenge2FinalResults(session: Challenge2Session) {
+  const endedAt = Date.now();
+  const rankings = [...session.progress.entries()].map(([socketId, progress]) => {
+    const student = students[socketId];
+    const correctAnswers = progress.completedItemIds.size;
+    const accuracy = progress.attempts > 0
+      ? correctAnswers / progress.attempts
+      : 0;
+    const elapsedSeconds = Math.max(
+      0,
+      ((progress.completedAt ?? endedAt) - progress.startedAt) / 1000
+    );
+    const speed = Math.max(
+      0,
+      Math.min(1, 1 - elapsedSeconds / session.durationSeconds)
+    );
+    const score = progress.attempts > 0
+      ? accuracy * 0.70 + speed * 0.30
+      : 0;
+    const mistakes = [...progress.wrongSelections.entries()].map(
+      ([itemId, selections]) => ({
+        itemId,
+        itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+        // Map insertion order preserves the student's first wrong category.
+        firstAnswer: selections.keys().next().value as Challenge2Category,
+        correctAnswer: session.questions.find(q=>q.options.item.id===itemId)?.correct_answer.category,
+        attempts: [...selections.values()].reduce(
+          (total, count) => total + count,
+          0
+        ),
+      })
+    );
+    return {
+      studentId: socketId,
+      name: student?.name ?? "Student",
+      seat: student?.seat,
+      correctAnswers,
+      wrongAnswers: progress.wrongAttempts,
+      attempts: progress.attempts,
+      accuracy: accuracy * 100,
+      elapsedSeconds,
+      score: score * 100,
+      mistakes,
+      placement: null as number | null,
+    };
+  });
+
+  rankings.sort((left, right) => {
+    const leftAttempted = left.attempts > 0;
+    const rightAttempted = right.attempts > 0;
+    if (leftAttempted !== rightAttempted) return leftAttempted ? -1 : 1;
+    // Ranking priority: finish more devices, make fewer mistakes, then finish
+    // faster. When everyone completes all five, this becomes exactly
+    // "fewest mistakes first; fastest time breaks a tie."
+    return right.correctAnswers - left.correctAnswers ||
+      left.wrongAnswers - right.wrongAnswers ||
+      left.elapsedSeconds - right.elapsedSeconds ||
+      right.score - left.score;
+  });
+  rankings.filter(result => result.attempts > 0).forEach((result, index) => {
+    result.placement = index < 3 ? index + 1 : null;
+  });
+
+  const commonErrors = session.questions.map(q=>[q.options.item.id,q.correct_answer.category] as [string,Challenge2Category]).flatMap(
+    ([itemId, correctCategory]) => {
+      const selections = new Map<
+        Challenge2Category,
+        { count: number; students: Set<string> }
+      >();
+      for (const [studentId, progress] of session.progress.entries()) {
+        const itemSelections = progress.wrongSelections.get(itemId);
+        itemSelections?.forEach((count, category) => {
+          const selection = selections.get(category) ?? {
+            count: 0,
+            students: new Set<string>(),
+          };
+          selection.count += count;
+          selection.students.add(students[studentId]?.name ?? "Student");
+          selections.set(category, selection);
+        });
+      }
+      const mostCommon = [...selections.entries()].sort(
+        (a, b) => b[1].count - a[1].count
+      )[0];
+      return mostCommon
+        ? [{
+            itemId,
+            itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+            selectedCategory: mostCommon[0],
+            correctCategory,
+            count: mostCommon[1].count,
+            students: [...mostCommon[1].students],
+          }]
+        : [];
+    }
+  );
+
+  return {
+    challengeId: session.id,
+    endedAt,
+    durationSeconds: session.durationSeconds,
+    rankings,
+    commonErrors,
+    correctAnswers: session.questions.map(q=>[q.options.item.id,q.correct_answer.category] as [string,Challenge2Category]).map(
+      ([itemId, category]) => ({
+        itemId,
+        itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+        category,
+      })
+    ),
+  };
+}
+
+function getRoomClassroomStudents(roomId: string) {
+  return Object.entries(students).filter(([socketId, student]) => {
+    const client = io.sockets.sockets.get(socketId);
+    return (
+      student.role === "student" &&
+      client?.data.roomId === roomId &&
+      client.data.clientType === "classroom"
+    );
+  });
+}
+
+function getFivePartsQuestionStats(challenge: QuickChallenge) {
+  const questions = challenge.questions ?? [];
+  const progress = Array.from(challenge.studentProgress.values());
+  return questions.map((_question, questionIndex) => {
+    // Count each student's latest selection, including unfinished attempts.
+    // Drafts can skip questions, so their array position is not the question index.
+    const answers = progress.flatMap(student =>
+      student.answers.filter(answer => answer.questionIndex === questionIndex)
+    );
+    const correctCount = answers.filter(answer => answer.correct).length;
+    const wrongCount = answers.filter(answer => !answer.correct).length;
+    const answered = correctCount + wrongCount;
+    return {
+      questionIndex,
+      label: `Q${questionIndex + 1}`,
+      prompt: questions[questionIndex]?.prompt ?? `Question ${questionIndex + 1}`,
+      correctCount,
+      wrongCount,
+      accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
+    };
+  });
+}
+
+function getFivePartsScore(progress: QuickChallengeStudentProgress) {
+  return progress.answers.filter(answer => answer.correct).length;
+}
+
+function getQuickChallengeWinner(challenge: QuickChallenge): {
+  socketId: string | null;
+  name: string | null;
+  timeSeconds: number | null;
+} {
+  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+    const ranked = Array.from(challenge.studentProgress.entries())
+      .filter(([, progress]) => progress.completed)
+      .sort(([, left], [, right]) => {
+        const scoreDiff = getFivePartsScore(right) - getFivePartsScore(left);
+        if (scoreDiff !== 0) return scoreDiff;
+        return (left.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+          (right.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER);
+      });
+    const winner = ranked[0];
+    return {
+      socketId: winner?.[0] ?? null,
+      name: winner ? students[winner[0]]?.name ?? null : null,
+      timeSeconds: winner?.[1].totalTimeSeconds ?? null,
+    };
+  }
+
+  const rankedCorrectAnswers = Array.from(challenge.answers.entries())
+    .filter(([, answer]) => answer.correct)
+    .sort(
+      ([, left], [, right]) =>
+        left.responseTimeSeconds - right.responseTimeSeconds
+    );
+  const winnerEntry = rankedCorrectAnswers[0];
+  const winnerSocketId = winnerEntry?.[0] ?? null;
+  const winnerAnswer = winnerEntry?.[1] ?? null;
+  return {
+    socketId: winnerSocketId,
+    name: winnerSocketId ? students[winnerSocketId]?.name ?? null : null,
+    timeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
+  };
+}
+
+function emitQuickChallengeEnded(
+  challenge: QuickChallenge,
+  extra: { stoppedByInstructor?: boolean } = {}
+): void {
+  void saveChallengeResponses(challenge, extra.stoppedByInstructor ? "instructor_stop" : "ended").catch(error => {
+    console.error("[Challenge 1] Results pending:", error);
+    for (const client of io.sockets.sockets.values()) if (client.data.roomId === challenge.roomId && isInstructorSocket(client))
+      client.emit("challengeSaveFailed", { message: "Results could not be saved to Supabase. A server backup was retained." });
+  });
+  const winner = getQuickChallengeWinner(challenge);
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data.roomId !== challenge.roomId) continue;
+    client.emit("quickChallengeEnded", {
+      quizId: challenge.id,
+      winnerStudentId: winner.socketId,
+      winnerName: winner.name,
+      winnerTimeSeconds: winner.timeSeconds,
+      ...extra,
+    });
+  }
+}
 
 function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeReview {
-  const roomStudents = Object.entries(students).filter(([socketId, student]) => {
-    const client = io.sockets.sockets.get(socketId);
-    return student.role === "student" && client?.data.roomId === challenge.roomId;
-  });
+  const roomStudents = getRoomClassroomStudents(challenge.roomId);
+  const elapsedSeconds = Math.max(
+    0,
+    Math.round((Date.now() - challenge.startedAt) / 1000)
+  );
+
+  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+    const progresses = Array.from(challenge.studentProgress.values());
+    const completed = progresses.filter(progress => progress.completed);
+    const correctCount = completed.reduce(
+      (sum, progress) => sum + getFivePartsScore(progress),
+      0
+    );
+    const wrongCount = completed.reduce(
+      (sum, progress) => sum + (progress.answers.length - getFivePartsScore(progress)),
+      0
+    );
+    return {
+      quizId: challenge.id,
+      cycleLabel: challenge.cycleLabel ?? "Current Learning Cycle",
+      question: "Five Parts Challenge",
+      options: ["Completed", "In progress"],
+      correctIndex: 0,
+      answerCounts: [completed.length, Math.max(0, roomStudents.length - completed.length)],
+      studentCount: roomStudents.length,
+      answeredCount: completed.length,
+      correctCount,
+      wrongCount,
+      elapsedSeconds,
+    };
+  }
+
   const answers = Array.from(challenge.answers.values());
   const answerCounts = challenge.options.map((_, index) =>
     answers.filter(answer => answer.selectedIndex === index).length
@@ -86,8 +355,60 @@ function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeRev
     answeredCount: answers.length,
     correctCount: answers.filter(answer => answer.correct).length,
     wrongCount: answers.filter(answer => !answer.correct).length,
-    elapsedSeconds: Math.max(0, Math.round((Date.now() - challenge.startedAt) / 1000)),
+    elapsedSeconds,
   };
+}
+
+function notifyInstructorStudentProgress(
+  challenge: QuickChallenge,
+  socketId: string,
+  student: ClassroomStudent,
+  extra: Record<string, unknown> = {}
+): void {
+  const progress = challenge.studentProgress.get(socketId);
+  const answeredCount = progress?.answers.length ?? 0;
+  const correctCount = progress ? getFivePartsScore(progress) : 0;
+  const payload = {
+    quizId: challenge.id,
+    studentId: socketId,
+    userId: student.userId,
+    name: student.name,
+    answeredCount,
+    correctCount,
+    totalQuestions: challenge.totalQuestions ?? challenge.questions?.length ?? 0,
+    completed: Boolean(progress?.completed),
+    responseTimeSeconds: progress?.totalTimeSeconds,
+    questionStats: getFivePartsQuestionStats(challenge),
+    ...extra,
+  };
+
+  for (const client of io.sockets.sockets.values()) {
+    if (
+      client.data.roomId === challenge.roomId &&
+      client.data.role === "instructor" &&
+      client.data.clientType === "classroom"
+    ) {
+      client.emit("quickChallengeStudentAnswered", payload);
+    }
+  }
+}
+
+function finishFivePartsIfEveryoneDone(challenge: QuickChallenge): void {
+  if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE) {
+    publishQuickChallengeReview(challenge);
+    return;
+  }
+  const roomStudents = getRoomClassroomStudents(challenge.roomId);
+  if (roomStudents.length === 0) return;
+  const everyoneDone = roomStudents.every(([socketId]) =>
+    challenge.studentProgress.get(socketId)?.completed
+  );
+  if (!everyoneDone) return;
+  if (challenge.timeout) clearTimeout(challenge.timeout);
+  publishQuickChallengeReview(challenge);
+  emitQuickChallengeEnded(challenge);
+  roomActivities.clear(challenge.roomId,challenge.id);
+  activeQuickChallenges.delete(challenge.roomId);
 }
 
 function publishQuickChallengeReview(challenge: QuickChallenge): void {
@@ -98,6 +419,48 @@ function publishQuickChallengeReview(challenge: QuickChallenge): void {
       client.emit("debriefReviewData", review);
     }
   }
+}
+
+function endChallenge2Session(
+  session: Challenge2Session,
+  reason: "completed" | "timeout" | "instructor_stop"
+): void {
+  roomActivities.clear(session.roomId, session.id);
+  if (session.timeout) clearTimeout(session.timeout);
+  void saveDragDropResponses(session).catch(error=>{
+    console.error('[Challenge 2] Results pending:',error);
+    for(const client of io.sockets.sockets.values())if(client.data.roomId===session.roomId&&isInstructorSocket(client))client.emit('challengeSaveFailed',{message:'Results pending. A server backup was retained.'});
+  });
+  const finalResults = buildChallenge2FinalResults(session);
+  // A manually stopped activity is a review, not a completed competition.
+  // Preserve progress and mistakes but do not award placements.
+  if (reason === "instructor_stop") {
+    finalResults.rankings.forEach(result => {
+      result.placement = null;
+    });
+  }
+
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data.roomId !== session.roomId) continue;
+    client.emit("challenge2Ended", {
+      challengeId: session.id,
+      reason,
+      finalResults,
+    });
+
+    if (client.data.role !== "instructor") {
+      const student = students[client.id];
+      if (student) student.mode = "Classroom Mode";
+      client.emit("modeChanged", {
+        mode: "Classroom Mode",
+        destination: "Class",
+        fromInstructor: true,
+      });
+    }
+  }
+
+  activeChallenge2Sessions.delete(session.roomId);
+  broadcastStudentList(io);
 }
 
 function cancelScheduledRoomClose(roomId: string): void {
@@ -118,12 +481,13 @@ function scheduleRoomClose(roomId: string): void {
         activeSocket.data.clientType === "classroom"
     );
     if (instructorReconnected) return;
+    roomActivities.clear(roomId);
 
     const { error } = await supabaseAdmin
-      .from("rooms")
-      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .from("class_sessions")
+      .update({ ended_at: new Date().toISOString(), active_activity_id: null })
       .eq("id", roomId)
-      .eq("is_active", true);
+      .is("ended_at", null);
 
     if (error) {
       console.error(`[Room] Could not close ${roomId}:`, error.message);
@@ -256,67 +620,110 @@ function sendMuteState(studentId: string, student: ClassroomStudent, isMuted: bo
 app.use(express.json());
 app.use("/api", loginRoutes);
 
-app.get("/api/instructor-content", async (_request, response) => {
-  const { data: week, error: weekError } = await supabaseAdmin
-    .from("learning_weeks")
-    .select("id, week_number, title")
-    .eq("is_published", true)
-    .order("week_number", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+app.use("/api", classroomRoutes);
 
-  if (weekError || !week) {
-    response.status(500).json({ error: weekError?.message ?? "No published week found" });
-    return;
-  }
-
-  const [{ data: lessons, error: lessonsError }, { data: activities, error: activitiesError }] =
-    await Promise.all([
-      supabaseAdmin
-        .from("week_lessons")
-        .select("id, lesson_number, title")
-        .eq("week_id", week.id)
-        .eq("is_enabled", true)
-        .order("lesson_number", { ascending: true }),
-      supabaseAdmin
-        .from("week_activities")
-        .select("id, lesson_id, activity_order, activity_type, title, description, asset_path, environment_path, duration_seconds")
-        .eq("week_id", week.id)
-        .eq("is_enabled", true)
-        .order("activity_order", { ascending: true }),
-    ]);
-
-  if (lessonsError || activitiesError) {
-    response.status(500).json({
-      error: lessonsError?.message ?? activitiesError?.message ?? "Could not load curriculum",
-    });
-    return;
-  }
-
-  response.json({
-    weekNumber: week.week_number,
-    weekTitle: week.title,
-    lessons: (lessons ?? []).map(lesson => ({
-      lessonNumber: lesson.lesson_number,
-      title: lesson.title,
-      activities: (activities ?? [])
-        .filter(activity => activity.lesson_id === lesson.id)
-        .map(activity => ({
-          activityId: activity.id,
-          activityType: activity.activity_type,
-          title: activity.title,
-          description: activity.description,
-          assetPath: activity.asset_path,
-          environmentPath: activity.environment_path,
-          durationSeconds: activity.duration_seconds,
-        })),
-    })),
-  });
-});
+// Optional production web host for the packaged Quest app. Only dist/ is served.
+if (process.env.SERVE_WEB_APP === "true") {
+  const webRoot = path.resolve(process.cwd(), "dist");
+  app.use("/.well-known", express.static(path.join(webRoot, ".well-known")));
+  app.use(express.static(webRoot));
+}
 io.on("connection", (socket: ClassroomSocket) => {
   console.log("Connected:", socket.id);
 
+  // Acknowledge registration and finish constructing client systems before replay.
+  let activitySynced = false;
+  socket.on("classroomSceneReady", () => {
+    const roomId = String(socket.data.roomId ?? "");
+    const student = students[socket.id];
+    if (activitySynced || !roomId || !student || socket.data.role !== "student" ||
+        socket.data.clientType !== "classroom") return;
+    activitySynced = true;
+    const activity = roomActivities.get(roomId);
+    socket.emit("studentWelcome", {
+      roomId, userId: String(socket.data.userId ?? student.id ?? socket.id),
+      activityEvent: activity?.event,
+    });
+    if (!activity) return;
+    if(activity.event==='launchPythonPuzzle'){
+      bindGameRun(Number(socket.data.userId),{participantId:Number(socket.data.participantId),activityId:activity.payload.activityId,startedAt:activity.payload.startedAt,roomId});
+    }
+    if (activity.event === "displayRoomOpened") {
+      student.mode = "Display Room";
+    } else if (activity.event === "challenge2Started") {
+      const session = activeChallenge2Sessions.get(roomId);
+      if (!session || session.id !== activity.payload.id) return;
+      if(socket.data.participantId)session.participants.set(socket.id,String(socket.data.participantId));
+      if (!session.progress.has(socket.id)) session.progress.set(socket.id, {
+        completedItemIds: new Set(), attempts: 0, wrongAttempts: 0,
+        wrongSelections: new Map(), startedAt: session.startedAt, completedAt: null,
+      });
+      student.mode = "Challenge 2";
+    } else if (activity.event === "quickChallengeStarted") {
+      if (activeQuickChallenges.get(roomId)?.id !== activity.payload.id) return;
+      if(socket.data.participantId) activeQuickChallenges.get(roomId)?.responseParticipants?.set(socket.id,String(socket.data.participantId));
+      student.mode = "Quick Challenge";
+    } else if (activity.event === "gameChanged") {
+      student.mode = "Game Mode";
+      student.inLab = true;
+      student.labGameId = "python-type-lab";
+      const user = connectedUsers[Number(socket.data.userId)];
+      if (user) { user.mode = "Game Mode"; user.inLab = true; }
+    } else if (activity.event === "presentationContentChanged") {
+      student.mode = "Presentation Mode";
+      const review = lastQuickChallengeReviews.get(roomId);
+      if (review && activity.payload.mediaType === "image") socket.emit("debriefReviewData", review);
+    }
+    socket.emit(activity.event, activity.payload);
+    if (activity.event === "presentationContentChanged" && activity.payload.mediaType === "video" && activity.playback) {
+      socket.emit("videoPlaybackCommand", activity.playback);
+    }
+    broadcastStudentList(io);
+  });
+
+  // The gallery is code-defined; only its room-scoped launch state is synchronized.
+  socket.on("instructorDisplayRoom", async (data = {}) => {
+    try {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") return;
+    const open = data.open !== false;
+    const activity=open?await activityForSession(roomId,'display-room',Number(data.activityId)||undefined):null;
+    await selectSessionActivity(roomId,activity?.id??null);
+    if (open) roomActivities.set(roomId, { event: "displayRoomOpened", payload: {} });
+    else if (roomActivities.get(roomId)?.event === "displayRoomOpened") roomActivities.clear(roomId);
+    for (const client of io.sockets.sockets.values()) {
+      if (client.data.roomId !== roomId || client.data.clientType !== "classroom") continue;
+      client.emit(open ? "displayRoomOpened" : "displayRoomClosed");
+      if (students[client.id]) students[client.id].mode = open ? "Display Room" : "Classroom Mode";
+    }
+    broadcastStudentList(io);
+    } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
+
+  });
+
+  socket.on("instructorLaunchPythonPuzzle", async (data = {}) => {
+    try {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") return;
+    if(data.returnToClass===true){
+      await selectSessionActivity(roomId,null);roomActivities.clear(roomId);
+    }else{
+      const activity=await activityForSession(roomId,'python-puzzle',Number(data.activityId)||undefined);
+      const startedAt=Date.now();
+      await selectSessionActivity(roomId,activity.id);
+      roomActivities.set(roomId,{event:'launchPythonPuzzle',payload:{activityId:activity.id,startedAt}});
+      for(const [id,student]of getRoomClassroomStudents(roomId)){
+        const participantId=Number(io.sockets.sockets.get(id)?.data.participantId);
+        if(participantId)bindGameRun(Number(student.userId),{participantId,activityId:activity.id,startedAt,roomId});
+      }
+    }
+    for(const [id]of getRoomClassroomStudents(roomId))io.to(id).emit(data.returnToClass===true?'returnFromPythonPuzzle':'launchPythonPuzzle');
+    } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
+
+  });
+
   socket.on("instructorQuickChallenge", async (data = {}) => {
+    try {
     const roomId = String(socket.data.roomId ?? "").trim();
     if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
       socket.emit("error", {
@@ -326,69 +733,42 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
 
     const previous = activeQuickChallenges.get(roomId);
-    if (previous?.timeout) clearTimeout(previous.timeout);
-
-    const durationSeconds = Math.min(
-      300,
-      Math.max(15, Number(data.durationSeconds) || 60)
-    );
-    const isTrueFalse = data.challengeType === "true-false";
-    const activityId = Number(data.activityId);
-    let databaseQuestion: {
-      prompt: string;
-      choices: unknown;
-      correct_index: number;
-    } | null = null;
-    let cycleLabel = isTrueFalse ? "True or False Cycle" : "Current Learning Cycle";
-
-    if (!isTrueFalse && Number.isInteger(activityId) && activityId > 0) {
-      const { data: question, error: questionError } = await supabaseAdmin
-        .from("quiz_questions")
-        .select("prompt, choices, correct_index")
-        .eq("activity_id", activityId)
-        .order("ordinal", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (questionError) {
-        console.error("[Quick Challenge] Could not load Supabase question:", questionError.message);
-      } else if (question) {
-        databaseQuestion = question;
-      }
-
-      const { data: activity } = await supabaseAdmin
-        .from("week_activities")
-        .select("lesson_number, title")
-        .eq("id", activityId)
-        .maybeSingle();
-      if (activity) {
-        cycleLabel = `Lesson ${activity.lesson_number} · ${activity.title}`;
-      }
+    if (previous) {
+      if(previous.timeout)clearTimeout(previous.timeout);
+      emitQuickChallengeEnded(previous,{stoppedByInstructor:true});
     }
 
-    const databaseChoices = Array.isArray(databaseQuestion?.choices)
-      ? databaseQuestion.choices.map(String)
-      : null;
+    const activity=await activityForSession(roomId,data.challengeType===TRUE_FALSE_CHALLENGE_TYPE?'true_false':'multiple_choice',Number(data.activityId)||undefined);
+    if(activity.activity_type!=='challenge'||!['true_false','multiple_choice'].includes(activity.activity_key))throw Error('Select a question challenge');
+    const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
+    if(error)throw error;
+    if(!rows?.length||rows.some(q=>!Array.isArray(q.options)||q.options.length<2||q.options.length>4||!Number.isInteger(q.correct_answer?.choice_index)||q.correct_answer.choice_index<0||q.correct_answer.choice_index>=q.options.length))throw Error('Challenge questions are missing or invalid');
+    const isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false';
+    const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||DEFAULT_CHALLENGE_DURATION_SECONDS));
+    const cycleLabel=activity.title;
+    const fivePartsQuestions=rows.map(q=>({id:String(q.id),prompt:q.question_text,options:q.options as string[],correctIndex:q.correct_answer.choice_index as number}));
+    const fivePartsQuestion=fivePartsQuestions[0];
+    await selectSessionActivity(roomId,activity.id);
     const challenge: QuickChallenge = {
+      activityId: activity.id,
       id: `quick-${roomId}-${Date.now()}`,
       roomId,
-      question: isTrueFalse
-        ? "True or False: In Python, True is a Boolean value."
-        : databaseQuestion?.prompt ?? "Which part of a computer runs the instructions — the “brain”?",
-      options: isTrueFalse
-        ? ["True", "False"]
-        : databaseChoices?.length === 4
-          ? databaseChoices
-          : ["CPU", "Main memory (RAM)", "Secondary storage", "Input devices"],
-      correctIndex: isTrueFalse
-        ? 0
-        : databaseChoices?.length === 4
-          ? Number(databaseQuestion?.correct_index) || 0
-          : 0,
+      question: fivePartsQuestion!.prompt,
+      options: [...fivePartsQuestion!.options],
+      correctIndex: fivePartsQuestion!.correctIndex,
       durationSeconds,
       startedAt: Date.now(),
       cycleLabel,
+      challengeType: isDatabaseSeries ? "database-series" : TRUE_FALSE_CHALLENGE_TYPE,
+      questionIndex: 0,
+      totalQuestions: fivePartsQuestions.length,
+      questions: fivePartsQuestions,
       answers: new Map(),
+      responseParticipants: new Map(getRoomClassroomStudents(roomId).flatMap(([id]) => {
+        const participant = io.sockets.sockets.get(id)?.data.participantId;
+        return participant ? [[id, String(participant)] as [string,string]] : [];
+      })),
+      studentProgress: new Map(),
       timeout: null,
     };
     activeQuickChallenges.set(roomId, challenge);
@@ -400,7 +780,20 @@ io.on("connection", (socket: ClassroomSocket) => {
       options: challenge.options,
       durationSeconds: challenge.durationSeconds,
       startedAt: challenge.startedAt,
+      challengeType: challenge.challengeType,
+      questionIndex: challenge.questionIndex,
+      totalQuestions: challenge.totalQuestions,
+      questions: isFiveParts
+        ? fivePartsQuestions.map(item => ({
+            question: item.prompt,
+            options: item.options,
+          }))
+        : undefined,
     };
+    roomActivities.set(roomId, {
+      event: "quickChallengeStarted", payload: studentPayload,
+      expiresAt: challenge.startedAt + challenge.durationSeconds * 1000,
+    });
     const roomStudents = [];
 
     for (const [studentSocketId, student] of Object.entries(students)) {
@@ -425,38 +818,68 @@ io.on("connection", (socket: ClassroomSocket) => {
       ...studentPayload,
       studentCount: roomStudents.length,
       students: roomStudents,
+      questionStats: isFiveParts ? getFivePartsQuestionStats(challenge) : undefined,
     });
 
     challenge.timeout = setTimeout(() => {
       if (activeQuickChallenges.get(roomId)?.id !== challenge.id) return;
 
       publishQuickChallengeReview(challenge);
-
-      const rankedCorrectAnswers = Array.from(challenge.answers.entries())
-        .filter(([, answer]) => answer.correct)
-        .sort(
-          ([, left], [, right]) =>
-            left.responseTimeSeconds - right.responseTimeSeconds
-        );
-      const winnerEntry = rankedCorrectAnswers[0];
-      const winnerSocketId = winnerEntry?.[0] ?? null;
-      const winnerAnswer = winnerEntry?.[1] ?? null;
-      const winnerStudent = winnerSocketId
-        ? students[winnerSocketId]
-        : null;
-
-      for (const client of io.sockets.sockets.values()) {
-        if (client.data.roomId === roomId) {
-          client.emit("quickChallengeEnded", {
-            quizId: challenge.id,
-            winnerStudentId: winnerSocketId,
-            winnerName: winnerStudent?.name ?? null,
-            winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
-          });
-        }
-      }
+      emitQuickChallengeEnded(challenge);
+      roomActivities.clear(roomId, challenge.id);
       activeQuickChallenges.delete(roomId);
     }, durationSeconds * 1000 + 4000);
+    } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
+
+  });
+
+  // A retry is explicit and acknowledged only after the previous result is durable.
+  let challengeRetryPending = false;
+  socket.on("quickChallengeRetry", async (data = {}, acknowledge) => {
+    const reply = typeof acknowledge === "function" ? acknowledge : () => {};
+    const roomId = String(socket.data.roomId ?? "");
+    const challenge = activeQuickChallenges.get(roomId);
+    const progress = challenge?.studentProgress.get(socket.id);
+    if (challengeRetryPending || !challenge || challenge.id !== data.quizId ||
+        challenge.challengeType !== TRUE_FALSE_CHALLENGE_TYPE || socket.data.role !== "student" ||
+        !students[socket.id] || !progress?.completed ||
+        Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+      reply({ success: false, message: "This challenge is no longer available for retry." });
+      return;
+    }
+    challengeRetryPending = true;
+    try {
+      await saveChallengeResponses(challenge, "completed");
+      if (activeQuickChallenges.get(roomId) !== challenge || !socket.connected ||
+          Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+        reply({ success: false, message: "The challenge has ended." });
+        return;
+      }
+      const attemptStartedAt = Math.max(Date.now(), (progress.attemptStartedAt ?? challenge.startedAt) + 1);
+      challenge.studentProgress.set(socket.id, { answers: [], completed: false, attemptStartedAt });
+      notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
+      reply({ success: true, attemptStartedAt });
+    } catch (error) {
+      console.error("[Challenge retry] Could not preserve completed attempt", error);
+      reply({ success: false, message: "Could not save the previous attempt. Please try again." });
+    } finally {
+      challengeRetryPending = false;
+    }
+  });
+
+  socket.on("quickChallengeDraft", (data = {}) => {
+    const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ""));
+    if (!challenge || challenge.id !== data.quizId || ![TRUE_FALSE_CHALLENGE_TYPE, "database-series"].includes(challenge.challengeType ?? "") ||
+      socket.data.role !== "student" || !students[socket.id] || challenge.studentProgress.get(socket.id)?.completed) return;
+    const progress = challenge.studentProgress.get(socket.id);
+    if (progress?.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt) return;
+    if (!Array.isArray(data.answers) || data.answers.length > (challenge.questions?.length ?? 0)) return;
+    const answers = data.answers.flatMap((value, questionIndex) => Number.isInteger(value) && value >= 0 && value < (challenge.questions?.[questionIndex]?.options.length ?? 0)
+      ? [{ questionIndex, selectedIndex: value, correct: value === challenge.questions![questionIndex].correctIndex, answeredAt: Date.now() }] : []);
+    challenge.studentProgress.set(socket.id, { ...progress, answers, completed: false });
+    if(socket.data.participantId) challenge.responseParticipants?.set(socket.id,String(socket.data.participantId));
+    // Refresh the instructor's live monitor without marking this attempt submitted.
+    notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
   });
 
   socket.on("quickChallengeAnswer", (data = {}) => {
@@ -468,9 +891,81 @@ io.on("connection", (socket: ClassroomSocket) => {
       !student ||
       socket.data.role === "instructor" ||
       !challenge ||
-      data.quizId !== challenge.id ||
-      challenge.answers.has(socket.id)
+      data.quizId !== challenge.id
     ) return;
+
+    if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+      const questions = challenge.questions ?? [];
+      const progress = challenge.studentProgress.get(socket.id) ?? {
+        answers: [],
+        completed: false,
+      };
+      if (progress.completed || questions.length === 0 ||
+          (progress.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt)) return;
+
+      const rawAnswers = Array.isArray(data.answers) ? data.answers : null;
+      if (!rawAnswers || rawAnswers.length !== questions.length) return;
+
+      const graded = [];
+      for (let questionIndex = 0; questionIndex < questions.length; questionIndex += 1) {
+        const currentQuestion = questions[questionIndex];
+        const selectedIndex = Number.isInteger(rawAnswers[questionIndex])
+          ? Number(rawAnswers[questionIndex])
+          : null;
+        if (
+          selectedIndex === null ||
+          selectedIndex < 0 ||
+          selectedIndex >= currentQuestion.options.length
+        ) {
+          return;
+        }
+        graded.push({
+          questionIndex,
+          selectedIndex,
+          correct: selectedIndex === currentQuestion.correctIndex,
+          answeredAt: Date.now(),
+        });
+      }
+
+      const answeredAt = Date.now();
+      progress.answers = graded;
+      progress.completed = true;
+      progress.finishedAt = answeredAt;
+      progress.totalTimeSeconds = Math.max(
+        0,
+        (answeredAt - (progress.attemptStartedAt ?? challenge.startedAt)) / 1000
+      );
+      challenge.studentProgress.set(socket.id, progress);
+      if (socket.data.participantId) challenge.responseParticipants?.set(socket.id, String(socket.data.participantId));
+      void saveChallengeResponses(challenge, "completed").catch(error => {
+        console.error("[Challenge 1] Save failed:", error);
+        socket.emit("challengeSaveFailed", { message: "Result backup retained; database save failed." });
+      });
+      publishQuickChallengeReview(challenge);
+
+      const correctCount = getFivePartsScore(progress);
+      socket.emit("quickChallengeResult", {
+        quizId: challenge.id,
+        completed: true,
+        hasNext: false,
+        correctCount,
+        answeredCount: graded.length,
+        totalQuestions: questions.length,
+        responseTimeSeconds: progress.totalTimeSeconds,
+        results: graded.map((answer, questionIndex) => ({
+          questionIndex,
+          selectedIndex: answer.selectedIndex,
+          correctIndex: questions[questionIndex].correctIndex,
+          correct: answer.correct,
+        })),
+        message: `Score: ${correctCount}/${questions.length}`,
+      });
+      notifyInstructorStudentProgress(challenge, socket.id, student);
+      finishFivePartsIfEveryoneDone(challenge);
+      return;
+    }
+
+    if (challenge.answers.has(socket.id)) return;
 
     const rawIndex = data.selectedIndex;
     const selectedIndex =
@@ -515,9 +1010,11 @@ io.on("connection", (socket: ClassroomSocket) => {
       responseTimeSeconds,
       message: correct
         ? "Correct!"
-        : `Not quite. The correct answer is ${String.fromCharCode(
-            65 + challenge.correctIndex
-          )}. ${challenge.options[challenge.correctIndex]}.`,
+        : challenge.options.length === 2
+          ? `Not quite. The correct answer is ${challenge.options[challenge.correctIndex]}.`
+          : `Not quite. The correct answer is ${String.fromCharCode(
+              65 + challenge.correctIndex
+            )}. ${challenge.options[challenge.correctIndex]}.`,
     });
 
     const answerPayload = {
@@ -559,25 +1056,9 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     if (challenge.timeout) clearTimeout(challenge.timeout);
     publishQuickChallengeReview(challenge);
-    const rankedCorrectAnswers = Array.from(challenge.answers.entries())
-      .filter(([, answer]) => answer.correct)
-      .sort(([, left], [, right]) =>
-        left.responseTimeSeconds - right.responseTimeSeconds
-      );
-    const winnerEntry = rankedCorrectAnswers[0];
-    const winnerSocketId = winnerEntry?.[0] ?? null;
-    const winnerAnswer = winnerEntry?.[1] ?? null;
-    const winnerStudent = winnerSocketId ? students[winnerSocketId] : null;
-
+    emitQuickChallengeEnded(challenge, { stoppedByInstructor: true });
     for (const client of io.sockets.sockets.values()) {
       if (client.data.roomId !== roomId) continue;
-      client.emit("quickChallengeEnded", {
-        quizId: challenge.id,
-        winnerStudentId: winnerSocketId,
-        winnerName: winnerStudent?.name ?? null,
-        winnerTimeSeconds: winnerAnswer?.responseTimeSeconds ?? null,
-        stoppedByInstructor: true,
-      });
       if (client.data.role !== "instructor") {
         const connectedStudent = students[client.id];
         if (connectedStudent) connectedStudent.mode = "Classroom Mode";
@@ -591,8 +1072,221 @@ io.on("connection", (socket: ClassroomSocket) => {
         });
       }
     }
+    roomActivities.clear(roomId, challenge.id);
     activeQuickChallenges.delete(roomId);
     broadcastStudentList(io);
+  });
+
+  // ========================================================
+  // LESSON 2 - CHALLENGE 2 (DEVICE GRAB AND DROP)
+  // ========================================================
+
+  socket.on("instructorStartChallenge2", async (data = {}) => {
+    try {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    if (!roomId || !isInstructorSocket(socket) || socket.data.clientType !== "classroom") {
+      socket.emit("error", {
+        message: "Only a registered classroom instructor can start Challenge 2.",
+      });
+      return;
+    }
+
+    const activity=await activityForSession(roomId,'drag_drop',Number(data.activityId)||undefined);
+    const {data:questions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
+    if(error)throw error;
+    if(!questions?.length||questions.some(q=>q.question_type!=='drag_drop'||!q.options?.item?.id||!['input','output','both','storage'].includes(q.correct_answer?.category)))throw Error('Drag/drop questions are missing or invalid');
+    const items=questions.map(q=>({id:q.options.item.id,name:q.options.item.name,modelPath:q.options.item.model_path,imagePath:q.options.item.image_path,modelRotationY:q.options.item.model_rotation_y,feedback:q.options.item.feedback,category:q.correct_answer.category}));
+    const previous = activeChallenge2Sessions.get(roomId);
+    if (previous) endChallenge2Session(previous, "instructor_stop");
+    await selectSessionActivity(roomId,activity.id);
+
+    const durationSeconds = Math.min(
+      600,
+      Math.max(60, Number(data.durationSeconds) || 180)
+    );
+    const session: Challenge2Session = {
+      activityId:activity.id,questions,
+      participants:new Map(getRoomClassroomStudents(roomId).flatMap(([id])=>{
+        const participant=io.sockets.sockets.get(id)?.data.participantId;
+        return participant?[[id,String(participant)] as [string,string]]:[];
+      })),
+      id: `challenge-2-${roomId}-${Date.now()}`,
+      roomId,
+      durationSeconds,
+      startedAt: Date.now(),
+      progress: new Map(),
+      timeout: null,
+    };
+    activeChallenge2Sessions.set(roomId, session);
+    roomActivities.set(roomId, {
+      event: "challenge2Started",
+      payload: { id: session.id, durationSeconds, startedAt: session.startedAt, totalItems: session.questions.length, items },
+      expiresAt: session.startedAt + durationSeconds * 1000,
+    });
+
+    const roomStudents = [];
+    for (const [studentSocketId, student] of Object.entries(students)) {
+      const studentSocket = io.sockets.sockets.get(studentSocketId);
+      if (
+        !studentSocket ||
+        studentSocket.data.roomId !== roomId ||
+        studentSocket.data.role === "instructor" ||
+        studentSocket.data.clientType !== "classroom"
+      ) continue;
+
+      session.progress.set(studentSocketId, {
+        completedItemIds: new Set(),
+        attempts: 0,
+        wrongAttempts: 0,
+        wrongSelections: new Map(),
+        startedAt: session.startedAt,
+        completedAt: null,
+      });
+      student.mode = "Challenge 2";
+      roomStudents.push({
+        studentId: studentSocketId,
+        userId: student.userId,
+        name: student.name,
+        seat: student.seat,
+      });
+      studentSocket.emit("challenge2Started", {
+        items,
+        id: session.id,
+        durationSeconds,
+        startedAt: session.startedAt,
+        totalItems: session.questions.length,
+      });
+    }
+
+    socket.emit("challenge2StartedForInstructor", {
+      id: session.id,
+      question: "Challenge 2: Predict - Devices In & Out",
+      options: ["Input", "Output", "Both", "Storage"],
+      durationSeconds,
+      startedAt: session.startedAt,
+      totalItems: session.questions.length,
+      studentCount: roomStudents.length,
+      students: roomStudents,
+    });
+    broadcastStudentList(io);
+
+    session.timeout = setTimeout(() => {
+      if (activeChallenge2Sessions.get(roomId)?.id !== session.id) return;
+      endChallenge2Session(session, "timeout");
+    }, durationSeconds * 1000);
+    } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
+
+  });
+
+  socket.on("challenge2ItemAnswer", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const student = students[socket.id];
+    const session = activeChallenge2Sessions.get(roomId);
+    if (
+      !student ||
+      socket.data.role === "instructor" ||
+      !session ||
+      data.challengeId !== session.id
+    ) return;
+
+    const itemId = String(data.itemId ?? "").trim();
+    const selectedCategory = String(data.selectedCategory ?? "").trim() as Challenge2Category;
+    const expectedCategory = session.questions.find(q=>q.options.item.id===itemId)?.correct_answer.category;
+    const progress = session.progress.get(socket.id);
+    if (!expectedCategory || !progress || progress.completedItemIds.has(itemId)) return;
+    if (!["input", "output", "both", "storage"].includes(selectedCategory)) return;
+
+    progress.attempts += 1;
+    const correct = selectedCategory === expectedCategory;
+    if (correct) progress.completedItemIds.add(itemId);
+    else {
+      progress.wrongAttempts += 1;
+      let itemSelections = progress.wrongSelections.get(itemId);
+      if (!itemSelections) {
+        itemSelections = new Map();
+        progress.wrongSelections.set(itemId, itemSelections);
+      }
+      itemSelections.set(
+        selectedCategory,
+        (itemSelections.get(selectedCategory) ?? 0) + 1
+      );
+    }
+
+    const completedCount = progress.completedItemIds.size;
+    const completed = completedCount === session.questions.length;
+    if (completed && progress.completedAt === null) {
+      progress.completedAt = Date.now();
+      void saveDragDropResponses(session,true).catch(error=>console.error('[Challenge 2] Result pending:',error));
+    }
+    const responseTimeSeconds = Math.max(
+      0,
+      ((progress.completedAt ?? Date.now()) - progress.startedAt) / 1000
+    );
+
+    socket.emit("challenge2ItemResult", {
+      challengeId: session.id,
+      itemId,
+      selectedCategory,
+      expectedCategory,
+      correct,
+      completedCount,
+      totalItems: session.questions.length,
+    });
+
+    for (const client of io.sockets.sockets.values()) {
+      if (
+        client.data.roomId === roomId &&
+        client.data.role === "instructor" &&
+        client.data.clientType === "classroom"
+      ) {
+        client.emit("challenge2StudentProgress", {
+          challengeId: session.id,
+          studentId: socket.id,
+          userId: student.userId,
+          name: student.name,
+          seat: student.seat,
+          itemId,
+          selectedCategory,
+          expectedCategory,
+          correct,
+          completed,
+          completedCount,
+          totalItems: session.questions.length,
+          attempts: progress.attempts,
+          wrongAttempts: progress.wrongAttempts,
+          responseTimeSeconds,
+        });
+      }
+    }
+
+    const connectedStudentIds = [...session.progress.keys()].filter(id =>
+      io.sockets.sockets.has(id)
+    );
+    const everyoneCompleted =
+      connectedStudentIds.length > 0 &&
+      connectedStudentIds.every(id =>
+        session.progress.get(id)?.completedItemIds.size === session.questions.length
+      );
+    if (everyoneCompleted) {
+      setTimeout(() => {
+        if (activeChallenge2Sessions.get(roomId)?.id === session.id) {
+          endChallenge2Session(session, "completed");
+        }
+      }, CHALLENGE_2_ALL_COMPLETE_DELAY_MS);
+    }
+  });
+
+  socket.on("instructorStopChallenge2", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const session = activeChallenge2Sessions.get(roomId);
+    if (
+      !roomId ||
+      !isInstructorSocket(socket) ||
+      socket.data.clientType !== "classroom" ||
+      !session ||
+      (data.challengeId && data.challengeId !== session.id)
+    ) return;
+    endChallenge2Session(session, "instructor_stop");
   });
 
 
@@ -634,10 +1328,10 @@ socket.on("registerClassroomClient", async data => {
   }
 
   const { data: activeRoom, error: activeRoomError } = await supabaseAdmin
-    .from("rooms")
-    .select("id,is_active")
+    .from("class_sessions")
+    .select("id,instructor_id")
     .eq("id", roomId)
-    .eq("is_active", true)
+    .is("ended_at", null)
     .maybeSingle();
 
   if (activeRoomError || !activeRoom) {
@@ -645,6 +1339,15 @@ socket.on("registerClassroomClient", async data => {
       message: "This classroom is no longer active.",
     });
     return;
+  }
+
+  if(databaseUser.role==='instructor' && Number(activeRoom.instructor_id)!==userId){
+    socket.emit('classroomRegistrationError',{message:'This session belongs to another instructor.'});return;
+  }
+  if(databaseUser.role==='student'){
+    const {data:participant,error}=await supabaseAdmin.from('participants').select('seat_name').eq('id',participantId).eq('session_id',roomId).eq('student_id',userId).maybeSingle();
+    if(error||!participant){socket.emit('classroomRegistrationError',{message:'Join this session before entering.'});return;}
+    databaseUser.seat=participant.seat_name;
   }
 
   // Confirm that the provided username belongs to this user ID.
@@ -667,6 +1370,10 @@ socket.on("registerClassroomClient", async data => {
    */
   const previousClassroomSocketId =
     connectedUsers[userId]?.classroomSocketId;
+
+  const assignedAvatarId = students[socket.id]?.avatarId
+    ?? (previousClassroomSocketId ? students[previousClassroomSocketId]?.avatarId : undefined)
+    ?? pickRandomAvatar().id;
 
   if (
     previousClassroomSocketId &&
@@ -753,6 +1460,7 @@ connectedUser.inLab =
    * Do not depend on automatic creation in io.on("connection").
    */
   students[socket.id] = {
+    avatarId: assignedAvatarId,
     id: socket.id,
 
     userId: databaseUser.id,
@@ -893,12 +1601,15 @@ socket.emit(
     }
 
     cancelScheduledRoomClose(roomId);
+    const quick=activeQuickChallenges.get(roomId);
+    if(quick){if(quick.timeout)clearTimeout(quick.timeout);emitQuickChallengeEnded(quick,{stoppedByInstructor:true});activeQuickChallenges.delete(roomId);}
+    const drag=activeChallenge2Sessions.get(roomId);if(drag)endChallenge2Session(drag,'instructor_stop');
 
     const { error } = await supabaseAdmin
-      .from("rooms")
-      .update({ is_active: false, closed_at: new Date().toISOString() })
+      .from("class_sessions")
+      .update({ ended_at: new Date().toISOString(), active_activity_id: null })
       .eq("id", roomId)
-      .eq("is_active", true);
+      .is("ended_at", null);
 
     if (error) {
       console.error(`[Room] Instructor could not end ${roomId}:`, error.message);
@@ -906,6 +1617,7 @@ socket.emit(
       return;
     }
 
+    roomActivities.clear(roomId);
     // Clear every live student representation before sending clients back to
     // login. The empty student list removes avatars and seat markers on all
     // connected classroom views immediately.
@@ -974,20 +1686,7 @@ socket.emit(
       return;
     }
 
-    const { error } = await supabaseAdmin
-      .from("rooms")
-      .update({ current_slide: slideIndex })
-      .eq("id", roomId)
-      .eq("is_active", true);
-
-    if (error) {
-      console.error(`[Slides] Could not save slide ${slideIndex}:`, error.message);
-      socket.emit("serverError", {
-        message: "Could not synchronize the presentation slide.",
-      });
-      return;
-    }
-
+    // Slide position is live session state; active_activity_id is persisted separately.
     for (const client of io.sockets.sockets.values()) {
       if (
         client.data.clientType === "classroom" &&
@@ -1069,7 +1768,7 @@ connectedUser.location = "python_lab";
 connectedUser.mode = "Game Mode";
 connectedUser.inLab = true;
 
-  const labSession = new LabSession(
+  const labSession = new LabAttemptState(
     user.id,
     user.fullName || user.username,
     user.seat
@@ -1177,7 +1876,7 @@ socket.on(
       session.status !== "working"
     ) {
       session =
-        new LabSession(
+        new LabAttemptState(
           userId,
           studentName,
           seat
@@ -1428,7 +2127,7 @@ socket.on(
 
     let session = labSessions[userId];
     if (!session) {
-      session = new LabSession(
+      session = new LabAttemptState(
         userId,
         connectedUser.fullName ?? connectedUser.username,
         connectedUser.seat ?? "Not selected"
@@ -1517,6 +2216,12 @@ socket.on(
     });
 
     broadcastStudentList(io);
+  });
+
+  socket.on('gameResponse',data=>{
+    if(socket.data.role!=='student')return;
+    void recordGameResponse(Number(socket.data.userId),String(data?.itemKey||'submission'),data?.answer??null,typeof data?.correct==='boolean'?data.correct:null)
+      .catch(error=>{console.error('[Game response]',error);socket.emit('labResultSaveError',{message:'Game response could not be saved.'});});
   });
 
   socket.on("labCompleted", async data => {
@@ -2541,7 +3246,8 @@ socket.on(
 });
 socket.on(
   "instructorSendAllToDestination",
-  ({ destination, assetPath, mediaType, debriefView }) => {
+  async ({ destination, assetPath, mediaType, debriefView, activityId }) => {
+    try {
     if (!isInstructorSocket(socket)) {
       socket.emit("serverError", {
         message:
@@ -2554,6 +3260,32 @@ socket.on(
     console.log(
       `[Server] 🚀 Sending ALL students to ${destination}`
     );
+
+    const activityRoomId = String(socket.data.roomId ?? "").trim();
+    if(destination==='Presentation'&&activityId){
+      const activity=await activityForSession(activityRoomId,undefined,Number(activityId));
+      if(!['video','debrief'].includes(activity.activity_type))throw Error('Invalid media activity');
+      await selectSessionActivity(activityRoomId,activity.id);
+    }else if(destination==='Game 1'){
+      const activity=await activityForSession(activityRoomId,'variable-sorting');
+      const startedAt=Date.now();await selectSessionActivity(activityRoomId,activity.id);
+      for(const [id,student]of getRoomClassroomStudents(activityRoomId)){
+        bindGameRun(Number(student.userId),{participantId:Number(io.sockets.sockets.get(id)?.data.participantId),activityId:activity.id,startedAt,roomId:activityRoomId});
+      }
+    }else if(destination!=='Presentation')await selectSessionActivity(activityRoomId,null);
+    if (destination === "Presentation" && assetPath) {
+      roomActivities.set(activityRoomId, {
+        event: "presentationContentChanged",
+        payload: { assetPath, mediaType: mediaType === "image" ? "image" : "video", debriefView: "classroom" },
+        playback: { command: "pause", currentTime: 0, sentAt: Date.now() },
+      });
+    } else if (destination === "Game 1") {
+      roomActivities.set(activityRoomId, {
+        event: "gameChanged", payload: { gameId: "python-type-lab", mode: "Game Mode", destination },
+      });
+    } else {
+      roomActivities.clear(activityRoomId);
+    }
 
     // A debrief can be opened after the challenge monitor was closed. Replay
     // the retained review payload so every connected display uses the latest
@@ -2670,7 +3402,7 @@ socket.on(
 
           void updateAppUserLocation(student.userId, "python_lab").catch(console.error);
 
-          const labSession = new LabSession(
+          const labSession = new LabAttemptState(
             student.userId,
             student.fullName ?? student.username,
             student.seat ?? "Not selected"
@@ -2799,7 +3531,9 @@ socket.on(
     console.log(
       `[Server] ✅ All ${realStudents.length} students processed for ${destination}`
     );
+    }catch(error){console.error('[Destination]',error);socket.emit('serverError',{message:'Could not open the activity. Check its database entry.'});}
   }
+
 );
 
 socket.on("instructorVideoPlayback", data => {
@@ -2811,6 +3545,10 @@ socket.on("instructorVideoPlayback", data => {
   const currentTime = Number.isFinite(Number(data?.currentTime))
     ? Math.max(0, Number(data.currentTime))
     : 0;
+  const activity = roomActivities.get(String(socket.data.roomId ?? ""));
+  if (activity?.event === "presentationContentChanged" && activity.payload.mediaType === "video") {
+    activity.playback = { command, currentTime, sentAt: Date.now() };
+  }
   let recipientCount = 0;
 
   // Use the registered classroom student sockets. Some clients do not carry
@@ -3023,6 +3761,17 @@ socket.on("instructorBriefingAnnotation", data => {
     console.log(
       "[Server] Instructor returning ALL students to Class"
     );
+
+    // Classroom/emergency return must also close the active Challenge 2
+    // session so students remove its panorama, device, and drop boxes.
+    const challenge2RoomId = String(socket.data.roomId ?? "").trim();
+    roomActivities.clear(challenge2RoomId);
+    const quick=activeQuickChallenges.get(challenge2RoomId);
+    if(quick){if(quick.timeout)clearTimeout(quick.timeout);emitQuickChallengeEnded(quick,{stoppedByInstructor:true});activeQuickChallenges.delete(challenge2RoomId);}
+    const activeChallenge2 = activeChallenge2Sessions.get(challenge2RoomId);
+    if (activeChallenge2) {
+      endChallenge2Session(activeChallenge2, "instructor_stop");
+    }
 
     let returnedCount = 0;
     const resultSavePromises: Promise<void>[] = [];
@@ -3514,6 +4263,27 @@ socket.on("instructorBriefingAnnotation", data => {
   // ========================================================
   // PLAYER UPDATE
   // ========================================================
+
+  // AVATAR MOVEMENT: receive a student pose and relay it to classroom peers.
+  // No database write: these are short-lived snapshots, not saved animations.
+  let lastAvatarPoseAt = 0;
+  socket.on("seatAvatarPose", (data: unknown) => {
+    const roomId = socket.data.roomId;
+    if (!roomId || socket.data.role !== "student" || socket.data.clientType !== "classroom" || !students[socket.id]) return;
+    const now = Date.now();
+    // Limit incoming traffic; the normal client sends a pose about every 67 ms.
+    if (now - lastAvatarPoseAt < 40) return;
+    const pose = data === null ? null : sanitizeSeatAvatarPose(data);
+    if (data !== null && !pose) return;
+    lastAvatarPoseAt = now;
+    // Never trust a studentId from a tracking packet; relay only to this room.
+    for (const client of io.sockets.sockets.values()) {
+      if (client.id !== socket.id && client.data.roomId === roomId && client.data.clientType === "classroom") {
+        // Exclude the sender: their first-person arms already update locally each frame.
+        client.emit("seatAvatarPose", { studentId: socket.id, pose });
+      }
+    }
+  });
 
   socket.on("playerUpdate", (data) => {
     const student = students[socket.id];

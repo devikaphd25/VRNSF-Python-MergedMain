@@ -1,6 +1,6 @@
 <style>
   .controls {
-    width: 1180;
+    width: 1120;
     height: 104;
     flex-direction: row;
     align-items: center;
@@ -35,8 +35,7 @@
   .marker { background-color: rgba(161, 98, 7, 0.9); border-color: #fde047; }
   .marker:hover { background-color: rgba(202, 138, 4, 0.96); }
   .clear { background-color: rgba(71, 85, 105, 0.9); border-color: #cbd5e1; }
-  .next { background-color: rgba(21, 128, 61, 0.88); border-color: #86efac; }
-  .return { background-color: rgba(153, 27, 27, 0.82); border-color: #fca5a5; }
+  .return { width: 200; background-color: rgba(153, 27, 27, 0.82); border-color: #fca5a5; }
   .return:hover { background-color: rgba(220, 38, 38, 0.9); }
   .video-timer {
     width: 170;
@@ -63,6 +62,5 @@
   <button id="video-restart" class="control-button restart">RESTART</button>
   <button id="briefing-highlight" class="control-button marker">MARKER OFF</button>
   <button id="briefing-highlight-clear" class="control-button clear">CLEAR</button>
-  <button id="video-next" class="control-button next">NEXT</button>
-  <button id="video-return-class" class="control-button return">EMERGENCY RETURN</button>
+  <button id="video-return-class" class="control-button return">RETURN TO CLASS</button>
 </div>
