@@ -41,23 +41,149 @@ enabled on the headset. The controller trigger still operates Return to Class.
 When contributing, clone the repository, create a branch, and edit the existing
 folders above. Submit a pull request instead of uploading a ZIP's parent folder.
 
-## Use the existing new Supabase project
+## Run locally with the existing Supabase project
 
-1. Install Node 22.12+ (or Node 24) and run `npm ci`.
-2. Copy `.env.template` to `.env.server`. Enter the new project's root URL and
-   server secret key, shared privately by the project owner. Do not include `/rest/v1`.
-3. Copy `.env.development.example` to `.env.development`. Course codes are stored in Supabase, not this environment file.
-4. Run `npm run dev:server` in one terminal and `npm run dev:runtime` in another.
-5. Open `https://localhost:8081`. On a Quest, use the computer's LAN address on
-   port 8081. Both devices must reach that computer; trust the development certificate.
-6. Enter as Professor and use the course’s six-digit access code to create a session, then join as Student on other devices.
+Use Node.js **22.12+ in the Node 22 series, or Node 24**, and npm. Open Terminal
+in the project root. On a fresh computer:
 
-No Supabase key is needed in the browser. Browser requests and Socket.IO use the
-same HTTPS origin; Vite proxies them to port 3001. For deployment, configure the
-same `/api` and `/socket.io` reverse proxy (including WebSocket upgrades), or set
-`VITE_SERVER_URL` for sockets. API requests still use `/api` on the site's origin.
-Environment files are ignored by Git. Never put a server secret in a `VITE_` variable.
-A course code selects the curriculum; it is not account authentication.
+```bash
+git clone https://github.com/UMESVRTeam/VR-learning.git
+cd VR-learning
+git switch main
+npm ci
+cp -n .env.template .env.server
+cp -n .env.development.example .env.development
+```
+
+If you already cloned the project, use your existing project folder instead.
+Copy the environment templates only on first setup; do not overwrite configured
+local files. If an environment file already exists, edit it rather than copying
+its template again.
+
+### Which Supabase credentials do I need?
+
+The Node server reads these two values from **`.env.server`**:
+
+| Variable | Value | Where to get it |
+| --- | --- | --- |
+| `SUPABASE_URL` | Project root URL, such as `https://YOUR_PROJECT.supabase.co`, without `/rest/v1`. | Supabase project's Connect dialog / API settings, or the project owner. |
+| `SUPABASE_SECRET_KEY` | A server **secret key** (`sb_secret_...`). | Project Settings → API Keys → Publishable and secret API keys; request it privately from the project owner. |
+
+A legacy **`service_role`** key also works in the `SUPABASE_SECRET_KEY` variable
+while that legacy key is enabled. A publishable/`anon` key cannot replace the
+server key in this app: its database tables intentionally deny browser access.
+No Supabase account password, database password, or personal access token is
+needed to run the Node server. See [Supabase API key documentation](https://supabase.com/docs/guides/getting-started/api-keys).
+
+Example `.env.server` (**placeholders, not usable credentials**):
+
+```dotenv
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=[REDACTED_SUPABASE_SECRET]
+WEEK_NUMBER=1
+PORT=3001
+```
+
+The server key has privileged database access and bypasses RLS. **Never commit it
+to GitHub, put it in a `VITE_` variable, or send it to a browser/headset.** Share it
+only with trusted backend developers through a private password-manager share or
+another approved private channel. The repository contains examples only; each
+backend developer creates their own ignored `.env.server` locally.
+
+Teammates who only need to **join a running classroom** do not need Supabase
+credentials. Share the running app's HTTPS address with them. Only the person
+running the Node server needs the private server key. Each independently started
+backend has its own in-memory live session, so everyone in the same class must use
+the same backend.
+
+Keep `.env.development` as:
+
+```dotenv
+VITE_SERVER_URL=
+```
+
+Empty means use the current HTTPS origin. Vite forwards `/api` and `/socket.io`
+to the Node server on port **3001**. Keep `PORT=3001` for normal development; a
+different backend port requires changing both Vite proxy targets.
+
+### Start the normal browser development app
+
+```bash
+npm run dev:full
+```
+
+Leave that Terminal open. Open **https://localhost:8081/** on the computer.
+Both the HTTPS frontend (**8081**) and Node API/Socket.IO server (**3001**) must
+be running. To stop a run, press **Control+C** in its Terminal.
+
+If the IWSDK launcher reports `dev_up_timeout`, start the same app directly with
+two Terminal tabs instead. Stop the failed run first:
+
+```bash
+# Terminal 1, in the project root
+npm run dev:server
+```
+
+```bash
+# Terminal 2, in the same project root
+npm run dev:runtime
+```
+
+Open **https://localhost:8081/**. `dev:runtime` starts Vite directly and avoids the
+IWSDK CLI runtime-registration wait; it still compiles the UI and proxies the API.
+
+### Start and join a class
+
+1. Open the app as **Professor** and enter the course's six-digit code from the
+   project owner. Course codes are stored in Supabase, not in environment files.
+2. Choose **week and day**, then press **Start Class**.
+3. Open the same app address on student devices and enter as **Student**. Students
+   join the active class automatically; they do not enter the instructor's code.
+4. Use one coordinating Node server and one active class at a time. End the
+   current class before starting another course/day.
+
+A course code selects curriculum; it is not account authentication. The existing
+Supabase project already contains the schema and course content. **Do not rerun
+`supabase/schema.sql` against it.** Credentials connect to that data; cloning this
+repository does not copy the database or Storage videos.
+
+### Headsets, Wi-Fi, and the APK
+
+For LAN development, Quest Browser uses the **Network** URL printed by Vite,
+for example `https://YOUR_COMPUTER_LAN_IP:8081/`, never `localhost` (that would mean
+the headset itself). The headset must be able to reach the computer; the development
+HTTPS certificate must be trusted on that headset for WebXR. A desktop certificate
+warning bypass does not install trust on a Quest. The LAN IP may change when the
+computer changes Wi-Fi. Use a trusted HTTPS tunnel if certificate trust is not set up.
+
+The APK uses a separate production host and a trusted HTTPS launch address.
+See [APK-UPDATE-STEPS.txt](APK-UPDATE-STEPS.txt) and [apk/README.md](apk/README.md).
+A typical host command, after `npm run build`, is:
+
+```bash
+SERVE_WEB_APP=true PORT=3100 npm run dev:server
+```
+
+This serves `dist/` and the API together on port **3100**. Keep that host and its
+tunnel running. A temporary tunnel may get a new URL after restarting; rebuild the
+APK with the same signing key when its launch origin changes. The APK binary,
+signing keys, and local Android toolchains are excluded from Git.
+
+### Common startup errors
+
+| Symptom | What to do |
+| --- | --- |
+| `EADDRINUSE` on `3001` or `3100` | Another backend is listening on that port. Stop its original Terminal with Control+C before restarting. Do not launch duplicate servers. |
+| `Port 8081 is already in use` | A frontend is already running. Use it or stop its Terminal before starting another. |
+| Unsure which process owns a port (macOS) | Inspect it with `lsof -nP -iTCP:3001 -sTCP:LISTEN` (replace `3001` with the relevant port). |
+| Missing Supabase environment values | Create `.env.server` in the project root, fill both credentials, then restart the backend. |
+| Invalid API key / denied database access | Confirm the URL and server secret belong to the same Supabase project. A browser publishable/anon key is insufficient. |
+| Course code not found | Request the correct six-digit code; do not change the Supabase credentials or rerun schema SQL. |
+| Tunnel URL does not load | Confirm the local host works first. A printed tunnel URL is not proof of a connected tunnel; check its connection logs before rebuilding the APK. |
+
+For deployment, serve `/api` and `/socket.io` on the frontend's HTTPS origin,
+including WebSocket upgrades. `VITE_SERVER_URL` can change the socket destination,
+but the browser API still uses `/api` on the site's origin.
 
 The existing database already contains course codes and the week/day hierarchy.
 Course access codes are unique six-digit text values in `courses.access_code`;
@@ -76,13 +202,15 @@ This deployment supports one live class at a time. End it before selecting anoth
 course. This prevents broadcasts and students from mixing between simultaneous classes.
 
 CSDP-99 uses instructor course code `990099`. Week 1 contains Day 1 and Day 2,
-with seven videos per day, ordered by segment and video number. Its temporary
+with **11 videos per day**, ordered by the numeric filename prefix. Its temporary
 course title is `CSDP-99`. Media lives under
 `course-media/csdp-99/week1/day-{1,2}/videos/` in Supabase Storage.
 The videos are already stored in Supabase; the one-off import tools and reports
 were removed during project cleanup.
 
-The new account already contains tables and Week1 content. **Do not run the fresh
+CSDP-120 Week 13 Day 2 contains 12 videos, ordered by the numeric filename prefix.
+
+The shared project already contains its tables and curriculum. **Do not run the fresh
 schema against that existing database.** Changing the local connection does not
 delete or modify the old Supabase project.
 
@@ -155,16 +283,18 @@ server-local snapshots in `data/pending-challenge-results/` or
 
 ## Challenge 1: rocket activity
 
-The Challenge 1 interface incorporates `yixiao-lesson1-challange1` commit
-`0824de8`. The existing dashboard button launches it with Supabase questions.
+The Challenge 1 interface incorporates `yixiao-lesson1-challange1` commits
+`0824de8` and `85cf48c`, adapted to the current project structure. The existing dashboard button launches it with Supabase questions.
 Correct answers unlock rocket pieces: drag the unlocked pieces onto the rocket
-with the mouse or right controller trigger, then select Launch. Review and Retry
-remain available until the instructor stops the activity or the timer expires.
+with the mouse or right controller trigger, then select Launch. Review remains available until the instructor stops the activity. A student can
+submit **three total attempts** (the first submission plus two retries) while the
+shared timer permits. Each acknowledged retry preserves the previous result.
+The common limit is defined in `shared/true-false-settings.ts`.
 The instructor monitor shows correct/wrong counts and accuracy for each question.
 
 `src/systems/true-false-challenge.system.ts` and `ui/quick-challenge.uikitml` contain
-this interface; `src/world/student-rocket.ts` handles rocket assembly. Challenge 3
-keeps its multiple-choice interface in `database-challenge.system.ts` and
+this interface; `src/challenges/true-false/student-rocket.ts` handles rocket assembly. Challenge 3
+keeps its multiple-choice interface in `src/systems/multiple-choice-challenge.system.ts` and
 `ui/database-challenge.uikitml`. Questions and results still use the existing
 Supabase tables; this update needs no database migration. Restart the Node server
 and refresh browsers/headsets after updating both client and server.
@@ -190,13 +320,15 @@ when curriculum wording changes.
 The dashboard starts in Current Task view, showing a single activity. Its header
 button toggles directly between All Tasks and Current Task. Previous and Next
 in the compact footer browse activities individually; the full list retains its
-existing page navigation. Launching activities from All Tasks leaves the Current
-Task sequence position unchanged. After launching an activity from Current Task and reopening the dashboard,
-Current Task advances to the next activity in the selected day's sequence.
-Returning without launching a task does not advance. After the final activity,
-All Tasks lets the instructor revisit any activity. This position is kept in
-memory for the current app run; refreshing resets it. No database migration is
-needed. The instructor week/day selection screen is displayed at 82% of the
+existing page navigation. Green dots mark activities that have been run. Switching
+to Current Task scans the selected day's `activity_order` from the beginning and
+shows the first activity without a green dot. For example, running videos 1, 2,
+and 11 in All Tasks makes Current Task show video 3. A later green dot does not
+skip earlier unfinished work. Returning from a Current Task launch also resumes
+at the first unfinished activity. Manual Previous/Next browsing does not mark
+activities complete. Once every task is green, All Tasks allows revisiting them.
+This progress is kept in memory for the current app run; refreshing resets it.
+No database migration is needed. The instructor week/day selection screen is displayed at 82% of the
 initial login screen's scale.
 
 ## Source organization
