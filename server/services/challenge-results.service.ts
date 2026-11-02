@@ -23,7 +23,22 @@ export function saveChallengeResponses(challenge: QuickChallenge, reason: string
             continue;
         const answers = challenge.questions.map((q, i) => {
             const answer = progress?.answers.find(a => a.questionIndex === i);
-            return { question_id: Number(q.id), student_answer: answer ? { choice_index: answer.selectedIndex, value: q.options[answer.selectedIndex] } : null, is_correct: answer ? answer.selectedIndex === q.correctIndex : null };
+            const selectedIndices = q.correctIndices
+                ? q.options.map((_, index) => index).filter(index => answer ? ((answer.selectedIndex >> index) & 1) === 1 : false)
+                : [];
+            return {
+                question_id: Number(q.id),
+                student_answer: answer
+                    ? q.correctIndices
+                        ? { choice_indices: selectedIndices }
+                        : { choice_index: answer.selectedIndex, value: q.options[answer.selectedIndex] }
+                    : null,
+                is_correct: answer
+                    ? q.correctIndices
+                        ? Boolean(answer.correct)
+                        : answer.selectedIndex === q.correctIndex
+                    : null
+            };
         });
         attempts.push({ participantId: Number(participantId), activityId: challenge.activityId, startedAt: progress?.attemptStartedAt ?? challenge.startedAt,
             finishedAt: progress?.finishedAt ?? Date.now(), completed: !!progress?.completed, score: answers.filter(a => a.is_correct).length, answers });

@@ -295,6 +295,14 @@
 
   .fp-board {
     width: 1096;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 10;
+  }
+
+  .fp-board-row {
+    width: 1096;
     flex-direction: row;
     justify-content: center;
     gap: 10;
@@ -373,6 +381,35 @@
     font-family: inter;
   }
 
+  .fp-card-compact {
+    width: 160;
+    height: 230;
+  }
+
+  .fp-card-art-compact {
+    width: 160;
+    height: 230;
+  }
+
+  .fp-card-body-compact {
+    width: 160;
+    height: 230;
+    margin-top: -230;
+    padding: 12;
+    padding-top: 16;
+    padding-left: 16;
+  }
+
+  .fp-card-q-compact {
+    width: 132;
+    height: 72;
+    font-size: 16;
+  }
+
+  .fp-bar-track-compact {
+    width: 128;
+  }
+
   .fp-status {
     width: 100%;
     flex-direction: row;
@@ -403,7 +440,7 @@
     <Text id="quiz-monitor-title" class="quiz-monitor-title">QUICK CHALLENGE — LIVE MONITOR</Text>
 
     <Panel class="quiz-monitor-board">
-      <Image class="quiz-monitor-board-art" src="/textures/challenge1_instructor/UIBackground.png" />
+      <Image id="quiz-monitor-board-art" class="quiz-monitor-board-art" src="/textures/challenge1_instructor/UIBackground.png" />
       <Panel class="quiz-monitor-content">
         <Panel class="quiz-monitor-top">
           <Panel class="quiz-header-copy">
@@ -412,10 +449,10 @@
           </Panel>
           <Panel class="quiz-monitor-corner">
             <Button id="quiz-monitor-stop" class="quiz-monitor-stop">
-              <Image class="quiz-stop-face" src="/textures/challenge1_instructor/StopButton.png" />
+              <Image id="quiz-stop-face" class="quiz-stop-face" src="/textures/challenge1_instructor/StopButton.png" />
             </Button>
             <Button id="quiz-monitor-close" class="quiz-monitor-close">
-              <Image class="quiz-close-face" src="/textures/challenge1_instructor/XCloseButton.png" />
+              <Image id="quiz-close-face" class="quiz-close-face" src="/textures/challenge1_instructor/XCloseButton.png" />
             </Button>
           </Panel>
         </Panel>
@@ -442,54 +479,78 @@
         </Panel>
 
         <Panel id="quiz-five-parts-board" class="fp-board quiz-row-hidden">
-          <Panel id="fp-card-0" class="fp-card">
-            <Image class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
-            <Panel class="fp-card-body">
-              <Text id="fp-card-label-0" class="fp-card-label">Q1</Text>
-              <Text id="fp-card-q-0" class="fp-card-q">Question 1</Text>
-              <Panel class="fp-bar-track"><Panel id="fp-bar-fill-0" class="fp-bar-fill"></Panel></Panel>
-              <Text id="fp-card-pct-0" class="fp-card-pct">0%</Text>
-              <Text id="fp-card-counts-0" class="fp-card-counts">0 correct / 0 wrong</Text>
+          <Panel id="fp-row-1" class="fp-board-row">
+            <Panel id="fp-card-0" class="fp-card">
+              <Image id="fp-card-art-0" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-0" class="fp-card-body">
+                <Text id="fp-card-label-0" class="fp-card-label">Q1</Text>
+                <Text id="fp-card-q-0" class="fp-card-q">Question 1</Text>
+                <Panel id="fp-bar-track-0" class="fp-bar-track"><Panel id="fp-bar-fill-0" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-0" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-0" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-1" class="fp-card">
+              <Image id="fp-card-art-1" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-1" class="fp-card-body">
+                <Text id="fp-card-label-1" class="fp-card-label">Q2</Text>
+                <Text id="fp-card-q-1" class="fp-card-q">Question 2</Text>
+                <Panel id="fp-bar-track-1" class="fp-bar-track"><Panel id="fp-bar-fill-1" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-1" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-1" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-2" class="fp-card">
+              <Image id="fp-card-art-2" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-2" class="fp-card-body">
+                <Text id="fp-card-label-2" class="fp-card-label">Q3</Text>
+                <Text id="fp-card-q-2" class="fp-card-q">Question 3</Text>
+                <Panel id="fp-bar-track-2" class="fp-bar-track"><Panel id="fp-bar-fill-2" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-2" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-2" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-3" class="fp-card">
+              <Image id="fp-card-art-3" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-3" class="fp-card-body">
+                <Text id="fp-card-label-3" class="fp-card-label">Q4</Text>
+                <Text id="fp-card-q-3" class="fp-card-q">Question 4</Text>
+                <Panel id="fp-bar-track-3" class="fp-bar-track"><Panel id="fp-bar-fill-3" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-3" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-3" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-4" class="fp-card">
+              <Image id="fp-card-art-4" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-4" class="fp-card-body">
+                <Text id="fp-card-label-4" class="fp-card-label">Q5</Text>
+                <Text id="fp-card-q-4" class="fp-card-q">Question 5</Text>
+                <Panel id="fp-bar-track-4" class="fp-bar-track"><Panel id="fp-bar-fill-4" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-4" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-4" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
             </Panel>
           </Panel>
-          <Panel id="fp-card-1" class="fp-card">
-            <Image class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
-            <Panel class="fp-card-body">
-              <Text id="fp-card-label-1" class="fp-card-label">Q2</Text>
-              <Text id="fp-card-q-1" class="fp-card-q">Question 2</Text>
-              <Panel class="fp-bar-track"><Panel id="fp-bar-fill-1" class="fp-bar-fill"></Panel></Panel>
-              <Text id="fp-card-pct-1" class="fp-card-pct">0%</Text>
-              <Text id="fp-card-counts-1" class="fp-card-counts">0 correct / 0 wrong</Text>
+          <Panel id="fp-row-2" class="fp-board-row quiz-row-hidden">
+            <Panel id="fp-card-5" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-5" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-5" class="fp-card-body">
+                <Text id="fp-card-label-5" class="fp-card-label">Q6</Text>
+                <Text id="fp-card-q-5" class="fp-card-q">Question 6</Text>
+                <Panel id="fp-bar-track-5" class="fp-bar-track"><Panel id="fp-bar-fill-5" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-5" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-5" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
             </Panel>
-          </Panel>
-          <Panel id="fp-card-2" class="fp-card">
-            <Image class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
-            <Panel class="fp-card-body">
-              <Text id="fp-card-label-2" class="fp-card-label">Q3</Text>
-              <Text id="fp-card-q-2" class="fp-card-q">Question 3</Text>
-              <Panel class="fp-bar-track"><Panel id="fp-bar-fill-2" class="fp-bar-fill"></Panel></Panel>
-              <Text id="fp-card-pct-2" class="fp-card-pct">0%</Text>
-              <Text id="fp-card-counts-2" class="fp-card-counts">0 correct / 0 wrong</Text>
-            </Panel>
-          </Panel>
-          <Panel id="fp-card-3" class="fp-card">
-            <Image class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
-            <Panel class="fp-card-body">
-              <Text id="fp-card-label-3" class="fp-card-label">Q4</Text>
-              <Text id="fp-card-q-3" class="fp-card-q">Question 4</Text>
-              <Panel class="fp-bar-track"><Panel id="fp-bar-fill-3" class="fp-bar-fill"></Panel></Panel>
-              <Text id="fp-card-pct-3" class="fp-card-pct">0%</Text>
-              <Text id="fp-card-counts-3" class="fp-card-counts">0 correct / 0 wrong</Text>
-            </Panel>
-          </Panel>
-          <Panel id="fp-card-4" class="fp-card">
-            <Image class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
-            <Panel class="fp-card-body">
-              <Text id="fp-card-label-4" class="fp-card-label">Q5</Text>
-              <Text id="fp-card-q-4" class="fp-card-q">Question 5</Text>
-              <Panel class="fp-bar-track"><Panel id="fp-bar-fill-4" class="fp-bar-fill"></Panel></Panel>
-              <Text id="fp-card-pct-4" class="fp-card-pct">0%</Text>
-              <Text id="fp-card-counts-4" class="fp-card-counts">0 correct / 0 wrong</Text>
+            <Panel id="fp-card-6" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-6" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-6" class="fp-card-body">
+                <Text id="fp-card-label-6" class="fp-card-label">Q7</Text>
+                <Text id="fp-card-q-6" class="fp-card-q">Question 7</Text>
+                <Panel id="fp-bar-track-6" class="fp-bar-track"><Panel id="fp-bar-fill-6" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-6" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-6" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
             </Panel>
           </Panel>
         </Panel>

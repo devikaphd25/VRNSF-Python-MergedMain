@@ -71,6 +71,8 @@ from "./systems/student-results.system";
 import { MultipleChoiceChallengeSystem } from "./systems/multiple-choice-challenge.system";
 import { TrueFalseChallengeSystem }
 from "./systems/true-false-challenge.system";
+import { CodePatternChallengeSystem }
+from "./systems/code-pattern-challenge.system";
 import { DeviceClassificationSystem }
 from "./systems/device-classification.system";
 import { ClassificationDevice }
@@ -1390,6 +1392,7 @@ World.create(
         .registerSystem(SeatAssignmentSystem, { priority: 2 })
         .registerSystem(StudentResultsSystem, { priority: 10 })
         .registerSystem(TrueFalseChallengeSystem, { priority: 11 })
+        .registerSystem(CodePatternChallengeSystem, { priority: 11 })
         .registerSystem(MultipleChoiceChallengeSystem, { priority: 11 })
         .registerSystem(DeviceClassificationSystem, { priority: 12 });
 
@@ -1640,6 +1643,25 @@ World.create(
       }
 
       (window as any).quickChallengeEntity = quickChallengeEntity;
+      const codePatternChallengeEntity = world
+        .createTransformEntity(undefined, { persistent: true })
+        .addComponent(PanelUI, {
+          config: "./ui/code-pattern-challenge.json",
+          maxWidth: 4.25,
+          maxHeight: 1.62
+        })
+        .addComponent(RayInteractable);
+
+      if (codePatternChallengeEntity.object3D) {
+        const panel = codePatternChallengeEntity.object3D;
+        scene.add(panel);
+        panel.pointerEventsOrder = 50000;
+        panel.updateMatrixWorld(true);
+        codePatternChallengeEntity.object3D.visible = false;
+        codePatternChallengeEntity.object3D.frustumCulled = false;
+      }
+
+      (window as any).codePatternChallengeEntity = codePatternChallengeEntity;
       const databaseChallengeEntity = world
         .createTransformEntity(undefined, { persistent: true })
         .addComponent(PanelUI, {

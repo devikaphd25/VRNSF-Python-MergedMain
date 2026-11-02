@@ -80,6 +80,8 @@ export interface QuickChallengeQuestion {
   prompt: string;
   options: string[];
   correctIndex: number;
+  correctIndices?: number[];
+  instructorLabel?: string;
   explanation?: string;
 }
 
@@ -91,6 +93,7 @@ export interface QuickChallengeStudentProgress {
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
+    placementCorrect?: number;
   }>;
   completed: boolean;
   finishedAt?: number;

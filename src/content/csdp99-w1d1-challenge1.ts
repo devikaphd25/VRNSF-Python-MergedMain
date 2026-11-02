@@ -1,0 +1,5 @@
+export {
+  CSDP99_W1D1_CHALLENGE1_QUESTIONS,
+  CSDP99_W1D1_CHALLENGE1_TITLE,
+  CSDP99_W1D1_CODE_LINES,
+} from "../../shared/csdp99-w1d1-challenge1";

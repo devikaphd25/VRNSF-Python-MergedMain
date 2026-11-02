@@ -1,4 +1,26 @@
-import { TRUE_FALSE_CHALLENGE_TYPE } from "../../shared/challenge-types";
+import {
+  TRUE_FALSE_CHALLENGE_TYPE,
+  CODE_PATTERN_CHALLENGE_TYPE,
+  CODE_PATTERN_ACTIVITY_KEY,
+  LOOP_SORT_CHALLENGE_TYPE,
+  LOOP_SORT_ACTIVITY_KEY,
+  FLOWCHART_SHAPE_CHALLENGE_TYPE,
+  FLOWCHART_SHAPE_ACTIVITY_KEY,
+  WHILE_TRACE_CHALLENGE_TYPE,
+  WHILE_TRACE_ACTIVITY_KEY,
+  WHILE_PARTS_CHALLENGE_TYPE,
+  WHILE_PARTS_ACTIVITY_KEY,
+  WHILE_FACTORIAL_CHALLENGE_TYPE,
+  WHILE_FACTORIAL_ACTIVITY_KEY,
+  STRING_OK_ERROR_CHALLENGE_TYPE,
+  STRING_OK_ERROR_ACTIVITY_KEY,
+  STRING_IN_CHALLENGE_TYPE,
+  STRING_IN_ACTIVITY_KEY,
+  STRING_CLEAN_CHALLENGE_TYPE,
+  STRING_CLEAN_ACTIVITY_KEY,
+  isCurriculumChallenge,
+} from "../../shared/challenge-types";
+import { capitalizeFlowchartLabel } from "../content/csdp99-w1d1-challenge3";
 import { instructorContentUrl } from "../services/classroom-session.service";
 import { ActivitySequence } from "../instructor/activity-sequence";
 import { DashboardControllerRays } from "../instructor/dashboard-controller-rays";
@@ -27,7 +49,7 @@ import {
 } from "../network/socket-client";
 import { findNextChallengeIndex, type ClassroomActivity, type ClassroomContent } from "../content/classroom-content";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
-import { C1I, paintTitleBanner, preloadChallenge1InstructorArt } from "../challenges/true-false/question-art";
+import { C1I, PLAYTEST_INSTRUCTOR, paintTitleBanner, preloadChallenge1InstructorArt, preloadPlaytestInstructorArt } from "../challenges/true-false/question-art";
 
 import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation-settings";
 
@@ -644,8 +666,10 @@ export class InstructorDashboardSystem extends createSystem({
           responseTimeSeconds: undefined
         }));
 
-        if (data.challengeType === TRUE_FALSE_CHALLENGE_TYPE || data.challengeType === "database-series") {
-          this.quizSeriesType = TRUE_FALSE_CHALLENGE_TYPE;
+        if (data.challengeType === TRUE_FALSE_CHALLENGE_TYPE || data.challengeType === "database-series" || isCurriculumChallenge(data.challengeType)) {
+          this.quizSeriesType = isCurriculumChallenge(data.challengeType)
+            ? data.challengeType
+            : TRUE_FALSE_CHALLENGE_TYPE;
           this.quizSeriesTotal = Number(data.totalQuestions) || 5;
           this.fivePartsQuestionStats = data.questionStats ??
             Array.from({ length: this.quizSeriesTotal }, (_, index) => ({
@@ -1165,6 +1189,7 @@ export class InstructorDashboardSystem extends createSystem({
       setter?.(true);
     });
     preloadChallenge1InstructorArt(() => this.renderQuizMonitor());
+    preloadPlaytestInstructorArt(() => this.renderQuizMonitor());
     this.renderQuizMonitor();
   }
 
@@ -1292,8 +1317,22 @@ export class InstructorDashboardSystem extends createSystem({
       this.addClass(list, "quiz-row-hidden");
       this.removeClass(board, "quiz-row-hidden");
       this.removeClass(fpStatus, "quiz-row-hidden");
-      title?.setProperties({ text: "STUDENT CHALLENGE 1" });
-      this.refreshMonitorTitleBanner("STUDENT CHALLENGE 1");
+      const seriesTitle = this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE ||
+          this.activeQuiz?.challengeType === WHILE_FACTORIAL_CHALLENGE_TYPE ||
+          this.activeQuiz?.challengeType === STRING_CLEAN_CHALLENGE_TYPE
+        ? "CHALLENGE 3"
+        : this.activeQuiz?.challengeType === LOOP_SORT_CHALLENGE_TYPE ||
+            this.activeQuiz?.challengeType === WHILE_PARTS_CHALLENGE_TYPE ||
+            this.activeQuiz?.challengeType === STRING_IN_CHALLENGE_TYPE
+          ? "CHALLENGE 2"
+        : this.activeQuiz?.challengeType === CODE_PATTERN_CHALLENGE_TYPE ||
+            this.activeQuiz?.challengeType === WHILE_TRACE_CHALLENGE_TYPE ||
+            this.activeQuiz?.challengeType === STRING_OK_ERROR_CHALLENGE_TYPE
+          ? "CHALLENGE 1"
+        : "STUDENT CHALLENGE 1";
+      title?.setProperties({ text: seriesTitle });
+      this.refreshMonitorTitleBanner(seriesTitle);
+      this.applyMonitorBoardArt();
       stop?.setProperties({ text: "" });
     } else {
       this.removeClass(title, "quiz-row-hidden");
@@ -1310,6 +1349,7 @@ export class InstructorDashboardSystem extends createSystem({
         this.activeQuizKind === "challenge-2" ? "CHALLENGE 2" : "QUICK CHALLENGE";
       title?.setProperties({ text: titleText });
       this.refreshMonitorTitleBanner(titleText);
+      this.applyMonitorBoardArt();
     }
     footer?.setProperties({
       text: finished
@@ -1501,23 +1541,60 @@ export class InstructorDashboardSystem extends createSystem({
       this.addClass(document.getElementById(`quiz-monitor-row-${row}`), "quiz-row-hidden");
     }
 
-    for (let index = 0; index < 5; index += 1) {
+    const compact = this.quizSeriesTotal > 5;
+    const board = document.getElementById("quiz-five-parts-board");
+    const row2 = document.getElementById("fp-row-2");
+    if (compact) this.addClass(board, "fp-board-compact");
+    else this.removeClass(board, "fp-board-compact");
+    if (stats[5]) this.removeClass(row2, "quiz-row-hidden");
+    else this.addClass(row2, "quiz-row-hidden");
+
+    for (let index = 0; index < 7; index += 1) {
       const stat = stats[index];
       const card = document.getElementById(`fp-card-${index}`);
+      const art = document.getElementById(`fp-card-art-${index}`) as any;
+      const body = document.getElementById(`fp-card-body-${index}`);
       const label = document.getElementById(`fp-card-label-${index}`) as UIKit.Text;
       const prompt = document.getElementById(`fp-card-q-${index}`) as UIKit.Text;
+      const track = document.getElementById(`fp-bar-track-${index}`);
       const fill = document.getElementById(`fp-bar-fill-${index}`) as any;
       const pct = document.getElementById(`fp-card-pct-${index}`) as UIKit.Text;
       const counts = document.getElementById(`fp-card-counts-${index}`) as UIKit.Text;
       this.removeClass(card, "fp-card-focus");
+      if (compact) {
+        this.addClass(card, "fp-card-compact");
+        this.addClass(art, "fp-card-art-compact");
+        this.addClass(body, "fp-card-body-compact");
+        this.addClass(prompt, "fp-card-q-compact");
+        this.addClass(track, "fp-bar-track-compact");
+      } else {
+        this.removeClass(card, "fp-card-compact");
+        this.removeClass(art, "fp-card-art-compact");
+        this.removeClass(body, "fp-card-body-compact");
+        this.removeClass(prompt, "fp-card-q-compact");
+        this.removeClass(track, "fp-bar-track-compact");
+      }
       if (!stat) {
         this.addClass(card, "quiz-row-hidden");
         continue;
       }
       this.removeClass(card, "quiz-row-hidden");
+      art?.setProperties?.({
+        src: isCurriculumChallenge(this.activeQuiz?.challengeType)
+          ? PLAYTEST_INSTRUCTOR.question
+          : C1I.question
+      });
       label?.setProperties({ text: `Q${index + 1}` });
       prompt?.setProperties({
-        text: stat.prompt || fallbackPrompts[index] || `Question ${index + 1}`
+        text: this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE
+          ? capitalizeFlowchartLabel(stat.prompt || fallbackPrompts[index] || `Question ${index + 1}`)
+          : stat.prompt || fallbackPrompts[index] || `Question ${index + 1}`,
+        fontSize: this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE
+          ? 28
+          : this.activeQuiz?.challengeType === WHILE_TRACE_CHALLENGE_TYPE ||
+              this.activeQuiz?.challengeType === STRING_OK_ERROR_CHALLENGE_TYPE
+            ? 24
+          : compact ? 16 : 18,
       });
       const answered = stat.correctCount + stat.wrongCount;
       const barColor =
@@ -1529,7 +1606,7 @@ export class InstructorDashboardSystem extends createSystem({
               ? "#fbbf24"
               : "#f87171";
       fill?.setProperties?.({
-        width: Math.max(8, Math.round(168 * ((answered === 0 ? 0 : stat.accuracy) / 100))),
+        width: Math.max(8, Math.round((compact ? 128 : 168) * ((answered === 0 ? 0 : stat.accuracy) / 100))),
         backgroundColor: barColor
       });
       pct?.setProperties({ text: `${stat.accuracy}%` });
@@ -1626,6 +1703,17 @@ export class InstructorDashboardSystem extends createSystem({
     this.syncQuizMonitor();
   }
 
+  private applyMonitorBoardArt(): void {
+    const playtest = isCurriculumChallenge(this.activeQuiz?.challengeType);
+    const art = playtest ? PLAYTEST_INSTRUCTOR : C1I;
+    const board = this.quizMonitorDocument?.getElementById("quiz-monitor-board-art") as any;
+    const stop = this.quizMonitorDocument?.getElementById("quiz-stop-face") as any;
+    const close = this.quizMonitorDocument?.getElementById("quiz-close-face") as any;
+    board?.setProperties?.({ src: art.board });
+    stop?.setProperties?.({ src: art.stop });
+    close?.setProperties?.({ src: art.close });
+  }
+
   private refreshMonitorTitleBanner(text: string): void {
     if (!this.quizTitleBannerCanvas) {
       this.quizTitleBannerCanvas = document.createElement("canvas");
@@ -1639,7 +1727,7 @@ export class InstructorDashboardSystem extends createSystem({
       src: paintTitleBanner({
         canvas: this.quizTitleBannerCanvas,
         text,
-        src: C1I.title,
+        src: isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR.title : C1I.title,
         onReady: () => this.refreshMonitorTitleBanner(text),
       }),
     });
@@ -1669,7 +1757,7 @@ export class InstructorDashboardSystem extends createSystem({
         durationSeconds: duration,
         clockText,
         caption: "TIME REMAINING",
-        clockSrc: C1I.clock,
+        clockSrc: isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR.clock : C1I.clock,
         onReady: () => this.updateQuizTimerRing(clockText),
       }),
     });
@@ -2238,6 +2326,15 @@ export class InstructorDashboardSystem extends createSystem({
     }else if(item.activityType==='challenge'){
       if(item.activityKey==='drag_drop')this.activateChallenge2();
       else if(item.activityKey==='true_false')this.activateFivePartsChallenge();
+      else if(item.activityKey===CODE_PATTERN_ACTIVITY_KEY)this.activateCodePatternChallenge();
+      else if(item.activityKey===LOOP_SORT_ACTIVITY_KEY)this.activateLoopSortChallenge();
+      else if(item.activityKey===FLOWCHART_SHAPE_ACTIVITY_KEY)this.activateFlowchartShapeChallenge();
+      else if(item.activityKey===WHILE_TRACE_ACTIVITY_KEY)this.activateWhileTraceChallenge();
+      else if(item.activityKey===WHILE_PARTS_ACTIVITY_KEY)this.activateWhilePartsChallenge();
+      else if(item.activityKey===WHILE_FACTORIAL_ACTIVITY_KEY)this.activateWhileFactorialChallenge();
+      else if(item.activityKey===STRING_OK_ERROR_ACTIVITY_KEY)this.activateStringOkErrorChallenge();
+      else if(item.activityKey===STRING_IN_ACTIVITY_KEY)this.activateStringInChallenge();
+      else if(item.activityKey===STRING_CLEAN_ACTIVITY_KEY)this.activateStringCleanChallenge();
       else if(item.activityKey==='multiple_choice')this.activateQuickChallenge(item.activityId);
       else {this.showStatusMessage('Unknown challenge activity key.');return;}
     }else if(item.activityType==='display_room'){
@@ -2570,16 +2667,157 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private isRocketSeries(): boolean {
-    return this.activeQuizKind !== "challenge-2" && this.activeQuiz?.challengeType === TRUE_FALSE_CHALLENGE_TYPE;
+    return this.activeQuizKind !== "challenge-2" && (
+      this.activeQuiz?.challengeType === TRUE_FALSE_CHALLENGE_TYPE ||
+      isCurriculumChallenge(this.activeQuiz?.challengeType)
+    );
   }
 
   private isFivePartsSeries(): boolean {
-    return this.activeQuizKind !== "challenge-2" && this.quizSeriesType === TRUE_FALSE_CHALLENGE_TYPE;
+    return this.activeQuizKind !== "challenge-2" && (
+      this.quizSeriesType === TRUE_FALSE_CHALLENGE_TYPE ||
+      isCurriculumChallenge(this.quizSeriesType)
+    );
   }
 
   private shouldPrefixAnswerLetters(): boolean {
     const options = this.activeQuiz?.options ?? [];
     return options.length > 2;
+  }
+
+  private activateCodePatternChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Challenge 1");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: CODE_PATTERN_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 1 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateLoopSortChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Challenge 2");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: LOOP_SORT_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 2 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateWhileTraceChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Week 1 Day 2 Challenge 1");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: WHILE_TRACE_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 1 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateWhilePartsChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Week 1 Day 2 Challenge 2");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: WHILE_PARTS_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 2 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateWhileFactorialChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Week 1 Day 2 Challenge 3");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: WHILE_FACTORIAL_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 3 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateStringOkErrorChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-120 Week 13 Day 2 Challenge 1");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: STRING_OK_ERROR_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 1 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateStringInChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-120 Week 13 Day 2 Challenge 2");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: STRING_IN_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 2 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateStringCleanChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-120 Week 13 Day 2 Challenge 3");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: STRING_CLEAN_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 3 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
+  }
+
+  private activateFlowchartShapeChallenge(): void {
+    console.log("[InstructorDashboard] Starting CSDP-99 Challenge 3");
+    socket.emit("instructorQuickChallenge", {
+      durationSeconds: 300,
+      challengeType: FLOWCHART_SHAPE_CHALLENGE_TYPE,
+      activityId: this.selectedActivityId
+    });
+    this.setCurrentMode("Quick Challenge");
+    this.setLatestResultType("quick-challenge");
+    this.showStatusMessage("Challenge 3 started");
+    this.setDashboardVisible(false);
+    this.setLabMonitorVisible(false);
+    this.setLabMonitorAvailable(false);
   }
 
   private activateFivePartsChallenge(): void {

@@ -10,6 +10,34 @@ const C1 = {
   bridge: "/textures/challenge1/Bridge_between_the_question_numbers.png",
   light: "/textures/challenge1/LightUIButton.png",
   dark: "/textures/challenge1/DarkUIButton.png",
+  yes: "/textures/challenge1/True.png",
+  no: "/textures/challenge1/False.png",
+};
+
+const PLAYTEST_STUDENT = {
+  board: "/textures/playtest_student/UI_Background.png",
+  title: "/textures/playtest_student/Title_for_assignment.png",
+  clock: "/textures/playtest_student/Clock_Background.png",
+  idle: "/textures/playtest_student/Unanswered_Question.png",
+  current: "/textures/playtest_student/Current_Question.png",
+  done: "/textures/playtest_student/Answered_Question.png",
+  miss: "/textures/playtest_student/IncorrectUI.png",
+  correct: "/textures/playtest_student/CorrectUI.png",
+  bridge: "/textures/playtest_student/Bridge_between_the_question_numbers.png",
+  light: "/textures/playtest_student/LightUIButton.png",
+  dark: "/textures/playtest_student/DarkUIButton.png",
+  submit: "/textures/playtest_student/Submit_Button.png",
+  yes: "/textures/playtest_student/True.png",
+  no: "/textures/playtest_student/False.png",
+};
+
+const PLAYTEST_INSTRUCTOR = {
+  board: "/textures/playtest_instructor/UIBackground.png",
+  title: "/textures/playtest_instructor/Title_for_Dashboard.png",
+  clock: "/textures/playtest_instructor/Clock_Background.png",
+  question: "/textures/playtest_instructor/QuestionBackground.png",
+  stop: "/textures/playtest_instructor/StopButton.png",
+  close: "/textures/playtest_instructor/XCloseButton.png",
 };
 
 const C1I = {
@@ -37,8 +65,7 @@ function getImage(src: string, onReady?: () => void): HTMLImageElement | null {
   return null;
 }
 
-export function preloadChallenge1Art(onReady: () => void): void {
-  const sources = Object.values(C1);
+export function preloadArtPack(sources: string[], onReady: () => void): void {
   let pending = sources.length;
   sources.forEach(src => {
     const existing = imageCache.get(src);
@@ -58,6 +85,18 @@ export function preloadChallenge1Art(onReady: () => void): void {
     }
   });
   if (pending <= 0) onReady();
+}
+
+export function preloadChallenge1Art(onReady: () => void): void {
+  preloadArtPack(Object.values(C1), onReady);
+}
+
+export function preloadPlaytestStudentArt(onReady: () => void): void {
+  preloadArtPack(Object.values(PLAYTEST_STUDENT), onReady);
+}
+
+export function preloadPlaytestInstructorArt(onReady: () => void): void {
+  preloadArtPack(Object.values(PLAYTEST_INSTRUCTOR), onReady);
 }
 
 export function preloadChallenge1InstructorArt(onReady: () => void): void {
@@ -121,8 +160,33 @@ export function paintHudPlate(options: {
   ctx.fillStyle = options.color ?? "#f4fbff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `700 ${Math.round(height * 0.34)}px Inter, sans-serif`;
-  ctx.fillText(options.text, width / 2, height / 2 + 1);
+  const maxWidth = width - 40;
+  let fontSize = Math.round(height * 0.34);
+  let lines = [options.text];
+  while (fontSize >= 16) {
+    ctx.font = `700 ${fontSize}px Inter, sans-serif`;
+    const words = options.text.split(/\s+/).filter(Boolean);
+    lines = [];
+    let current = "";
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (current && ctx.measureText(next).width > maxWidth) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) lines.push(current);
+    if (lines.every(line => ctx.measureText(line).width <= maxWidth) &&
+        lines.length * fontSize * 1.15 <= height - 16) break;
+    fontSize -= 1;
+  }
+  const lineHeight = fontSize * 1.15;
+  const startY = height / 2 - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, index) => {
+    ctx.fillText(line, width / 2, startY + index * lineHeight + 1);
+  });
   return options.canvas.toDataURL("image/png");
 }
 
@@ -130,13 +194,18 @@ export function paintReviewChip(options: {
   canvas: HTMLCanvasElement;
   digit: string;
   correct: boolean;
+  correctSrc?: string;
+  missSrc?: string;
   onReady?: () => void;
 }): string {
   const ctx = options.canvas.getContext("2d");
   if (!ctx) return options.canvas.toDataURL("image/png");
   const size = options.canvas.width;
   ctx.clearRect(0, 0, size, size);
-  const plate = getImage(options.correct ? C1.correct : C1.miss, options.onReady);
+  const plate = getImage(
+    options.correct ? (options.correctSrc ?? C1.correct) : (options.missSrc ?? C1.miss),
+    options.onReady
+  );
   if (plate) ctx.drawImage(plate, 0, 0, size, size);
   ctx.fillStyle = "#f8fbff";
   ctx.textAlign = "center";
@@ -146,4 +215,4 @@ export function paintReviewChip(options: {
   return options.canvas.toDataURL("image/png");
 }
 
-export { C1, C1I, getImage };
+export { C1, C1I, PLAYTEST_STUDENT, PLAYTEST_INSTRUCTOR, getImage };
