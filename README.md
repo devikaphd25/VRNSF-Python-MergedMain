@@ -299,6 +299,33 @@ keeps its multiple-choice interface in `src/systems/multiple-choice-challenge.sy
 Supabase tables; this update needs no database migration. Restart the Node server
 and refresh browsers/headsets after updating both client and server.
 
+## Dependency updates and installation warnings
+
+Use `npm ci` after pulling dependency updates so every developer installs the
+versions recorded in `package-lock.json`. Commit `package.json` and the lockfile
+together when changing dependencies. Check the result with:
+
+```bash
+npm audit
+npm audit --omit=dev
+npm run typecheck
+npm test
+npm run build
+```
+
+The security update retains IWSDK `0.4.2` and overrides its transitive `sharp`
+dependency to `0.35.5`. Older IWSDK dependency ranges otherwise retain vulnerable
+image-library versions. The override was checked against the SDK screenshot
+resize path and the reference tool's image decoding/resizing. Keep it until a
+tested SDK update supplies patched versions itself; do not use
+`npm audit fix --force` to switch the SDK to an unrelated prerelease.
+
+Two upstream development-tool packages may still emit deprecation warnings:
+`@fortawesome/react-fontawesome@0.2.2` (emulator UI) and `boolean@3.2.0` (reference
+search's ONNX tooling). Deprecation warnings and npm funding notices do not mean
+installation failed. They are separate from the security audit result. Updating
+those tools further needs its own compatibility review.
+
 ## Checks
 
 ```
