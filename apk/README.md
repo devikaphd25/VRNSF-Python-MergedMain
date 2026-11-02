@@ -27,7 +27,7 @@ Run from the repository root after installing the tool dependencies:
 1. `node apk/install-build-tools.cjs`
 2. `node apk/install-android-packages.cjs` (accepts the Android SDK licenses).
 3. `npm run build`
-4. `SERVE_WEB_APP=true PORT=3100 npm run dev:server`
+4. Set `PORT=3100` in private `.env.server`, then run `npm start`.
 5. In another terminal: `apk/tooling/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3100`
 6. Record the returned HTTPS origin in `apk/runtime.json`.
 7. `node apk/generate-project.cjs`

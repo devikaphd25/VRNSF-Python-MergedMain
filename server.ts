@@ -13,8 +13,8 @@ import { RoomActivityStore } from "./server/state/room-activity.js";
  * events over Socket.IO while persisting identities/results through Supabase.
  * Data dependencies: users, game_results, rooms, participants,
  * activities, challenge_questions, and challenge_responses.
- * Called by: `npm run dev:server`; browser clients connect through
- * `src/network/socket.ts`.
+ * Called by: `npm run dev:server`, or compiled to build/server.js for `npm start`.
+ * Browser clients connect through `src/network/socket-client.ts`.
  */
 import express from "express";
 import http from "http";
@@ -622,6 +622,9 @@ app.use(express.json());
 app.use("/api", loginRoutes);
 
 app.use("/api", classroomRoutes);
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
 
 // Optional production web host for the packaged Quest app. Only dist/ is served.
 if (process.env.SERVE_WEB_APP === "true") {

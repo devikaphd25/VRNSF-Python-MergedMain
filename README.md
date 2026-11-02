@@ -3,6 +3,96 @@
 A shared browser/Quest classroom with videos, three challenges, debrief images,
 a Python puzzle, and a computer hardware display room.
 
+## Production deployment: one Node process
+
+Production uses **one running Node server** for the website, `/api`, and
+`/socket.io` (Socket.IO/WebSockets). Vite runs only during the build. The backend
+is compiled to JavaScript; production does not run `tsx` or two development servers.
+These commands work in PowerShell, macOS Terminal, and Linux shells:
+
+```bash
+npm ci --include=dev
+npm run build
+npm start
+```
+
+`npm run build` builds both parts:
+
+- `npm run build:web` → browser files and assets in `dist/`.
+- `npm run build:server` → `build/server.js`, backend modules, and shared JSON/config.
+
+Install development dependencies **before building** because Vite and TypeScript
+are build tools. After a successful build, an operator can optionally run
+`npm prune --omit=dev` and then `npm start`. For a separate runtime image, use
+`npm ci --omit=dev` there and copy the already-built artifacts from the build image.
+A static-site-only host cannot run this backend; choose a Node web service/VPS
+with long-running WebSocket connections.
+
+### Hosting configuration to give Sagar
+
+| Setting | Value |
+| --- | --- |
+| Node version | Node 24 recommended. |
+| Build command | `npm ci --include=dev && npm run build` (include development dependencies at build time). |
+| Start command | `npm start` |
+| Health-check path | `/api/health` (returns `{ "status": "ok" }` after startup). |
+| Application process count | One coordinating Node process / one replica. |
+| `SUPABASE_URL` | Existing Supabase project root URL; provide privately with the key. |
+| `SUPABASE_SECRET_KEY` | Existing project's private server secret; set as a hosting secret. |
+| `PORT` | Hosting platform's assigned port. For a VPS you can choose `3100`; otherwise the app defaults to `3001`. |
+| `VITE_SERVER_URL` | Leave empty/unset at build time so browser sockets use the public site's HTTPS origin. |
+
+`npm start` sets `NODE_ENV=production` and `SERVE_WEB_APP=true`. It optionally loads
+`.env.server` from the project root; hosting environment variables take precedence.
+It can start without that file when the hosting platform supplies the variables.
+Missing credentials or build outputs produce an explicit startup error.
+
+For manual hosting, `.env.server` can contain:
+
+```dotenv
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=YOUR_PRIVATE_SERVER_KEY
+PORT=3100
+```
+
+Use the existing database; **do not rerun the bootstrap schema**. Never place this
+private environment file in `dist/` or GitHub. To start a previously built app,
+run `npm start` from the repository root. Keep the service running with the
+hosting platform's service manager, with one instance rather than a multi-worker
+cluster. Restart it after deploying a new build.
+
+If copying artifacts instead of cloning the source, the runtime needs:
+`dist/`, `build/`, `server/start-production.mjs`, `package.json`,
+`package-lock.json`, production `node_modules/`, and securely supplied environment
+values. Preserve a writable private `data/` directory across restarts/deployments
+for failed-result recovery snapshots; it is not served publicly.
+
+### Public HTTPS and WSS
+
+Point a permanent HTTPS domain to the hosting service. Its proxy forwards **all
+paths**, including `/api` and `/socket.io`, to the same Node port, and supports
+WebSocket upgrades. Public clients use `https://YOUR_DOMAIN/`; Socket.IO uses the
+same origin and secure WebSockets (`wss://`) through that proxy. There is no second
+WSS server or separate WSS build.
+
+The Node port itself uses HTTP behind the HTTPS proxy; do not point Quest directly
+at that internal HTTP port. Keep the application's internal port private to the
+proxy when configuring the host firewall. See the official
+[Socket.IO reverse-proxy examples](https://socket.io/docs/v4/reverse-proxy/).
+
+After the host is configured, check:
+
+1. `https://YOUR_DOMAIN/api/health` returns `status: ok`.
+2. `https://YOUR_DOMAIN/` opens the classroom.
+3. Instructor and student devices on that domain can join the same class and
+   receive activity/video changes without reconnect errors.
+4. Quest Browser can enter XR over the trusted HTTPS connection.
+
+Once the permanent domain works, rebuild the Quest APK with that launch origin
+and the original signing key. Upload the new version through Meta Device Manager.
+The hosting platform/domain have not been selected in this repository; these
+instructions prepare the app but do not provision a public server or certificate.
+
 ## Project layout
 
 Work from the repository root, the folder containing this README and `package.json`.
@@ -20,6 +110,8 @@ project folder inside this repository.
 | `public/` | Required models, textures and audio; compiled UI is generated during build. |
 | `supabase/` | One current schema for bootstrapping a separate empty Supabase database. |
 | `tests/` | Automated checks; database integration tests are opt-in. |
+| `dist/` | Generated frontend build, ignored by Git. |
+| `build/` | Generated backend JavaScript and shared data, ignored by Git. |
 
 The puzzle opens from the instructor dashboard's `python-puzzle` activity. It uses
 the shared class session, live progress monitor, instructor stop/return controls,
@@ -158,13 +250,14 @@ computer changes Wi-Fi. Use a trusted HTTPS tunnel if certificate trust is not s
 
 The APK uses a separate production host and a trusted HTTPS launch address.
 See [APK-UPDATE-STEPS.txt](APK-UPDATE-STEPS.txt) and [apk/README.md](apk/README.md).
-A typical host command, after `npm run build`, is:
+After `npm run build`, set `PORT=3100` in the private `.env.server` (or hosting
+environment), then run:
 
 ```bash
-SERVE_WEB_APP=true PORT=3100 npm run dev:server
+npm start
 ```
 
-This serves `dist/` and the API together on port **3100**. Keep that host and its
+This serves `dist/` and the API together on the configured port. Keep that host and its
 tunnel running. A temporary tunnel may get a new URL after restarting; rebuild the
 APK with the same signing key when its launch origin changes. The APK binary,
 signing keys, and local Android toolchains are excluded from Git.

@@ -9,10 +9,11 @@ Changing Wi-Fi does not require a rebuild if the same tunnel keeps its address.
 1. START THE APP SERVER
 
 If the server is already running on port 3100, leave it running.
-Otherwise, open Terminal and run:
+Otherwise, set PORT=3100 in your private .env.server, then open Terminal and run:
 
 cd /Users/tinaatia/Desktop/Sager-VR
-SERVE_WEB_APP=true PORT=3100 npm run dev:server
+npm run build
+npm start
 
 Leave this Terminal open. If port 3100 is already in use, do not start a duplicate.
 
