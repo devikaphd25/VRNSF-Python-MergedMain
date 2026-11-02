@@ -28,7 +28,7 @@ are build tools. After a successful build, an operator can optionally run
 A static-site-only host cannot run this backend; choose a Node web service/VPS
 with long-running WebSocket connections.
 
-### Hosting configuration to give Sagar
+### Hosting configuration
 
 | Setting | Value |
 | --- | --- |
