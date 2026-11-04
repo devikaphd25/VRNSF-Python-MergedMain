@@ -49,7 +49,7 @@ import {
 } from "../network/socket-client";
 import { findNextChallengeIndex, type ClassroomActivity, type ClassroomContent } from "../content/classroom-content";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
-import { C1I, PLAYTEST_INSTRUCTOR, paintTitleBanner, preloadChallenge1InstructorArt, preloadPlaytestInstructorArt } from "../challenges/true-false/question-art";
+import { C1I, PLAYTEST_INSTRUCTOR, paintHoverArt, paintTitleBanner, preloadChallenge1InstructorArt, preloadPlaytestInstructorArt } from "../challenges/true-false/question-art";
 
 import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation-settings";
 
@@ -259,6 +259,8 @@ export class InstructorDashboardSystem extends createSystem({
   private quizMonitorPage = 0;
   private readonly quizMonitorPageSize = 10;
   private quizMonitorFinished = false;
+  private hoveredMonitorControl = "";
+  private monitorIconCanvases = new Map<string, HTMLCanvasElement>();
   private puzzleRoomOpen = false;
   private monitoredGame: "cards" | "puzzle" = "cards";
   private quizSeriesType?: string;
@@ -1167,6 +1169,8 @@ export class InstructorDashboardSystem extends createSystem({
         this.showStatusMessage("Stopping quick challenge...");
       }
     });
+    this.bindMonitorHover("quiz-monitor-stop");
+    this.bindMonitorHover("quiz-monitor-close");
     this.bindSpatialButton(document, "quiz-monitor-up", () => {
       this.quizMonitorPage = Math.max(0, this.quizMonitorPage - 1);
       this.renderQuizMonitor();
@@ -1707,11 +1711,58 @@ export class InstructorDashboardSystem extends createSystem({
     const playtest = isCurriculumChallenge(this.activeQuiz?.challengeType);
     const art = playtest ? PLAYTEST_INSTRUCTOR : C1I;
     const board = this.quizMonitorDocument?.getElementById("quiz-monitor-board-art") as any;
-    const stop = this.quizMonitorDocument?.getElementById("quiz-stop-face") as any;
-    const close = this.quizMonitorDocument?.getElementById("quiz-close-face") as any;
     board?.setProperties?.({ src: art.board });
-    stop?.setProperties?.({ src: art.stop });
-    close?.setProperties?.({ src: art.close });
+    this.paintMonitorControlIcon("quiz-stop-face", art.stop, this.hoveredMonitorControl === "quiz-monitor-stop");
+    this.paintMonitorControlIcon("quiz-close-face", art.close, this.hoveredMonitorControl === "quiz-monitor-close");
+  }
+
+  private bindMonitorHover(elementId: string): void {
+    const button = this.quizMonitorDocument?.getElementById(elementId);
+    if (!button) return;
+    button.addEventListener("pointerenter", () => this.setHoveredMonitorControl(elementId));
+    button.addEventListener("pointerleave", () => {
+      if (this.hoveredMonitorControl === elementId) this.setHoveredMonitorControl("");
+    });
+  }
+
+  private setHoveredMonitorControl(elementId: string): void {
+    if (this.hoveredMonitorControl === elementId) return;
+    const previous = this.hoveredMonitorControl;
+    this.hoveredMonitorControl = elementId;
+    this.syncMonitorHover(previous);
+    this.syncMonitorHover(elementId);
+  }
+
+  private syncMonitorHover(elementId: string): void {
+    const art = isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR : C1I;
+    if (elementId === "quiz-monitor-stop") {
+      this.paintMonitorControlIcon("quiz-stop-face", art.stop, this.hoveredMonitorControl === elementId);
+    }
+    if (elementId === "quiz-monitor-close") {
+      this.paintMonitorControlIcon("quiz-close-face", art.close, this.hoveredMonitorControl === elementId);
+    }
+  }
+
+  private paintMonitorControlIcon(faceId: string, src: string, hover: boolean): void {
+    const face = this.quizMonitorDocument?.getElementById(faceId) as any;
+    if (!hover) {
+      face?.setProperties?.({ src, keepAspectRatio: true });
+      return;
+    }
+    let canvas = this.monitorIconCanvases.get(faceId);
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      this.monitorIconCanvases.set(faceId, canvas);
+    }
+    face?.setProperties?.({
+      keepAspectRatio: true,
+      src: paintHoverArt({
+        canvas,
+        src,
+        wash: "rgba(255, 255, 255, 0.34)",
+        onReady: () => this.paintMonitorControlIcon(faceId, src, hover),
+      }),
+    });
   }
 
   private refreshMonitorTitleBanner(text: string): void {

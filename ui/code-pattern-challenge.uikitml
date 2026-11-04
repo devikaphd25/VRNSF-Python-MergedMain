@@ -235,6 +235,7 @@
     font-family: inter;
     background-opacity: 0;
     border-width: 0;
+    border-radius: 2.4;
     cursor: pointer;
     pointer-events: auto;
     pointer-events-order: 50001;
@@ -345,6 +346,7 @@
     font-family: inter;
     background-opacity: 0;
     border-width: 0;
+    border-radius: 2.2;
     cursor: pointer;
     pointer-events: auto;
     pointer-events-order: 50001;
@@ -378,9 +380,17 @@
     justify-content: center;
     background-opacity: 0;
     border-width: 0;
+    border-radius: 2.2;
     cursor: pointer;
     pointer-events: auto;
     pointer-events-order: 50001;
+  }
+
+  .answer-hovered {
+    border-width: 0.42;
+    border-color: #8ef0ff;
+    background-color: #6fe4ff;
+    background-opacity: 0.24;
   }
 
   .nav-face {

@@ -1,4 +1,8 @@
-import { C1, getImage } from "../challenges/true-false/question-art";
+import { applyHoverWash, C1, getImage } from "../challenges/true-false/question-art";
+
+const hoverDiamondCanvas = typeof document === "undefined"
+  ? undefined
+  : document.createElement("canvas");
 
 type StepTone = "idle" | "current" | "done" | "miss";
 
@@ -62,6 +66,7 @@ export function paintStepsRail(options: {
   canvas: HTMLCanvasElement;
   states: StepTone[];
   art?: typeof C1;
+  hoveredIndex?: number;
   onReady?: () => void;
 }): string {
   const ctx = options.canvas.getContext("2d");
@@ -96,7 +101,23 @@ export function paintStepsRail(options: {
     const size = Math.round(visual / TIP_RATIO[state]);
     const x = centers[index] - size / 2;
     const y = cy - size / 2;
-    if (plate) ctx.drawImage(plate, x, y, size, size);
+    if (plate) {
+      if (index === options.hoveredIndex && hoverDiamondCanvas) {
+        hoverDiamondCanvas.width = size;
+        hoverDiamondCanvas.height = size;
+        const hoverCtx = hoverDiamondCanvas.getContext("2d");
+        if (hoverCtx) {
+          hoverCtx.clearRect(0, 0, size, size);
+          hoverCtx.drawImage(plate, 0, 0, size, size);
+          applyHoverWash(hoverCtx, size, size);
+          ctx.drawImage(hoverDiamondCanvas, x, y, size, size);
+        } else {
+          ctx.drawImage(plate, x, y, size, size);
+        }
+      } else {
+        ctx.drawImage(plate, x, y, size, size);
+      }
+    }
     ctx.fillStyle = "#f4fbff";
     ctx.font = `700 ${Math.round(visual * 0.34)}px Inter, sans-serif`;
     ctx.textAlign = "center";

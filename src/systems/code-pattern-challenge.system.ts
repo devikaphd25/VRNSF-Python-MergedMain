@@ -1,5 +1,5 @@
 import { TRUE_FALSE_MAX_ATTEMPTS } from "../../shared/true-false-settings";
-import { LOOP_SORT_CHALLENGE_TYPE, FLOWCHART_SHAPE_CHALLENGE_TYPE, WHILE_TRACE_CHALLENGE_TYPE, WHILE_PARTS_CHALLENGE_TYPE, WHILE_FACTORIAL_CHALLENGE_TYPE, STRING_OK_ERROR_CHALLENGE_TYPE, STRING_IN_CHALLENGE_TYPE, STRING_CLEAN_CHALLENGE_TYPE, isCurriculumChallenge } from "../../shared/challenge-types";
+import { CODE_PATTERN_CHALLENGE_TYPE, LOOP_SORT_CHALLENGE_TYPE, FLOWCHART_SHAPE_CHALLENGE_TYPE, WHILE_TRACE_CHALLENGE_TYPE, WHILE_PARTS_CHALLENGE_TYPE, WHILE_FACTORIAL_CHALLENGE_TYPE, STRING_OK_ERROR_CHALLENGE_TYPE, STRING_IN_CHALLENGE_TYPE, STRING_CLEAN_CHALLENGE_TYPE, isCurriculumChallenge } from "../../shared/challenge-types";
 import { STUDENT_RESULT_AUTO_CLOSE_MS } from "../config/student-result-settings";
 import { CSDP99_W1D1_CODE_LINES } from "../content/csdp99-w1d1-challenge1";
 import { CSDP99_W1D1_CHALLENGE2_GUIDE } from "../content/csdp99-w1d1-challenge2";
@@ -30,6 +30,7 @@ import { paintChallenge1Countdown } from "../ui/countdown-ring";
 import { hitStepIndex, paintStepsRail } from "../ui/steps-rail";
 import {
   PLAYTEST_STUDENT as C1,
+  paintHoverArt,
   paintHudPlate,
   paintReviewChip,
   paintTitleBanner,
@@ -138,6 +139,32 @@ export class CodePatternChallengeSystem extends createSystem({
   private hudPlateCanvases = new Map<string, HTMLCanvasElement>();
   private sounds = new TrueFalseSounds();
   private hoveredDesktopAction = "";
+  private hoveredControlId = "";
+  private readonly hoverControlIds = [
+    "quiz-answer-0",
+    "quiz-answer-1",
+    "quiz-answer-2",
+    "quiz-answer-3",
+    "quiz-answer-4",
+    "quiz-submit",
+    "quiz-prev",
+    "quiz-next",
+    "quiz-result-reset",
+    "quiz-step-0",
+    "quiz-step-1",
+    "quiz-step-2",
+    "quiz-step-3",
+    "quiz-step-4",
+    "quiz-step-5",
+    "quiz-step-6",
+    "quiz-review-q-0",
+    "quiz-review-q-1",
+    "quiz-review-q-2",
+    "quiz-review-q-3",
+    "quiz-review-q-4",
+    "quiz-review-q-5",
+    "quiz-review-q-6",
+  ];
   private codeFaceCanvas?: HTMLCanvasElement;
   private dndFaceCanvas?: HTMLCanvasElement;
   private dndDragIndex: number | null = null;
@@ -274,6 +301,14 @@ export class CodePatternChallengeSystem extends createSystem({
     }
     if (this.hitUiElement(raycaster, "quiz-result-reset") && this.isSummaryView()) {
       return { action: this.retryQuiz, actionName: "retry" };
+    }
+    for (let index = 0; index < 7; index += 1) {
+      if (this.hitUiElement(raycaster, `quiz-step-${index}`)) {
+        return { action: () => this.goToQuestion(index), actionName: `step-${index}` };
+      }
+      if (this.hitUiElement(raycaster, `quiz-review-q-${index}`)) {
+        return { action: () => this.jumpToQuestion(index), actionName: `review-${index}` };
+      }
     }
 
     if (this.isFivePartsChallenge()) {
@@ -488,6 +523,10 @@ export class CodePatternChallengeSystem extends createSystem({
     });
     element.addEventListener("pointerenter", () => {
       if ((window as any).isCodePatternChallengeOpen) this.sounds.hover();
+      this.setHoveredControl(elementId);
+    });
+    element.addEventListener("pointerleave", () => {
+      if (this.hoveredControlId === elementId) this.setHoveredControl("");
     });
   }
 
@@ -728,7 +767,7 @@ export class CodePatternChallengeSystem extends createSystem({
     this.addClass(this.document?.getElementById("quiz-dnd-face"), "answer-hidden");
     if (this.canRetryFiveParts()) {
       this.removeClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
-      this.paintHudFace("quiz-reset-face", C1.light, "Retry");
+      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, this.hoveredControlId === "quiz-result-reset");
     } else {
       this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
     }
@@ -833,6 +872,7 @@ export class CodePatternChallengeSystem extends createSystem({
           correct: review.correct,
           correctSrc: C1.correct,
           missSrc: C1.miss,
+          hover: this.hoveredControlId === `quiz-review-q-${index}`,
           onReady: () => this.updateReviewQuestionButtons(),
         }),
       });
@@ -1022,6 +1062,9 @@ export class CodePatternChallengeSystem extends createSystem({
         canvas: this.stepsRailCanvas,
         states,
         art: C1,
+        hoveredIndex: this.hoveredControlId.startsWith("quiz-step-")
+          ? Number(this.hoveredControlId.slice("quiz-step-".length))
+          : undefined,
         onReady: () => this.updateStepLights(),
       }),
     });
@@ -1061,22 +1104,40 @@ export class CodePatternChallengeSystem extends createSystem({
     });
   }
 
+  private usesHighlightedMcButton(): boolean {
+    const type = this.challenge?.challengeType;
+    return (
+      type === CODE_PATTERN_CHALLENGE_TYPE ||
+      type === LOOP_SORT_CHALLENGE_TYPE ||
+      type === FLOWCHART_SHAPE_CHALLENGE_TYPE
+    );
+  }
+
+  private usesTiltedCodeBoard(): boolean {
+    const type = this.challenge?.challengeType;
+    return type === CODE_PATTERN_CHALLENGE_TYPE || type === LOOP_SORT_CHALLENGE_TYPE;
+  }
+
   private updateSubmitButton(): void {
     const submit = this.document?.getElementById("quiz-submit");
     const face = this.document?.getElementById("quiz-submit-face");
     const label = this.document?.getElementById("quiz-submit-label") as any;
     if (this.isFivePartsChallenge()) {
       this.removeClass(submit, "submit-full");
+      this.addClass(label, "answer-hidden");
       if (this.submitted) {
-        this.removeClass(submit, "answer-hidden");
+        this.addClass(submit, "answer-hidden");
         this.addClass(face, "answer-hidden");
-        this.addClass(label, "answer-hidden");
         return;
       }
-      this.removeClass(submit, "answer-hidden", "submit-ready", "submit-full");
+      if (this.usesHighlightedMcButton() && !this.allQuestionsAnswered()) {
+        this.addClass(submit, "answer-hidden");
+        this.addClass(face, "answer-hidden");
+        return;
+      }
+      this.removeClass(submit, "answer-hidden", "submit-ready", "submit-full", "submit-disabled");
       this.removeClass(face, "answer-hidden");
-      this.addClass(label, "answer-hidden");
-      (face as any)?.setProperties?.({ src: C1.submit });
+      this.paintControlIcon("quiz-submit-face", C1.submit, this.hoveredControlId === "quiz-submit");
       if (!this.allQuestionsAnswered()) this.addClass(submit, "submit-disabled");
       else this.removeClass(submit, "submit-disabled");
       return;
@@ -1086,10 +1147,17 @@ export class CodePatternChallengeSystem extends createSystem({
     this.addClass(submit, "submit-full");
     this.removeClass(face, "answer-hidden");
     this.addClass(label, "answer-hidden");
-    (face as any)?.setProperties?.({ src: C1.submit });
+    this.paintControlIcon("quiz-submit-face", C1.submit, this.hoveredControlId === "quiz-submit");
   }
 
-  private paintHudFace(id: string, src: string, text: string, color?: string): void {
+  private paintHudFace(
+    id: string,
+    src: string,
+    text: string,
+    color?: string,
+    fontWeight?: number,
+    hover = false
+  ): void {
     let canvas = this.hudPlateCanvases.get(id);
     if (!canvas) {
       canvas = document.createElement("canvas");
@@ -1104,9 +1172,92 @@ export class CodePatternChallengeSystem extends createSystem({
         src,
         text,
         color,
-        onReady: () => this.paintHudFace(id, src, text, color),
+        fontWeight,
+        hover,
+        onReady: () => this.paintHudFace(id, src, text, color, fontWeight, hover),
       }),
     });
+  }
+
+  private paintControlIcon(faceId: string, src: string, hover: boolean): void {
+    const face = this.document?.getElementById(faceId) as any;
+    const layout = { keepAspectRatio: true };
+    if (!hover) {
+      face?.setProperties?.({ ...layout, src });
+      return;
+    }
+    let canvas = this.hudPlateCanvases.get(faceId);
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      this.hudPlateCanvases.set(faceId, canvas);
+    }
+    face?.setProperties?.({
+      ...layout,
+      src: paintHoverArt({
+        canvas,
+        src,
+        onReady: () => this.paintControlIcon(faceId, src, hover),
+      }),
+    });
+  }
+
+  private hoverIdFromAction(actionName: string): string {
+    if (actionName.startsWith("answer-")) return `quiz-answer-${actionName.slice("answer-".length)}`;
+    if (actionName.startsWith("step-")) return `quiz-step-${actionName.slice("step-".length)}`;
+    if (actionName.startsWith("review-")) return `quiz-review-q-${actionName.slice("review-".length)}`;
+    if (actionName === "submit") return "quiz-submit";
+    if (actionName === "prev") return "quiz-prev";
+    if (actionName === "next") return "quiz-next";
+    if (actionName === "retry") return "quiz-result-reset";
+    return "";
+  }
+
+  private setHoveredControl(elementId: string): void {
+    const next =
+      this.usesHighlightedMcButton() && this.hoverControlIds.includes(elementId)
+        ? elementId
+        : "";
+    if (this.hoveredControlId === next) return;
+    const previous = this.hoveredControlId;
+    this.hoveredControlId = next;
+    this.syncHoverStyle(previous);
+    this.syncHoverStyle(next);
+  }
+
+  private syncHoverStyle(elementId: string): void {
+    if (!elementId) return;
+    const hovered = this.hoveredControlId === elementId;
+    if (elementId.startsWith("quiz-answer-")) {
+      const element = this.document?.getElementById(elementId);
+      if (hovered) this.addClass(element, "answer-hovered");
+      else this.removeClass(element, "answer-hovered");
+      const index = Number(elementId.slice("quiz-answer-".length));
+      if (Number.isInteger(index)) this.paintChoiceFace(index);
+      return;
+    }
+    if (elementId === "quiz-submit") {
+      this.paintControlIcon("quiz-submit-face", C1.submit, hovered);
+      return;
+    }
+    if (elementId === "quiz-prev") {
+      this.paintControlIcon("quiz-prev-face", C1.previous, hovered);
+      return;
+    }
+    if (elementId === "quiz-next") {
+      this.paintControlIcon("quiz-next-face", C1.next, hovered);
+      return;
+    }
+    if (elementId === "quiz-result-reset") {
+      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, hovered);
+      return;
+    }
+    if (elementId.startsWith("quiz-step-")) {
+      this.updateStepLights();
+      return;
+    }
+    if (elementId.startsWith("quiz-review-q-")) {
+      this.updateReviewQuestionButtons();
+    }
   }
 
   private updateNavButtons(): void {
@@ -1119,6 +1270,8 @@ export class CodePatternChallengeSystem extends createSystem({
     else this.removeClass(prev, "nav-disabled");
     if (this.questionIndex >= maxIndex) this.addClass(next, "nav-disabled");
     else this.removeClass(next, "nav-disabled");
+    this.paintControlIcon("quiz-prev-face", C1.previous, this.hoveredControlId === "quiz-prev");
+    this.paintControlIcon("quiz-next-face", C1.next, this.hoveredControlId === "quiz-next");
   }
 
   private goPrevious = (): void => {
@@ -1508,10 +1661,16 @@ export class CodePatternChallengeSystem extends createSystem({
       ? `${String.fromCharCode(65 + index)}. ${option}`
       : option;
     const selected = this.isChoiceSelected(index, this.selectedChoiceValue());
+    const plate = this.usesHighlightedMcButton()
+      ? selected ? C1.mcHighlight : C1.mc
+      : selected ? C1.dark : C1.light;
     this.paintHudFace(
       `quiz-answer-face-${index}`,
-      selected ? C1.dark : C1.light,
-      caption
+      plate,
+      caption,
+      undefined,
+      this.usesHighlightedMcButton() ? 500 : 700,
+      this.usesHighlightedMcButton() && this.hoveredControlId === `quiz-answer-${index}`
     );
   }
 
@@ -1667,7 +1826,10 @@ export class CodePatternChallengeSystem extends createSystem({
   }
 
   private setVisible(visible: boolean): void {
-    if (!visible) window.clearTimeout(this.resultAutoCloseTimer);
+    if (!visible) {
+      window.clearTimeout(this.resultAutoCloseTimer);
+      this.setHoveredControl("");
+    }
     const entity = (window as any).codePatternChallengeEntity;
 
     this.setOtherStudentUiDisabled(visible);
@@ -1812,6 +1974,8 @@ export class CodePatternChallengeSystem extends createSystem({
   private handleDesktopRocketMove = (event: PointerEvent): void => {
     if (this.renderer.xr.isPresenting || !(window as any).isCodePatternChallengeOpen) {
       this.hoveredDesktopAction = "";
+      if (this.renderer.xr.isPresenting) return;
+      this.setHoveredControl("");
       return;
     }
     const canvasRect = this.renderer.domElement.getBoundingClientRect();
@@ -1825,6 +1989,7 @@ export class CodePatternChallengeSystem extends createSystem({
       const target = this.getPanelAction(raycaster)?.actionName ?? "";
       if (target && target !== this.hoveredDesktopAction) this.sounds.hover();
       this.hoveredDesktopAction = target;
+      this.setHoveredControl(this.hoverIdFromAction(target));
       return;
     }
     event.preventDefault();
@@ -1931,6 +2096,7 @@ export class CodePatternChallengeSystem extends createSystem({
       this.removeClass(codeFace, "quiz-board-art-wide");
     }
     this.sizeLeftBoard(wideCode);
+    this.tiltLeftCodeBoard(this.usesTiltedCodeBoard());
     const entity = (window as any).codePatternChallengeEntity;
     if (entity?.index !== undefined) {
       PanelUI.data.maxWidth[entity.index] = this.studentPanelLayout().meters;
@@ -1958,6 +2124,14 @@ export class CodePatternChallengeSystem extends createSystem({
     (this.document?.getElementById("code-face") as any)?.setProperties?.(imageProps);
     (this.document?.getElementById("quiz-shell") as any)?.setProperties?.({
       width: this.studentPanelLayout().uikitWidth,
+    });
+  }
+
+  private tiltLeftCodeBoard(tilt: boolean): void {
+    const board = this.document?.getElementById("code-board") as any;
+    board?.setProperties?.({
+      transformRotateY: tilt ? 12 : 0,
+      transformOriginX: tilt ? "right" : "center",
     });
   }
 
