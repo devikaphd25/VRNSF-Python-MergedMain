@@ -1584,13 +1584,14 @@ World.create(
         // Browser fallback: keep the complete icon inside the lower-left view.
         studentBoardViewButtonEntity.object3D.position.set(-0.46, -0.28, -1.12);
         studentBoardViewButtonEntity.object3D.scale.setScalar(1);
-        studentBoardViewButtonEntity.object3D.visible = true;
-        studentBoardViewButtonEntity.object3D.pointerEvents = "auto";
+        studentBoardViewButtonEntity.object3D.visible = false;
+        studentBoardViewButtonEntity.object3D.pointerEvents = "none";
+        studentBoardViewButtonEntity.object3D.intersectChildren = false;
         studentBoardViewButtonEntity.object3D.pointerEventsOrder = 71000;
         studentBoardViewButtonEntity.object3D.frustumCulled = false;
       }
       (window as any).studentBoardViewButtonEntity = studentBoardViewButtonEntity;
-      (window as any).isStudentBoardViewAvailable = true;
+      (window as any).isStudentBoardViewAvailable = false;
     }
 
     const attachStudentBoardButton = (): void => {

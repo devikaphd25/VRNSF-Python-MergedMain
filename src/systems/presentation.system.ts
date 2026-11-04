@@ -1672,6 +1672,8 @@ export class PresentationSystem extends createSystem({
       console.log("🎬 Entered Presentation Mode", { useImmersiveRoom });
       socket.emit("modeChanged", "Presentation Mode");
     } else {
+      // Clear the student's SCREEN/RETURN toggle before restoring the assigned seat.
+      (window as any).closeStudentResultForRoomTransition?.();
       this.player.position.copy(this.savedSeatPosition);
       this.player.quaternion.copy(this.savedSeatQuaternion);
       // Restoring the quaternion is sufficient and preserves the exact saved
@@ -1832,8 +1834,8 @@ export class PresentationSystem extends createSystem({
     const objects = [
       (window as any).menuEntity?.object3D,
       (window as any).hintEntity?.object3D,
-      // Students keep only Raise Hand while watching. Instructor controls are
-      // provided by the dedicated video panel.
+      // Students retain Raise Hand and the presentation-only SCREEN shortcut.
+      // Instructor controls are provided by the dedicated video panel.
       (window as any).isInstructor
         ? (window as any).raiseHandEntity?.object3D
         : null,

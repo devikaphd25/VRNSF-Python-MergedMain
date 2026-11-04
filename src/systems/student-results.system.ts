@@ -17,6 +17,8 @@ import * as THREE from "three";
 
 import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-catalog";
 import { socket } from "../network/socket-client";
+import { canUsePresentationBoardView } from "../student/presentation-board-control";
+import { setPanelRayInteraction } from "../ui/panel-ray-interaction";
 
 export class StudentResultsSystem extends createSystem({
   resultPanel: {
@@ -67,15 +69,14 @@ export class StudentResultsSystem extends createSystem({
     this.queries.boardViewButton.subscribe("qualify", entity => {
       this.boardViewDocument = PanelDocument.data.document[entity.index] as UIKitDocument;
       this.connectBoardViewButton();
-      // SCREEN is a normal classroom navigation control, like Raise Hand. It
-      // must not depend on completing Challenge 2 before it becomes visible.
+      // The existing SCREEN icon is available while watching a presentation.
       this.setBoardViewButtonVisible(true);
     });
 
     (window as any).toggleStudentBoardView = this.activateBoardView;
     (window as any).closeStudentResultForRoomTransition =
       this.closeForRoomTransition;
-    (window as any).isStudentBoardViewAvailable = true;
+    (window as any).isStudentBoardViewAvailable = false;
 
     window.addEventListener(
       "studentLabResult",
@@ -252,7 +253,7 @@ export class StudentResultsSystem extends createSystem({
   private activateBoardView = (event?: any): void => {
     event?.stopPropagation?.();
     event?.stopImmediatePropagation?.();
-    if (this.isGameActive() || !(window as any).isStudentBoardViewAvailable) return;
+    if (!canUsePresentationBoardView(window as any) || !(window as any).isStudentBoardViewAvailable) return;
     const now = performance.now();
     if (now - this.lastBoardViewActivation < 250) return;
     this.lastBoardViewActivation = now;
@@ -303,31 +304,22 @@ export class StudentResultsSystem extends createSystem({
     (this.boardViewDocument as any)?.requestUpdate?.();
   }
 
-  private isGameActive(): boolean {
-    const state = window as any;
-    return Boolean(state.isLabActive || state.isPuzzleActive || state.isCastleActive || state.isDisplayRoomOpen);
-  }
-
   private setBoardViewButtonVisible(visible: boolean): void {
     this.boardButtonRequested = visible;
     this.syncBoardButton();
   }
 
-  // Keep classroom Screen navigation unavailable while either game owns the player.
+  // Keep the controller shortcut visible only while a presentation owns the view.
   private syncBoardButton(): void {
-    const visible = this.boardButtonRequested && !this.isGameActive();
+    const visible = this.boardButtonRequested && canUsePresentationBoardView(window as any);
     (window as any).isStudentBoardViewAvailable = visible;
     (window as any).refreshStudentBoardButton?.();
     const entity = (window as any).studentBoardViewButtonEntity;
     if (!entity?.object3D) return;
-    if (this.boardButtonApplied === visible) return;
+    if (this.boardButtonApplied === visible && entity.object3D.visible === visible) return;
     this.boardButtonApplied = visible;
     entity.object3D.visible = visible;
-    entity.object3D.pointerEvents = visible ? "auto" : "none";
-    entity.object3D.traverse((object: any) => {
-      object.pointerEvents = visible ? "auto" : "none";
-      object.pointerEventsOrder = 71000;
-    });
+    setPanelRayInteraction(entity.object3D, visible, 71000);
     entity.removeComponent(RayInteractable);
     if (visible) {
       entity.addComponent(RayInteractable);
@@ -430,6 +422,7 @@ export class StudentResultsSystem extends createSystem({
     this.resultWasVisible = false;
     if (this.boardViewActive) this.restoreSavedPlayerPose();
     this.setVisible(false);
+    this.setBoardViewButtonVisible(true);
   };
 
   private activateClose = (event?: any): void => {
