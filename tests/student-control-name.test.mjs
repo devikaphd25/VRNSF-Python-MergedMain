@@ -3,6 +3,31 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { parse, interpret } from '@pmndrs/uikitml';
+import { Text } from '@pmndrs/uikit';
+import { Group } from 'three';
+import { setMaxListeners } from 'node:events';
+
+setMaxListeners(0);
+
+test('the right-board name has a real text child that updates when the database name arrives', () => {
+  const parsed = parse(readFileSync('ui/student-side-controls.uikitml', 'utf8'));
+  const root = interpret(parsed);
+  // Keep font-atlas I/O out of this Node test while exercising the real text binding.
+  root.setProperties({ fontFamilies: { inter: { normal: () => new Promise(() => {}) } } });
+  new Group().add(root);
+  let name;
+  root.traverse(element => { if (element.userData.id === 'side-student-name') name = element; });
+  assert.ok(name, 'The right board must contain a name label');
+  const glyph = name.children.find(child => child instanceof Text);
+  assert.ok(glyph, 'An empty Text tag creates no glyph child, so setProperties alone cannot show the name');
+  name.setProperties({ text: 'Student 5' });
+  assert.equal(glyph.properties.value.text, 'Student 5');
+  const children = parsed.element.children;
+  assert.ok(children.findIndex(element => element.properties?.id === 'side-student-name') >
+    children.findIndex(element => element.properties?.id === 'side-hand-label'));
+  root.dispose();
+});
 
 test('control board shows the registered database name independently for each student', () => {
   const source = ts.createSourceFile('presentation.ts', readFileSync('src/systems/presentation.system.ts', 'utf8'), ts.ScriptTarget.Latest, true);

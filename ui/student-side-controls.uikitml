@@ -9,5 +9,5 @@
   <Text class="control-title">Control Panel</Text>
   <Button id="side-raise-hand" class="hand-control"></Button>
   <Text id="side-hand-label" class="hand-label">Raise Hand</Text>
-  <Text id="side-student-name" class="student-name"></Text>
+  <Text id="side-student-name" class="student-name">Student</Text>
 </Panel>
