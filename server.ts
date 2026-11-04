@@ -83,7 +83,7 @@ import {
   isRetryableChallenge,
   DEFAULT_CHALLENGE_DURATION_SECONDS,
 } from "./server/config/true-false-settings.js";
-import { databaseChallengeQuestions } from "./server/services/database-challenge-questions.js";
+import { loadDatabaseChallengeQuestions } from "./server/repositories/challenge-content.repository.js";
 import { gradeChallengeAnswer } from "./server/services/grade-challenge-answer.js";
 
 // Separates saved results from different launches of the same lab. Historical
@@ -804,8 +804,6 @@ io.on("connection", (socket: ClassroomSocket) => {
         : "multiple_choice";
     const activity=await activityForSession(roomId,requestedKey,Number(data.activityId)||undefined);
     if(activity.activity_type!=='challenge'||!['true_false','multiple_choice',CODE_PATTERN_ACTIVITY_KEY,LOOP_SORT_ACTIVITY_KEY,FLOWCHART_SHAPE_ACTIVITY_KEY,WHILE_TRACE_ACTIVITY_KEY,WHILE_PARTS_ACTIVITY_KEY,WHILE_FACTORIAL_ACTIVITY_KEY,STRING_OK_ERROR_ACTIVITY_KEY,STRING_IN_ACTIVITY_KEY,STRING_CLEAN_ACTIVITY_KEY].includes(activity.activity_key))throw Error('Select a question challenge');
-    const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
-    if(error)throw error;
     const isCodePattern = activity.activity_key === CODE_PATTERN_ACTIVITY_KEY;
     const isLoopSort = activity.activity_key === LOOP_SORT_ACTIVITY_KEY;
     const isFlowchartShape = activity.activity_key === FLOWCHART_SHAPE_ACTIVITY_KEY;
@@ -819,7 +817,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     const isFiveParts = true, isDatabaseSeries = activity.activity_key !== 'true_false' && !curriculum;
     const durationSeconds = Math.min(600, Math.max(15, Number(data.durationSeconds) || DEFAULT_CHALLENGE_DURATION_SECONDS));
     const cycleLabel = activity.title;
-    const fivePartsQuestions = databaseChallengeQuestions(rows, curriculum);
+    const fivePartsQuestions = await loadDatabaseChallengeQuestions(activity, curriculum);
     const fivePartsQuestion=fivePartsQuestions[0];
     await selectSessionActivity(roomId,activity.id);
     const challenge: QuickChallenge = {

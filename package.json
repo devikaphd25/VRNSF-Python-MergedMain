@@ -22,7 +22,8 @@
     "preview": "vite preview",
     "test": "node --import tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:database": "node --env-file=.env.server tests/new-database.integration.mjs",
-    "test:curriculum": "node --env-file=.env.server tests/curriculum-database.integration.mjs"
+    "test:curriculum": "node --env-file=.env.server tests/curriculum-database.integration.mjs",
+    "test:course99-day1": "node --env-file=.env.server --import tsx tests/course99-day1.integration.mjs"
   },
   "dependencies": {
     "@iwsdk/core": "0.4.2",

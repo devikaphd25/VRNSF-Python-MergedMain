@@ -84,7 +84,7 @@ export async function instructorContent(roomId: string) {
         throw error;
     const activities = await Promise.all((data ?? []).map(async (a) => ({
         activityId: a.id, activityOrder: a.activity_order, activityType: ({ video: 'presentation', debrief: 'briefing' } as Record<string, string>)[a.activity_type] ?? a.activity_type,
-        activityKey: a.activity_key, title: a.title, description: '', assetPath: await resolveMedia(a.file_path),
+        activityKey: a.activity_key, title: a.title, description: '', assetPath: a.activity_type === 'challenge' ? null : await resolveMedia(a.file_path),
     })));
     return { dayId: week.day.id, dayNumber: week.day.day_number, dayTitle: week.day.title, weekId: week.id, weekNumber: week.week_number, weekTitle: week.title, courseCode: week.course.course_code, courseTitle: week.course.title,
         activities, videos: activities.filter(a => a.activityType === 'presentation') };

@@ -451,6 +451,15 @@ and `instructorLabel`. Edit the matching presentation field when changing what
 appears on either board. Keep the readable `question_text` in sync.
 Legacy True/False and multiple-choice questions can still use a plain options array.
 
+Course 99 Day 1 also stores its code panels and instructions in private JSON
+documents in the `course-media` Storage bucket, referenced by each challenge's
+`activities.file_path`. When table options are plain arrays, the server loads the
+matching panel by question ID from that document. Choices, question prompts and
+answer keys remain table-owned. This prevents an older seed script or options-only
+edit from deleting the code panels. No lesson content is hardcoded as a fallback.
+Renaming or reordering an activity does not change its ID/key or its question links.
+For Day 1, positions 4, 8 and 14 launch activities 177, 178 and 179 respectively.
+
 `correct_answer` contains a zero-based `choice_index`, or `choice_indices` for
 multi-selection. For example, OK/Error options `["OK", "Error"]` use index `0`
 for OK and `1` for Error. Correct answers stay on the server until submission.
@@ -480,6 +489,12 @@ on a temporary local port and tests all nine curriculum challenges against Supab
 It creates its own temporary course, changes fixture content to verify database
 edits control the UI and grading, checks submissions/retries/partial saves, and
 deletes only its test records. It does not add test results to the real courses.
+
+`npm run test:course99-day1` specifically verifies the reordered Day 1 list by
+running the actual dashboard click handlers and both instructor/student start
+handlers against the compiled server. It tests plain-array option updates with
+separately stored Supabase panels, all three launches, and 15 saved responses,
+then removes its temporary records and Storage files. Run `npm run build` first.
 
 Welcome narration plays the existing MP3 files in `public/audio/`. Its one-off
 generation script was removed during cleanup; update narration assets separately

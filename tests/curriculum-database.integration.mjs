@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { io } from 'socket.io-client';
+import { loadDatabaseChallengeQuestions } from '../build/server/repositories/challenge-content.repository.js';
 
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false }, realtime: { transport: WebSocket } });
 const tag = `curriculum-test-${Date.now()}`;
@@ -45,6 +46,13 @@ try {
       for (const [index, source] of sourceActivities.entries()) {
         const activity = await value(db.from('activities').insert({ week_id: week.id, day_id: day.id, activity_key: source.activity_key, activity_type: 'challenge', title: `Database title ${source.activity_key}`, activity_order: index + 1 }).select().single()); activityIds.push(activity.id);
         const sourceQuestions = await value(db.from('challenge_questions').select('*').eq('activity_id', source.id).order('question_order'));
+        const loaded = await loadDatabaseChallengeQuestions(source, true);
+        for (const question of sourceQuestions) {
+          if (!question.options?.presentation) {
+            const panel = loaded.find(item => item.id === String(question.id));
+            question.options = { choices: Array.isArray(question.options) ? question.options : question.options.choices, presentation: panel.presentation };
+          }
+        }
         const rows = sourceQuestions.map(({ id, activity_id, ...question }) => ({ ...question, activity_id: activity.id }));
         // Make fixture data differ from the branch catalog to prove that the runtime uses Supabase.
         rows[0].options.presentation.prompt = `Database prompt ${tag}`;
