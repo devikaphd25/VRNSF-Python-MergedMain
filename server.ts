@@ -923,7 +923,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       roomActivities.clear(roomId, challenge.id);
       activeQuickChallenges.delete(roomId);
     }, durationSeconds * 1000 + 4000);
-    } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
+    } catch(error) {console.error('[Activity]',error);socket.emit('error',{activityId:Number(data.activityId)||undefined,message:error instanceof Error?error.message:'Could not start activity'});}
 
   });
 

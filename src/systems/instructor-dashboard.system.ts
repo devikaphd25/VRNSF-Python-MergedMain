@@ -294,6 +294,7 @@ export class InstructorDashboardSystem extends createSystem({
   }> | null = null;
   private selectedActivityId?: number;
   private taskLaunchPending = false;
+  private pendingChallengeActivityId?: number;
   private databaseActivities: ClassroomActivity[] = [];
   private taskQueueOffset = 0;
   private taskView: "current" | "all" = "current";
@@ -481,6 +482,8 @@ export class InstructorDashboardSystem extends createSystem({
   // ======================================================
 
   private connectSocketEvents(): void {
+    socket.on("error", this.onChallengeLaunchError);
+    this.cleanupFuncs.push(() => socket.off("error", this.onChallengeLaunchError));
     socket.on(
       "studentList",
       (
@@ -647,6 +650,7 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "quickChallengeStartedForInstructor",
       (data: InstructorQuizPayload) => {
+        this.pendingChallengeActivityId = undefined;
         this.activeQuizKind = "quick-challenge";
         this.activeQuiz = data;
         this.quizMonitorPage = 0;
@@ -764,6 +768,7 @@ export class InstructorDashboardSystem extends createSystem({
     socket.on(
       "challenge2StartedForInstructor",
       (data: InstructorQuizPayload) => {
+        this.pendingChallengeActivityId = undefined;
         this.activeQuizKind = "challenge-2";
         this.activeQuiz = data;
         this.quizMonitorPage = 0;
@@ -2316,6 +2321,7 @@ export class InstructorDashboardSystem extends createSystem({
     }else if(item.activityType==='briefing'){
       this.pendingBriefingAssetPath=item.assetPath!;this.launchBriefingMode('classroom');
     }else if(item.activityType==='challenge'){
+      this.pendingChallengeActivityId = item.activityId;
       if(item.activityKey==='drag_drop')this.activateChallenge2();
       else if(item.activityKey==='true_false')this.activateFivePartsChallenge();
       else if(item.activityKey===CODE_PATTERN_ACTIVITY_KEY)this.activateCodePatternChallenge();
@@ -2328,7 +2334,7 @@ export class InstructorDashboardSystem extends createSystem({
       else if(item.activityKey===STRING_IN_ACTIVITY_KEY)this.activateStringInChallenge();
       else if(item.activityKey===STRING_CLEAN_ACTIVITY_KEY)this.activateStringCleanChallenge();
       else if(item.activityKey==='multiple_choice')this.activateQuickChallenge(item.activityId);
-      else {this.showStatusMessage('Unknown challenge activity key.');return;}
+      else {this.pendingChallengeActivityId=undefined;this.showStatusMessage('Unknown challenge activity key.');return;}
     }else if(item.activityType==='display_room'){
       this.setDashboardVisible(false);this.setDebriefViewChoiceVisible(false);
       socket.emit('instructorDisplayRoom',{open:true,activityId:item.activityId});
@@ -2345,6 +2351,22 @@ export class InstructorDashboardSystem extends createSystem({
     this.completedTaskKeys.add(item.key);this.renderLessonPage();
     } finally { this.taskLaunchPending=false; }
   }
+
+  /** Keep a rejected launch retryable and show the database error on the dashboard. */
+  private onChallengeLaunchError = (data: { message?: string; activityId?: number }): void => {
+    if (!(window as any).isInstructor || this.pendingChallengeActivityId === undefined) return;
+    if (data?.activityId && data.activityId !== this.pendingChallengeActivityId) return;
+    this.completedTaskKeys.delete(`activity:${this.pendingChallengeActivityId}`);
+    this.pendingChallengeActivityId = undefined;
+    this.taskLaunchPending = false;
+    this.currentActivity.resume(this.getTaskQueue().map(item => item.key), this.completedTaskKeys);
+    // Compact mode hides the status area. Show All Tasks so the error is readable.
+    this.taskView = "all";
+    this.rosterOpen = false;
+    this.setDashboardVisible(true);
+    this.renderLessonPage();
+    this.showStatusMessage(`Challenge did not start: ${data?.message ?? "Check the server connection and Supabase content."}`);
+  };
 
   private updateLessonScrollButtons(queueLength: number, offset = this.taskQueueOffset, pageSize = this.taskQueueVisibleRows): void {
     const upButton = this.dashboardDocument?.getElementById("task-scroll-up");
