@@ -1,4 +1,5 @@
 import { getLocalSeatAnchor, seatedAvatarMetrics } from "../avatars/seated-avatar-layout";
+import { alignSeatedViewer } from "../avatars/seated-view-calibration";
 import { readAvatarInputPose } from "../avatars/avatar-input-pose";
 import { createFirstPersonAvatar } from "../avatars/first-person-avatar";
 import { SeatAvatarPoseDriver } from "../avatars/seat-avatar-pose";
@@ -24,7 +25,7 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
   private ownAvatarId?: string;
   private ownAvatarScale = 1;
   private seatedEyeHeight?: number;
-  private referenceEyeHeight?: number;
+  private referenceEyePosition?: Vector3;
   private calibratedSeat?: Vector3;
   private ownAvatarGeneration = 0;
   private ownAvatarLoading = false;
@@ -70,7 +71,7 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
     this.handSeenAt = { left: 0, right: 0 };
     this.wasTracking = false;
     this.bodyYaw = undefined;
-    this.referenceEyeHeight = undefined;
+    this.referenceEyePosition = undefined;
   };
   update(): void {
     const now = performance.now();
@@ -106,16 +107,17 @@ export class SeatAvatarTrackingSystem extends createSystem({}) {
     const eye = viewer.transform.position;
     const seatAnchor = getLocalSeatAnchor();
     const inClassroom = !state.isDisplayRoomOpen && !state.isPresentationOpen && !state.isPresentationTransitionInProgress;
-    if (inClassroom && seatAnchor && this.seatedEyeHeight !== undefined) {
+    if (inClassroom && seatAnchor) {
       if (!this.calibratedSeat?.equals(seatAnchor)) {
         this.calibratedSeat = seatAnchor.clone();
-        this.referenceEyeHeight = undefined;
+        this.referenceEyePosition = undefined;
       }
-      // Calibrate the XR reference once, retaining subsequent physical leaning.
-      this.referenceEyeHeight ??= eye.y;
+      // The XR origin may start meters from the physical headset. Calibrate
+      // all axes once, not just height, so the camera cannot start behind a chair.
+      this.referenceEyePosition ??= new Vector3(eye.x, eye.y, eye.z);
       const rig = (this.player as any).object3D ?? this.player;
-      rig.position.y = seatAnchor.y + this.seatedEyeHeight - this.referenceEyeHeight;
-      rig.updateMatrixWorld(true);
+      alignSeatedViewer(rig, seatAnchor, this.referenceEyePosition,
+        this.seatedEyeHeight ?? this.referenceEyePosition.y);
     }
     for (const source of session.inputSources) {
       if (source.handedness !== "left" && source.handedness !== "right") continue;

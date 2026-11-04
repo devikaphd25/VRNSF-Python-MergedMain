@@ -365,6 +365,13 @@ The dashboard follows `activity_order` without regrouping tasks. Current Week1:
 in Supabase to interleave videos and challenges later; order numbers must be unique within each day.
 
 Gameplay, rooms, 3D models and UI behavior remain in the TypeScript project.
+Seats fill five per row: `Seat_R1_01` through `Seat_R1_05`, then `Seat_R2_01`.
+An existing participant keeps its seat when reconnecting, including after a
+disconnect. A previously joined device can therefore reserve an apparently empty
+chair until that class ends. Start a new class for a fresh seating allocation.
+The headset's initial horizontal tracking offset is calibrated to the seat;
+subsequent physical leaning remains available. Each student's right-side control
+board shows their registered database name below Raise Hand.
 The server keeps live timers/video position in memory and replays the current
 activity to late arrivals. Restarting the server requires a new/restarted activity.
 Each deployment should run one coordinating Node server for seat/attempt allocation.

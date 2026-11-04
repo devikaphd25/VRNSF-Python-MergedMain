@@ -68,6 +68,7 @@ export class PresentationSystem extends createSystem({
   private studentControlsDocument?: UIKitDocument;
   private activitySummary = summarizeActivities([]);
   private studentHandRaised = false;
+  private studentDisplayName?: string;
   private sideHandModel?: Object3D;
   private lastHandClickAt = 0;
   private sideScreensInitialized = false;
@@ -143,6 +144,7 @@ export class PresentationSystem extends createSystem({
     socket.on("raiseHandUpdated", this.onStudentHandUpdated);
     socket.on("handToggled", this.onStudentHandUpdated);
     socket.on("disconnect", this.onHandDisconnected);
+    socket.on("classroomClientRegistered", this.onStudentRegistered);
     this.queries.studentControls.subscribe("qualify", entity => {
       this.studentControlsDocument = PanelDocument.data.document[entity.index] as UIKitDocument;
       const button = this.studentControlsDocument?.getElementById("side-raise-hand");
@@ -1136,6 +1138,12 @@ export class PresentationSystem extends createSystem({
     this.updateStudentHandControl();
   };
 
+  private onStudentRegistered = (data: { success?: boolean; user?: { name?: string; fullName?: string } }): void => {
+    if (!data.success) return;
+    this.studentDisplayName = data.user?.fullName?.trim() || data.user?.name?.trim();
+    this.updateStudentHandControl();
+  };
+
   private createSideHandModel(): void {
     const asset = AssetManager.getGLTF("raiseHandIcon");
     if (!asset || !this.debriefRightScreen || this.sideHandModel) return;
@@ -1176,6 +1184,9 @@ export class PresentationSystem extends createSystem({
   }
 
   private updateStudentHandControl(): void {
+    const user = (window as any).vrUser;
+    const name = this.studentDisplayName || user?.fullName?.trim() || "Student";
+    this.studentControlsDocument?.getElementById("side-student-name")?.setProperties({ text: name });
     this.studentControlsDocument?.getElementById("side-hand-label")?.setProperties({
       text: this.studentHandRaised ? "Lower Hand" : "Raise Hand"
     });
@@ -1903,6 +1914,7 @@ export class PresentationSystem extends createSystem({
     socket.off("raiseHandUpdated", this.onStudentHandUpdated);
     socket.off("handToggled", this.onStudentHandUpdated);
     socket.off("disconnect", this.onHandDisconnected);
+    socket.off("classroomClientRegistered", this.onStudentRegistered);
     this.renderer.domElement.removeEventListener("pointerdown", this.onAnnotationPointerDown);
     this.renderer.domElement.removeEventListener("pointermove", this.onAnnotationPointerMove);
     window.removeEventListener("pointerup", this.onAnnotationPointerUp);

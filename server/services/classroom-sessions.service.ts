@@ -3,6 +3,7 @@ import { serial } from "../utils/serial-work-queue.js";
 import { supabaseAdmin as db } from '../database/supabase-client.js';
 import { selectedCourseDay, courseByAccessCode } from '../repositories/course-content.repository.js';
 import { upsertDeviceAppUser, getAppUserById } from '../repositories/users.repository.js';
+import { firstAvailableClassroomSeat } from '../../shared/classroom-seats.js';
 // One Node server coordinates seat assignment, including concurrent joins.
 let joinQueue: Promise<unknown> = Promise.resolve();
 const openedSessions = new Set<number>();
@@ -55,8 +56,7 @@ export function joinSession(deviceId: string, name?: string) {
             throw pe;
         let participant = participants?.find(p => p.student_id === user.id);
         if (!participant) {
-            const seats = Array.from({ length: 25 }, (_, i) => `Seat_R${Math.floor(i / 5) + 1}_${String(i % 5 + 1).padStart(2, '0')}`);
-            const seat = seats.find(s => !participants?.some(p => p.seat_name === s));
+            const seat = firstAvailableClassroomSeat((participants ?? []).map(p => p.seat_name));
             if (!seat)
                 throw Error('This classroom has no available seats.');
             const { data, error } = await db.from('participants').insert({ session_id: session.id, student_id: user.id, seat_name: seat }).select('*').single();

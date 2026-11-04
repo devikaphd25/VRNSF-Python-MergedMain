@@ -3,9 +3,11 @@
   .control-title { font-family: inter; font-size: 34; font-weight: 600; color: #cbd5e1; text-align: center; }
   .hand-control { width: 180; height: 180; background-opacity: 0; border-width: 0; cursor: pointer; pointer-events: auto; }
   .hand-label { font-family: inter; font-size: 30; font-weight: 600; color: #e0f2fe; text-align: center; }
+  .student-name { width: 620; font-family: inter; font-size: 30; font-weight: 600; color: #ffffff; text-align: center; pointer-events: none; }
 </style>
 <Panel class="side-controls">
   <Text class="control-title">Control Panel</Text>
   <Button id="side-raise-hand" class="hand-control"></Button>
   <Text id="side-hand-label" class="hand-label">Raise Hand</Text>
+  <Text id="side-student-name" class="student-name"></Text>
 </Panel>

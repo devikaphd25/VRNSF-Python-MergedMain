@@ -316,6 +316,10 @@ const syncLateJoinActivity = () => {
 };
 socket.on("classroomClientRegistered", data => {
   classroomRegistrationReady = Boolean(data?.success);
+  if (data?.success && currentUser && Number(data.user?.id) === currentUser.id && data.user?.fullName) {
+    currentUser.fullName = data.user.fullName;
+    (window as any).vrUser = currentUser;
+  }
   syncLateJoinActivity();
 });
 window.addEventListener("classroomSeatReady", () => {
