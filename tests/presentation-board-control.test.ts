@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as THREE from 'three';
 import { canUsePresentationBoardView } from '../src/student/presentation-board-control.ts';
 import { setPanelRayInteraction } from '../src/ui/panel-ray-interaction.ts';
+import { alignSeatedViewer } from '../src/avatars/seated-view-calibration.ts';
 
 test('SCREEN is available only to students in a presentation, outside transitions and activities', () => {
   assert.equal(canUsePresentationBoardView({}), false);
@@ -27,14 +28,16 @@ function controls() {
   const board = new THREE.Group(); board.name = 'ProjectorScreen'; board.position.set(0, 2, -8); scene.add(board);
   const button = new THREE.Group(), icon = new THREE.Object3D(); icon.pointerEvents = 'none'; button.add(icon);
   const state: any = { player, isStudentBoardViewAvailable: false, studentBoardViewButtonEntity: { object3D: button, removeComponent() {}, addComponent() {} } };
-  let now = 1000, label = '';
-  const context = vm.createContext({ THREE, window: state, performance: { now: () => now }, canUsePresentationBoardView, setPanelRayInteraction, RayInteractable: Symbol('RayInteractable'), requestAnimationFrame() {} });
+  let now = 1000, label = '', hiddenSeat: string | null = null;
+  const context = vm.createContext({ THREE, window: state, performance: { now: () => now }, canUsePresentationBoardView, setPanelRayInteraction,
+    setLocalBoardViewSeat: (seat: string | null) => hiddenSeat = seat, alignSeatedViewer, getLocalSeatAnchor: () => new THREE.Vector3(3, 0, 6), SEATED_AVATAR_FORWARD_OFFSET: 0.18,
+    RayInteractable: Symbol('RayInteractable'), requestAnimationFrame() {} });
   vm.runInContext(ts.transpile(`class Controls { ${members} }; globalThis.Controls = Controls;`, { target: ts.ScriptTarget.ES2022 }), context);
   const control = new context.Controls();
   Object.assign(control, { world: { scene }, setVisible: (visible: boolean) => state.isStudentResultOpen = visible,
     boardViewDocument: { getElementById: () => ({ setProperties: (value: any) => label = value.text }), requestUpdate() {} },
   });
-  return { control, state, player, button, icon, seat, label: () => label, tick: () => now += 400 };
+  return { control, state, player, button, icon, seat, hiddenSeat: () => hiddenSeat, label: () => label, tick: () => now += 400 };
 }
 
 test('presentation shortcut centers the student, RETURN restores the pose, and leaving resets the toggle', () => {
@@ -47,17 +50,32 @@ test('presentation shortcut centers the student, RETURN restores the pose, and l
   assert.equal(f.button.visible, true); assert.equal(f.state.isStudentBoardViewAvailable, true);
   assert.equal(f.icon.pointerEvents, 'none', 'the white icon stays decorative so the surrounding button receives the ray');
   f.control.activateBoardView();
+  assert.equal(f.hiddenSeat(), 'Seat_R1_03');
   assert.deepEqual(f.player.position.toArray(), f.seat.position.toArray()); assert.equal(f.label(), 'RETURN');
   f.tick(); f.control.activateBoardView();
+  assert.equal(f.hiddenSeat(), null);
   assert.deepEqual(f.player.position.toArray(), originalPosition.toArray()); assert.deepEqual(f.player.quaternion.toArray(), originalQuaternion.toArray()); assert.equal(f.label(), 'SCREEN');
   f.tick(); f.control.activateBoardView();
   f.control.closeForRoomTransition();
   f.state.isPresentationOpen = false; f.control.syncBoardButton();
   assert.equal(f.button.visible, false); assert.equal(f.state.isStudentBoardViewAvailable, false);
   assert.equal(f.control.boardViewActive, false); assert.equal(f.label(), 'SCREEN');
+  assert.equal(f.hiddenSeat(), null);
   assert.deepEqual(f.player.position.toArray(), originalPosition.toArray());
   f.state.isPresentationOpen = true; f.control.syncBoardButton();
   assert.equal(f.button.visible, true);
+});
+
+test('SCREEN calibrates the tracked headset at the target seat instead of placing only its XR origin there', () => {
+  const f = controls();
+  const referenceEye = new THREE.Vector3(1, 1.65, -0.8);
+  f.control.renderer = { xr: { isPresenting: true, getReferenceSpace: () => ({}), getFrame: () => ({ getViewerPose: () => ({ transform: { position: referenceEye } }) }) } };
+  f.state.isPresentationOpen = true; f.control.closeForRoomTransition();
+  f.control.activateBoardView();
+  const eye = f.player.localToWorld(referenceEye.clone());
+  assert.ok(Math.abs(eye.x - f.seat.position.x) < 0.00001);
+  assert.ok(Math.abs(eye.z - (f.seat.position.z - 0.18)) < 0.00001);
+  assert.equal(f.hiddenSeat(), 'Seat_R1_03');
 });
 
 test('a stale left-trigger event cannot move students outside presentation mode or during a challenge', () => {

@@ -19,6 +19,9 @@ import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-ca
 import { socket } from "../network/socket-client";
 import { canUsePresentationBoardView } from "../student/presentation-board-control";
 import { setPanelRayInteraction } from "../ui/panel-ray-interaction";
+import { setLocalBoardViewSeat } from "../classroom/seat-markers";
+import { alignSeatedViewer } from "../avatars/seated-view-calibration";
+import { getLocalSeatAnchor, SEATED_AVATAR_FORWARD_OFFSET } from "../avatars/seated-avatar-layout";
 
 export class StudentResultsSystem extends createSystem({
   resultPanel: {
@@ -273,12 +276,26 @@ export class StudentResultsSystem extends createSystem({
       const boardWorld = new THREE.Vector3();
       seat.getWorldPosition(seatWorld);
       board.getWorldPosition(boardWorld);
+      const reference = this.renderer?.xr?.isPresenting ? this.renderer.xr.getReferenceSpace() : undefined;
+      const viewer = reference ? this.renderer.xr.getFrame()?.getViewerPose(reference) : undefined;
+      const referenceEye = viewer ? new THREE.Vector3(viewer.transform.position.x, viewer.transform.position.y, viewer.transform.position.z) : undefined;
+      player.updateWorldMatrix(true, false);
+      const eyeHeight = referenceEye
+        ? referenceEye.clone().applyMatrix4(player.matrixWorld).y - (getLocalSeatAnchor()?.y ?? player.getWorldPosition(new THREE.Vector3()).y)
+        : undefined;
       const parent = player.parent;
       player.position.copy(parent ? parent.worldToLocal(seatWorld.clone()) : seatWorld);
       const direction = boardWorld.sub(seatWorld);
-      player.rotation.set(0, Math.atan2(-direction.x, -direction.z), 0);
+      const facing = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(-direction.x, -direction.z));
+      player.quaternion.copy(parent ? parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(facing) : facing);
       player.updateMatrixWorld(true);
+      if (referenceEye && eyeHeight !== undefined) {
+        direction.y = 0;
+        const anchor = seatWorld.clone().addScaledVector(direction.normalize(), SEATED_AVATAR_FORWARD_OFFSET);
+        alignSeatedViewer(player, anchor, referenceEye, eyeHeight);
+      }
       this.boardViewActive = true;
+      setLocalBoardViewSeat(seat.name);
       this.setBoardViewLabel("RETURN");
     } else {
       this.restoreSavedPlayerPose();
@@ -286,6 +303,8 @@ export class StudentResultsSystem extends createSystem({
   };
 
   private restoreSavedPlayerPose(): void {
+    setLocalBoardViewSeat(null);
+    this.boardViewActive = false;
     const player = (window as any).player as THREE.Object3D | undefined;
     if (!player) return;
     player.position.copy(this.savedPlayerPosition);
@@ -466,6 +485,7 @@ export class StudentResultsSystem extends createSystem({
   }
 
   destroy(): void {
+    setLocalBoardViewSeat(null);
     window.clearTimeout(this.autoCloseTimer);
     delete (window as any).toggleStudentBoardView;
     delete (window as any).closeStudentResultForRoomTransition;

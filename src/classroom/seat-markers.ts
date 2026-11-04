@@ -35,6 +35,19 @@ export interface SeatMarkerStudent {
 // Store markers by student ID
 type SeatMarker = Group & { material: SpriteMaterial };
 const markers = new Map<string, SeatMarker>();
+// This is local visibility only: it never changes another client's avatar or seat.
+let localBoardViewSeat: string | null = null;
+
+function isStudentHiddenInThisView(studentId: string, seatName?: string): boolean {
+  const seat = seatName ?? markers.get(studentId)?.userData.seatName;
+  return isLocalStudent(studentId) || Boolean(localBoardViewSeat && seat === localBoardViewSeat);
+}
+
+/** Prevent the occupied viewing seat from overlapping the student using SCREEN. */
+export function setLocalBoardViewSeat(seat: string | null): void {
+  localBoardViewSeat = seat;
+  updateMarkerVisibility(playerRef);
+}
 // One independent bone animator per student, keyed by the server socket ID.
 const poseDrivers = new Map<string, SeatAvatarPoseDriver>();
 // The tracking system delivers incoming movement to the correct student here.
@@ -119,7 +132,7 @@ export function updateMarkerVisibility(player: any) {
 
   markers.forEach((marker, studentId) => {
     marker.visible =
-      !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId) &&
+      !((window as any).isLabActive || (window as any).isPuzzleActive) && !isStudentHiddenInThisView(studentId) &&
       !markersSuppressed &&
       (
         markersForcedVisible ||
@@ -232,11 +245,13 @@ export function updateSeatMarkers(
 
       marker.scale.setScalar(SEATED_AVATAR_MARKER_SCALE);
       marker.userData.studentId = student.id;
+      marker.userData.seatName = student.seat;
       marker.userData.displayName = displayName;
       marker.userData.mode = student.mode;
 
       // Apply current visibility rules to newly created markers.
       marker.visible =
+        !isStudentHiddenInThisView(student.id, student.seat) &&
         !markersSuppressed &&
         (
           markersForcedVisible ||
@@ -255,6 +270,7 @@ export function updateSeatMarkers(
       marker.material.map = createSeatLabelTexture(displayName, student.mode);
     }
     marker.userData.displayName = displayName;
+    marker.userData.seatName = student.seat;
     marker.userData.mode = student.mode;
     marker.userData.handRaised = Boolean(student.handRaised);
     poseDrivers.get(student.id)?.setRaised(Boolean(student.handRaised));
@@ -281,7 +297,7 @@ export function updateSeatMarkers(
 export function showAllMarkers() {
   markersSuppressed = false;
   markers.forEach((marker, studentId) => {
-    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
+    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isStudentHiddenInThisView(studentId);
   });
   console.log("[SeatMarkers] All markers forced visible");
 }
@@ -293,7 +309,7 @@ export function showAllMarkers() {
  */
 export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
   const arrivals = Array.from(markers.values())
-    .filter(marker => !isLocalStudent(String(marker.userData.studentId)))
+    .filter(marker => !isStudentHiddenInThisView(String(marker.userData.studentId)))
     .map((marker, index) => {
     if (!marker.userData.classroomMarkerPosition) {
       marker.userData.classroomMarkerPosition = marker.position.clone();
@@ -312,7 +328,7 @@ export function animateSeatMarkersArrival(durationMs = 1400): Promise<void> {
   if (arrivals.length === 0) return Promise.resolve();
 
   arrivals.forEach(({ marker, start, destinationScale }) => {
-    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(String(marker.userData.studentId));
+    marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isStudentHiddenInThisView(String(marker.userData.studentId));
     marker.position.copy(start);
     marker.scale.copy(destinationScale).multiplyScalar(0.72);
   });
@@ -357,7 +373,7 @@ export function setSeatMarkersForcedVisible(forced: boolean): void {
   if (forced) {
     markersSuppressed = false;
     markers.forEach((marker, studentId) => {
-      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
+      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isStudentHiddenInThisView(studentId);
     });
   } else if (playerRef) {
     updateMarkerVisibility(playerRef);
@@ -388,7 +404,7 @@ export function setSeatMarkersSuppressed(suppressed: boolean) {
     updateMarkerVisibility(playerRef);
   } else {
     markers.forEach((marker, studentId) => {
-      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isLocalStudent(studentId);
+      marker.visible = !((window as any).isLabActive || (window as any).isPuzzleActive) && !isStudentHiddenInThisView(studentId);
     });
   }
 
@@ -401,6 +417,7 @@ export function setSeatMarkersSuppressed(suppressed: boolean) {
 // Clear all markers
 // ==========================================
 export function clearAllSeatMarkers(scene: Object3D) {
+  localBoardViewSeat = null;
   markers.forEach((marker, id) => {
     scene.remove(marker);
     if (marker.material) {
