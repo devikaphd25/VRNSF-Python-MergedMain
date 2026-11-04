@@ -14,10 +14,11 @@ import {
   UIKit,
   type UIKitDocument,
 } from "@iwsdk/core";
-import { Matrix4, Object3D, Quaternion, Raycaster, Vector2, Vector3 } from "three";
+import { Matrix4, Object3D, PerspectiveCamera, Quaternion, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket-client";
 import { setPanelRayInteraction } from "../ui/panel-ray-interaction";
+import { frameDesktopPanel, getPanelLayoutBounds } from "../ui/desktop-panel-framing";
 import { applyStudentQuizSceneDepth, attachHologramFrame } from "../ui/hologram-frame";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
 import { hitStepIndex, paintStepsRail } from "../ui/steps-rail";
@@ -1647,19 +1648,13 @@ export class CurriculumChallengeSystem extends createSystem({
 
     if (entity?.object3D) {
       attachHologramFrame(entity.object3D);
-      if (visible && !entity.object3D.visible) {
-        const viewer = this.renderer.xr.isPresenting
-          ? this.renderer.xr.getCamera() : this.camera;
+      if (visible && !entity.object3D.visible && this.renderer.xr.isPresenting) {
+        const viewer = this.renderer.xr.getCamera();
         const eye = new Vector3();
         const orientation = new Quaternion();
-        if (this.renderer.xr.isPresenting) {
-          this.camera.parent?.updateWorldMatrix(true, false);
-          this.renderer.xr.updateCamera(this.camera);
-          viewer.matrixWorld.decompose(eye, orientation, new Vector3());
-        } else {
-          viewer.getWorldPosition(eye);
-          viewer.getWorldQuaternion(orientation);
-        }
+        this.camera.parent?.updateWorldMatrix(true, false);
+        this.renderer.xr.updateCamera(this.camera);
+        viewer.matrixWorld.decompose(eye, orientation, new Vector3());
         const direction = new Vector3(0, 0, -1).applyQuaternion(orientation);
         // Match the main dashboard: use only the viewing direction around
         // the vertical axis. Looking up/down or tilting the head must not
@@ -1670,15 +1665,7 @@ export class CurriculumChallengeSystem extends createSystem({
         orientation.setFromAxisAngle(
           new Vector3(0, 1, 0), Math.atan2(-direction.x, -direction.z)
         );
-        // Fit the quiz plus its rocket/rack inside the browser viewport. XR
-        // uses a comfortable fixed distance, independent of desktop aspect.
-        const camera = this.camera as any;
-        const verticalFov = ((camera.getEffectiveFOV?.() ?? camera.fov ?? 50) * Math.PI) / 180;
-        const aspect = Math.max(0.4, camera.aspect ?? 1.5);
-        const desktopDistance = Math.max(2.4,
-          1.1 * 2.1 / (2 * Math.tan(verticalFov / 2)),
-          1.1 * 4.1 / (2 * Math.tan(verticalFov / 2) * aspect));
-        const distance = this.renderer.xr.isPresenting ? 2.4 : desktopDistance;
+        const distance = 2.4;
         entity.object3D.position.copy(eye).addScaledVector(direction, distance);
         entity.object3D.quaternion.copy(orientation);
         if (this.isFivePartsChallenge() && !this.isSingleBoardChallenge()) {
@@ -1691,6 +1678,7 @@ export class CurriculumChallengeSystem extends createSystem({
       entity.object3D.updateMatrixWorld(true);
 
       if (visible) {
+        this.positionDesktopPanel();
         this.bringQuizPanelForward();
         // The panel is initially created while hidden. Requalifying it after
         // UIKit has built the button meshes refreshes IWSDK's mouse/ray hit
@@ -2158,9 +2146,18 @@ export class CurriculumChallengeSystem extends createSystem({
 
   update(): void {
     if ((window as any).isCodePatternChallengeOpen) {
+      this.positionDesktopPanel();
       this.bringQuizPanelForward();
       // Multi-select uses the option buttons; the old card board is unused.
     }
+  }
+
+  private positionDesktopPanel(): void {
+    if (this.renderer.xr.isPresenting || !(this.camera instanceof PerspectiveCamera)) return;
+    const panel = (window as any).codePatternChallengeEntity?.object3D;
+    if (!panel?.visible) return;
+    const bounds = getPanelLayoutBounds(panel, this.document);
+    if (bounds) frameDesktopPanel(panel, this.camera, bounds);
   }
 
   private pollDndXrInput(): void {
