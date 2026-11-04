@@ -61,8 +61,30 @@ import {
 import { TRUE_FALSE_MAX_ATTEMPTS } from "./shared/true-false-settings.js";
 import {
   TRUE_FALSE_CHALLENGE_TYPE,
+  CODE_PATTERN_CHALLENGE_TYPE,
+  CODE_PATTERN_ACTIVITY_KEY,
+  LOOP_SORT_CHALLENGE_TYPE,
+  LOOP_SORT_ACTIVITY_KEY,
+  FLOWCHART_SHAPE_CHALLENGE_TYPE,
+  FLOWCHART_SHAPE_ACTIVITY_KEY,
+  WHILE_TRACE_CHALLENGE_TYPE,
+  WHILE_TRACE_ACTIVITY_KEY,
+  WHILE_PARTS_CHALLENGE_TYPE,
+  WHILE_PARTS_ACTIVITY_KEY,
+  WHILE_FACTORIAL_CHALLENGE_TYPE,
+  WHILE_FACTORIAL_ACTIVITY_KEY,
+  STRING_OK_ERROR_CHALLENGE_TYPE,
+  STRING_OK_ERROR_ACTIVITY_KEY,
+  STRING_IN_CHALLENGE_TYPE,
+  STRING_IN_ACTIVITY_KEY,
+  STRING_CLEAN_CHALLENGE_TYPE,
+  STRING_CLEAN_ACTIVITY_KEY,
+  isQuickChallengeSeries,
+  isRetryableChallenge,
   DEFAULT_CHALLENGE_DURATION_SECONDS,
 } from "./server/config/true-false-settings.js";
+import { databaseChallengeQuestions } from "./server/services/database-challenge-questions.js";
+import { gradeChallengeAnswer } from "./server/services/grade-challenge-answer.js";
 
 // Separates saved results from different launches of the same lab. Historical
 // rows remain in Supabase, but the live monitor reads only this run.
@@ -224,19 +246,36 @@ function getRoomClassroomStudents(roomId: string) {
 function getFivePartsQuestionStats(challenge: QuickChallenge) {
   const questions = challenge.questions ?? [];
   const progress = Array.from(challenge.studentProgress.values());
-  return questions.map((_question, questionIndex) => {
+  return questions.map((question, questionIndex) => {
     // Count each student's latest selection, including unfinished attempts.
     // Drafts can skip questions, so their array position is not the question index.
     const answers = progress.flatMap(student =>
       student.answers.filter(answer => answer.questionIndex === questionIndex)
     );
+    if (question.correctIndices?.length) {
+      const requiredCount = question.correctIndices.length;
+      const correctCount = answers.reduce(
+        (sum, answer) => sum + (answer.placementCorrect ?? 0),
+        0
+      );
+      const totalPlacements = answers.length * requiredCount;
+      const wrongCount = Math.max(0, totalPlacements - correctCount);
+      return {
+        questionIndex,
+        label: `Q${questionIndex + 1}`,
+        prompt: question.instructorLabel ?? question.prompt ?? `Question ${questionIndex + 1}`,
+        correctCount,
+        wrongCount,
+        accuracy: totalPlacements === 0 ? 0 : Math.round((correctCount / totalPlacements) * 100),
+      };
+    }
     const correctCount = answers.filter(answer => answer.correct).length;
     const wrongCount = answers.filter(answer => !answer.correct).length;
     const answered = correctCount + wrongCount;
     return {
       questionIndex,
       label: `Q${questionIndex + 1}`,
-      prompt: questions[questionIndex]?.prompt ?? `Question ${questionIndex + 1}`,
+      prompt: question.instructorLabel ?? question.prompt ?? `Question ${questionIndex + 1}`,
       correctCount,
       wrongCount,
       accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
@@ -253,7 +292,7 @@ function getQuickChallengeWinner(challenge: QuickChallenge): {
   name: string | null;
   timeSeconds: number | null;
 } {
-  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+  if (isQuickChallengeSeries(challenge.challengeType)) {
     const ranked = Array.from(challenge.studentProgress.entries())
       .filter(([, progress]) => progress.completed)
       .sort(([, left], [, right]) => {
@@ -315,7 +354,7 @@ function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeRev
     Math.round((Date.now() - challenge.startedAt) / 1000)
   );
 
-  if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+  if (isQuickChallengeSeries(challenge.challengeType)) {
     const progresses = Array.from(challenge.studentProgress.values());
     const completed = progresses.filter(progress => progress.completed);
     const correctCount = completed.reduce(
@@ -329,7 +368,7 @@ function buildQuickChallengeReview(challenge: QuickChallenge): QuickChallengeRev
     return {
       quizId: challenge.id,
       cycleLabel: challenge.cycleLabel ?? "Current Learning Cycle",
-      question: "Five Parts Challenge",
+      question: challenge.cycleLabel ?? "Question Challenge",
       options: ["Completed", "In progress"],
       correctIndex: 0,
       answerCounts: [completed.length, Math.max(0, roomStudents.length - completed.length)],
@@ -395,7 +434,7 @@ function notifyInstructorStudentProgress(
 }
 
 function finishFivePartsIfEveryoneDone(challenge: QuickChallenge): void {
-  if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE) {
+  if (isRetryableChallenge(challenge.challengeType)) {
     publishQuickChallengeReview(challenge);
     return;
   }
@@ -742,15 +781,45 @@ io.on("connection", (socket: ClassroomSocket) => {
       emitQuickChallengeEnded(previous,{stoppedByInstructor:true});
     }
 
-    const activity=await activityForSession(roomId,data.challengeType===TRUE_FALSE_CHALLENGE_TYPE?'true_false':'multiple_choice',Number(data.activityId)||undefined);
-    if(activity.activity_type!=='challenge'||!['true_false','multiple_choice'].includes(activity.activity_key))throw Error('Select a question challenge');
+    const requestedKey = data.challengeType === TRUE_FALSE_CHALLENGE_TYPE
+      ? "true_false"
+      : data.challengeType === CODE_PATTERN_CHALLENGE_TYPE
+        ? CODE_PATTERN_ACTIVITY_KEY
+        : data.challengeType === LOOP_SORT_CHALLENGE_TYPE
+          ? LOOP_SORT_ACTIVITY_KEY
+        : data.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE
+          ? FLOWCHART_SHAPE_ACTIVITY_KEY
+        : data.challengeType === WHILE_TRACE_CHALLENGE_TYPE
+          ? WHILE_TRACE_ACTIVITY_KEY
+        : data.challengeType === WHILE_PARTS_CHALLENGE_TYPE
+          ? WHILE_PARTS_ACTIVITY_KEY
+        : data.challengeType === WHILE_FACTORIAL_CHALLENGE_TYPE
+          ? WHILE_FACTORIAL_ACTIVITY_KEY
+        : data.challengeType === STRING_OK_ERROR_CHALLENGE_TYPE
+          ? STRING_OK_ERROR_ACTIVITY_KEY
+        : data.challengeType === STRING_IN_CHALLENGE_TYPE
+          ? STRING_IN_ACTIVITY_KEY
+        : data.challengeType === STRING_CLEAN_CHALLENGE_TYPE
+          ? STRING_CLEAN_ACTIVITY_KEY
+        : "multiple_choice";
+    const activity=await activityForSession(roomId,requestedKey,Number(data.activityId)||undefined);
+    if(activity.activity_type!=='challenge'||!['true_false','multiple_choice',CODE_PATTERN_ACTIVITY_KEY,LOOP_SORT_ACTIVITY_KEY,FLOWCHART_SHAPE_ACTIVITY_KEY,WHILE_TRACE_ACTIVITY_KEY,WHILE_PARTS_ACTIVITY_KEY,WHILE_FACTORIAL_ACTIVITY_KEY,STRING_OK_ERROR_ACTIVITY_KEY,STRING_IN_ACTIVITY_KEY,STRING_CLEAN_ACTIVITY_KEY].includes(activity.activity_key))throw Error('Select a question challenge');
     const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
     if(error)throw error;
-    if(!rows?.length||rows.some(q=>!Array.isArray(q.options)||q.options.length<2||q.options.length>4||!Number.isInteger(q.correct_answer?.choice_index)||q.correct_answer.choice_index<0||q.correct_answer.choice_index>=q.options.length))throw Error('Challenge questions are missing or invalid');
-    const isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false';
-    const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||DEFAULT_CHALLENGE_DURATION_SECONDS));
-    const cycleLabel=activity.title;
-    const fivePartsQuestions=rows.map(q=>({id:String(q.id),prompt:q.question_text,options:q.options as string[],correctIndex:q.correct_answer.choice_index as number}));
+    const isCodePattern = activity.activity_key === CODE_PATTERN_ACTIVITY_KEY;
+    const isLoopSort = activity.activity_key === LOOP_SORT_ACTIVITY_KEY;
+    const isFlowchartShape = activity.activity_key === FLOWCHART_SHAPE_ACTIVITY_KEY;
+    const isWhileTrace = activity.activity_key === WHILE_TRACE_ACTIVITY_KEY;
+    const isWhileParts = activity.activity_key === WHILE_PARTS_ACTIVITY_KEY;
+    const isWhileFactorial = activity.activity_key === WHILE_FACTORIAL_ACTIVITY_KEY;
+    const isStringOkError = activity.activity_key === STRING_OK_ERROR_ACTIVITY_KEY;
+    const isStringIn = activity.activity_key === STRING_IN_ACTIVITY_KEY;
+    const isStringClean = activity.activity_key === STRING_CLEAN_ACTIVITY_KEY;
+    const curriculum = activity.activity_key !== 'true_false' && activity.activity_key !== 'multiple_choice';
+    const isFiveParts = true, isDatabaseSeries = activity.activity_key !== 'true_false' && !curriculum;
+    const durationSeconds = Math.min(600, Math.max(15, Number(data.durationSeconds) || DEFAULT_CHALLENGE_DURATION_SECONDS));
+    const cycleLabel = activity.title;
+    const fivePartsQuestions = databaseChallengeQuestions(rows, curriculum);
     const fivePartsQuestion=fivePartsQuestions[0];
     await selectSessionActivity(roomId,activity.id);
     const challenge: QuickChallenge = {
@@ -763,7 +832,25 @@ io.on("connection", (socket: ClassroomSocket) => {
       durationSeconds,
       startedAt: Date.now(),
       cycleLabel,
-      challengeType: isDatabaseSeries ? "database-series" : TRUE_FALSE_CHALLENGE_TYPE,
+      challengeType: isCodePattern
+        ? CODE_PATTERN_CHALLENGE_TYPE
+        : isLoopSort
+          ? LOOP_SORT_CHALLENGE_TYPE
+        : isFlowchartShape
+          ? FLOWCHART_SHAPE_CHALLENGE_TYPE
+        : isWhileTrace
+          ? WHILE_TRACE_CHALLENGE_TYPE
+        : isWhileParts
+          ? WHILE_PARTS_CHALLENGE_TYPE
+        : isWhileFactorial
+          ? WHILE_FACTORIAL_CHALLENGE_TYPE
+        : isStringOkError
+          ? STRING_OK_ERROR_CHALLENGE_TYPE
+        : isStringIn
+          ? STRING_IN_CHALLENGE_TYPE
+        : isStringClean
+          ? STRING_CLEAN_CHALLENGE_TYPE
+        : isDatabaseSeries ? "database-series" : TRUE_FALSE_CHALLENGE_TYPE,
       questionIndex: 0,
       totalQuestions: fivePartsQuestions.length,
       questions: fivePartsQuestions,
@@ -780,6 +867,7 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     const studentPayload = {
       id: challenge.id,
+      title: challenge.cycleLabel,
       question: challenge.question,
       options: challenge.options,
       durationSeconds: challenge.durationSeconds,
@@ -791,6 +879,8 @@ io.on("connection", (socket: ClassroomSocket) => {
         ? fivePartsQuestions.map(item => ({
             question: item.prompt,
             options: item.options,
+            presentation: item.presentation,
+            questionType: item.correctIndices?.length ? "multi_select" : "multiple_choice",
           }))
         : undefined,
     };
@@ -845,7 +935,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     const challenge = activeQuickChallenges.get(roomId);
     const progress = challenge?.studentProgress.get(socket.id);
     if (challengeRetryPending || !challenge || challenge.id !== data.quizId ||
-        challenge.challengeType !== TRUE_FALSE_CHALLENGE_TYPE || socket.data.role !== "student" ||
+        !isRetryableChallenge(challenge.challengeType) || socket.data.role !== "student" ||
         !students[socket.id] || !progress?.completed ||
         Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
       reply({ success: false, message: "This challenge is no longer available for retry." });
@@ -877,13 +967,24 @@ io.on("connection", (socket: ClassroomSocket) => {
 
   socket.on("quickChallengeDraft", (data = {}) => {
     const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ""));
-    if (!challenge || challenge.id !== data.quizId || ![TRUE_FALSE_CHALLENGE_TYPE, "database-series"].includes(challenge.challengeType ?? "") ||
+    if (!challenge || challenge.id !== data.quizId || !isQuickChallengeSeries(challenge.challengeType) ||
       socket.data.role !== "student" || !students[socket.id] || challenge.studentProgress.get(socket.id)?.completed) return;
     const progress = challenge.studentProgress.get(socket.id);
     if (progress?.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt) return;
     if (!Array.isArray(data.answers) || data.answers.length > (challenge.questions?.length ?? 0)) return;
-    const answers = data.answers.flatMap((value, questionIndex) => Number.isInteger(value) && value >= 0 && value < (challenge.questions?.[questionIndex]?.options.length ?? 0)
-      ? [{ questionIndex, selectedIndex: value, correct: value === challenge.questions![questionIndex].correctIndex, answeredAt: Date.now() }] : []);
+    const answers = data.answers.flatMap((value, questionIndex) => {
+      const question = challenge.questions?.[questionIndex];
+      if (!question || !Number.isInteger(value) || value < 0) return [];
+      const maxMask = (1 << question.options.length) - 1;
+      if (question.correctIndices?.length) {
+        if (value === 0 || value > maxMask) return [];
+        const graded = gradeChallengeAnswer(question, value);
+        return [{ questionIndex, selectedIndex: value, correct: graded.correct, answeredAt: Date.now(), placementCorrect: graded.placementCorrect }];
+      }
+      if (value >= question.options.length) return [];
+      const graded = gradeChallengeAnswer(question, value);
+      return [{ questionIndex, selectedIndex: value, correct: graded.correct, answeredAt: Date.now() }];
+    });
     challenge.studentProgress.set(socket.id, { ...progress, answers, completed: false });
     if(socket.data.participantId) challenge.responseParticipants?.set(socket.id,String(socket.data.participantId));
     // Refresh the instructor's live monitor without marking this attempt submitted.
@@ -902,7 +1003,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       data.quizId !== challenge.id
     ) return;
 
-    if ((challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE || challenge.challengeType === "database-series")) {
+    if (isQuickChallengeSeries(challenge.challengeType)) {
       const questions = challenge.questions ?? [];
       const progress = challenge.studentProgress.get(socket.id) ?? {
         answers: [],
@@ -913,7 +1014,7 @@ io.on("connection", (socket: ClassroomSocket) => {
           (progress.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt)) return;
 
       const attemptsUsed = progress.attemptCount ?? 0;
-      if (challenge.challengeType === TRUE_FALSE_CHALLENGE_TYPE && attemptsUsed >= TRUE_FALSE_MAX_ATTEMPTS) {
+      if (isRetryableChallenge(challenge.challengeType) && attemptsUsed >= TRUE_FALSE_MAX_ATTEMPTS) {
         const correctCount = getFivePartsScore(progress);
         socket.emit("quickChallengeResult", {
           quizId: challenge.id,
@@ -945,18 +1046,20 @@ io.on("connection", (socket: ClassroomSocket) => {
         const selectedIndex = Number.isInteger(rawAnswers[questionIndex])
           ? Number(rawAnswers[questionIndex])
           : null;
-        if (
-          selectedIndex === null ||
-          selectedIndex < 0 ||
-          selectedIndex >= currentQuestion.options.length
-        ) {
+        if (selectedIndex === null || selectedIndex < 0) return;
+        const maxMask = (1 << currentQuestion.options.length) - 1;
+        if (currentQuestion.correctIndices?.length) {
+          if (selectedIndex > maxMask) return;
+        } else if (selectedIndex >= currentQuestion.options.length) {
           return;
         }
+        const result = gradeChallengeAnswer(currentQuestion, selectedIndex);
         graded.push({
           questionIndex,
           selectedIndex,
-          correct: selectedIndex === currentQuestion.correctIndex,
+          correct: result.correct,
           answeredAt: Date.now(),
+          placementCorrect: result.placementCorrect,
         });
       }
 

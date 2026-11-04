@@ -354,6 +354,9 @@ bootstrap script to upgrade a populated database.
 
 Activity keys: `true_false`, `drag_drop`, `multiple_choice`, `python-puzzle`,
 `display-room`. Video/debrief rows use `file_path`; they do not need a key.
+The curriculum runner also supports `code_pattern`, `loop_sort`, `flowchart_shape`,
+`while_trace`, `while_parts`, `while_factorial`, `string_ok_error`, `string_in`,
+and `string_clean` for Course 99 Week 1 Days 1–2 and Course 120 Week 13 Day 2.
 The optional card game implementation remains in the project and can be shown
 by adding a game activity with key `variable-sorting`.
 
@@ -419,6 +422,40 @@ search's ONNX tooling). Deprecation warnings and npm funding notices do not mean
 installation failed. They are separate from the security audit result. Updating
 those tools further needs its own compatibility review.
 
+## Curriculum questions and saved responses
+
+All nine curriculum challenges load their questions, code examples, instructions,
+options and grading keys from Supabase. Opening the dashboard only reads content;
+it never seeds or overwrites questions. No lesson question catalogs are bundled
+into the student app. Missing content produces an error instead of a source-code fallback.
+
+In Table Editor, filter `challenge_questions.activity_id` by the activity ID:
+
+| Course / week / day | Challenge 1 | Challenge 2 | Challenge 3 |
+| --- | --- | --- | --- |
+| Course 99 / Week 1 / Day 1 | 177 | 178 | 179 |
+| Course 99 / Week 1 / Day 2 | 180 | 181 | 182 |
+| Course 120 / Week 13 / Day 2 | 183 | 184 | 185 |
+
+`question_text` stores the complete readable question. For curriculum rows,
+the existing `options` JSONB column contains `choices` (the answer labels) and
+`presentation`: `prompt`, optional `codeLines`, `guide`, `footer`, `statement`
+and `instructorLabel`. Edit the matching presentation field when changing what
+appears on either board. Keep the readable `question_text` in sync.
+Legacy True/False and multiple-choice questions can still use a plain options array.
+
+`correct_answer` contains a zero-based `choice_index`, or `choice_indices` for
+multi-selection. For example, OK/Error options `["OK", "Error"]` use index `0`
+for OK and `1` for Error. Correct answers stay on the server until submission.
+The Course 99 Day 2 Challenge 1 loop-count answer is corrected to three iterations.
+
+Submitted attempts save to `challenge_results` (participant, activity, attempt,
+score and status). Every question's selected answer and correctness save to
+`challenge_responses`, linked by `challenge_result_id` and `question_id`.
+Retries retain previous attempts; stopping an activity saves partial responses
+with unanswered questions left null. Failed database writes retain a private
+recovery snapshot under `data/pending-challenge-results/` and report an error.
+
 ## Checks
 
 ```
@@ -430,6 +467,12 @@ npm test
 `npm run test:database` runs opt-in tests against the configured database. It creates
 a temporary course/users, verifies joins, media, challenges and game results, then
 removes its own records. The existing curriculum and student results are preserved.
+
+After `npm run build`, `npm run test:curriculum` runs the compiled production server
+on a temporary local port and tests all nine curriculum challenges against Supabase.
+It creates its own temporary course, changes fixture content to verify database
+edits control the UI and grading, checks submissions/retries/partial saves, and
+deletes only its test records. It does not add test results to the real courses.
 
 Welcome narration plays the existing MP3 files in `public/audio/`. Its one-off
 generation script was removed during cleanup; update narration assets separately

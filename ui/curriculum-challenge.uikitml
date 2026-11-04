@@ -1,0 +1,711 @@
+<style>
+  .quiz-shell {
+    width: 236;
+    height: 90;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 1.4;
+    background-opacity: 0;
+    pointer-events: auto;
+    pointer-events-order: 50000;
+  }
+
+  .quiz-shell-single {
+    width: 128;
+  }
+
+  .quiz-shell-wide-code {
+    width: 248;
+  }
+
+  .code-column {
+    width: 108;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .code-column-wide {
+    width: 120;
+  }
+
+  .quiz-board-wide {
+    width: 120;
+    height: 80;
+  }
+
+  .quiz-board-art-wide {
+    width: 120;
+    height: 80;
+    object-fit: fill;
+    keep-aspect-ratio: false;
+  }
+
+  .quiz-board-content-wide {
+    width: 120;
+    height: 80;
+    margin-top: -80;
+  }
+
+  .quiz-column {
+    width: 108;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .quiz-title-slot {
+    width: 70;
+    height: 4.8;
+    background-opacity: 0;
+  }
+
+  .quiz-title-banner {
+    width: 70;
+    height: 9;
+    margin-top: -84.8;
+    margin-bottom: 75.8;
+  }
+
+  .quiz-title { display: none; }
+  .quiz-kicker { display: none; }
+  .quiz-progress { display: none; }
+
+  .quiz-board {
+    width: 108;
+    height: 80;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    background-opacity: 0;
+  }
+
+  .quiz-board-art {
+    width: 108;
+    height: 80;
+  }
+
+  .quiz-board-content {
+    width: 108;
+    height: 80;
+    margin-top: -80;
+    padding: 7.5;
+    padding-top: 8.5;
+    padding-bottom: 4.2;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.2;
+    background-opacity: 0;
+  }
+
+  .quiz-main {
+    width: 100%;
+    height: 58;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 1.2;
+    background-opacity: 0;
+  }
+
+  .quiz-main-tight {
+    gap: 0.3;
+  }
+
+  .quiz-footer {
+    width: 100%;
+    height: 7;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0;
+    background-opacity: 0;
+  }
+
+  .quiz-header {
+    width: 100%;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .quiz-steps {
+    width: 90;
+    height: 13;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .quiz-steps-rail {
+    width: 90;
+    height: 13;
+  }
+
+  .quiz-step-hits {
+    width: 90;
+    height: 13;
+    margin-top: -13;
+    flex-direction: row;
+    justify-content: center;
+    background-opacity: 0;
+  }
+
+  .quiz-step-hit {
+    width: 12.8;
+    height: 13;
+    padding: 0;
+    background-opacity: 0;
+    border-width: 0;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50002;
+  }
+
+  .quiz-timer-dock {
+    width: 17;
+    height: 17;
+    margin-top: 4.8;
+    align-items: center;
+    justify-content: center;
+    background-opacity: 0;
+  }
+
+  .quiz-timer-progress {
+    width: 17;
+    height: 17;
+  }
+
+  .quiz-timer { display: none; }
+  .quiz-timer-caption { display: none; }
+
+  .quiz-dnd-face {
+    width: 92;
+    height: 32;
+  }
+
+  .quiz-question-face {
+    width: 92;
+    height: 18;
+  }
+
+  .quiz-question-face-tall {
+    height: 28;
+  }
+
+  .quiz-explain-face {
+    width: 88;
+    height: 8;
+  }
+
+  .quiz-question {
+    width: 88;
+    color: #d9f7ff;
+    font-size: 3.2;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .answer-row {
+    width: 92;
+    flex-direction: row;
+    justify-content: center;
+    gap: 5;
+  }
+
+  .answer-row-up {
+    margin-top: -2.4;
+  }
+
+  .answer-button {
+    width: 50%;
+    height: 9.4;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    color: #e8fbff;
+    font-size: 2.2;
+    font-weight: 600;
+    font-family: inter;
+    background-opacity: 0;
+    border-width: 0;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .answer-face {
+    width: 42;
+    height: 9.4;
+  }
+
+  .answer-button-wide {
+    width: 86%;
+  }
+
+  .answer-face-wide {
+    width: 78;
+    height: 9.4;
+  }
+
+  .answer-face-pair {
+    width: 36;
+    height: 18;
+  }
+
+  .answer-icon {
+    width: 5.6;
+    height: 5.6;
+  }
+
+  .answer-icon-large {
+    width: 8.8;
+    height: 8.8;
+  }
+
+  .answer-label {
+    color: #e8fbff;
+    font-size: 2.3;
+    font-weight: 600;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .answer-label-large {
+    font-size: 4.2;
+    font-weight: 600;
+  }
+
+  .answer-button-tf {
+    width: 36;
+    height: 21;
+  }
+
+  .answer-face-tf {
+    width: 36;
+    height: 21;
+  }
+
+  .answer-tile-large {
+    width: 36;
+    height: 21;
+    background-opacity: 0;
+    border-width: 0;
+  }
+
+  .answer-selected {
+    background-opacity: 0;
+  }
+
+  .answer-dimmed {
+    opacity: 0.45;
+  }
+
+  .answer-hidden { display: none; }
+
+  .quiz-instruction {
+    width: 100%;
+    color: #b9e7f2;
+    font-size: 1.3;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .quiz-toolbar {
+    width: 94;
+    height: 6.2;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.4;
+  }
+
+  .quiz-toolbar-review {
+    justify-content: space-between;
+  }
+
+  .submit-button {
+    width: 32;
+    height: 6.2;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    color: #c5eef8;
+    font-size: 1.2;
+    font-weight: 600;
+    font-family: inter;
+    background-opacity: 0;
+    border-width: 0;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .submit-face {
+    width: 32;
+    height: 6.2;
+  }
+
+  .submit-full {
+    width: 32;
+  }
+
+  .submit-ready {
+    width: 32;
+    color: #f4fbff;
+    justify-content: center;
+  }
+
+  .submit-disabled {
+    color: #8eb8c6;
+  }
+
+  .nav-button {
+    width: 24;
+    height: 6.2;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-opacity: 0;
+    border-width: 0;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .nav-face {
+    width: 24;
+    height: 6.2;
+  }
+
+  .nav-arrow { display: none; }
+  .nav-label { display: none; }
+
+  .nav-disabled {
+    opacity: 0.38;
+  }
+
+  .answer-correct {
+    background-opacity: 0;
+  }
+
+  .answer-wrong {
+    background-opacity: 0;
+  }
+
+  .quiz-feedback {
+    width: 100%;
+    color: #b9e7f2;
+    font-size: 1.45;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .feedback-correct { color: #86f0a8; }
+  .feedback-incorrect { color: #ff9aa8; }
+
+  .quiz-result-card {
+    width: 100%;
+    padding: 1;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.4;
+    background-opacity: 0;
+    border-width: 0;
+  }
+
+  .quiz-result-status {
+    color: #dff8ff;
+    font-size: 5.2;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .quiz-result-answer {
+    color: #e8fbff;
+    font-size: 8.8;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .quiz-score-hero {
+    width: 90;
+    height: 32;
+  }
+
+  .quiz-result-hint {
+    color: #b9e7f2;
+    font-size: 2.1;
+    font-weight: 500;
+    font-family: inter;
+    text-align: center;
+  }
+
+  .quiz-explanation {
+    width: 100%;
+    color: #c5eef8;
+    font-size: 1.8;
+    font-weight: 500;
+    font-family: inter;
+    font-style: italic;
+    text-align: center;
+  }
+
+  .quiz-explain-italic {
+    color: #c5eef8;
+    font-style: italic;
+    font-weight: 500;
+    font-family: inter;
+  }
+
+  .quiz-review-row {
+    width: 100%;
+    flex-direction: row;
+    justify-content: center;
+    gap: 1.8;
+    padding-top: 0.4;
+    padding-bottom: 0.4;
+  }
+
+  .quiz-review-q {
+    width: 11;
+    height: 11;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    background-opacity: 0;
+    border-width: 0;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .quiz-review-glyph {
+    width: 11;
+    height: 11;
+  }
+
+  .quiz-result-winner {
+    color: #dff8ff;
+    font-size: 2;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .quiz-result-time {
+    color: #b9e7f2;
+    font-size: 1.5;
+    text-align: center;
+  }
+
+  .quiz-result-close {
+    width: 32;
+    height: 7;
+    padding: 0;
+    flex-direction: column;
+    align-self: center;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+    color: #e8fbff;
+    background-opacity: 0;
+    border-width: 0;
+    font-size: 1.45;
+    font-weight: 600;
+    font-family: inter;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .quiz-result-reset {
+    width: 32;
+    height: 7;
+    padding: 0;
+    flex-direction: column;
+    align-self: center;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+    color: #e8fbff;
+    background-opacity: 0;
+    border-width: 0;
+    font-size: 1.45;
+    font-weight: 600;
+    font-family: inter;
+    cursor: pointer;
+    pointer-events: auto;
+    pointer-events-order: 50001;
+  }
+
+  .action-face {
+    width: 32;
+    height: 7;
+  }
+
+  .quiz-result-actions {
+    width: 94;
+    height: 7;
+    flex-direction: row;
+    justify-content: center;
+    gap: 3.2;
+  }
+
+  .quiz-result-correct {
+    color: #86f0a8;
+  }
+
+  .quiz-result-wrong {
+    color: #ff9aa8;
+  }
+
+  .quiz-content-hidden { display: none; }
+  .quiz-result-hidden { display: none; }
+</style>
+
+<Panel id="quiz-shell" class="quiz-shell">
+  <Panel id="code-column" class="code-column">
+    <Panel class="quiz-title-slot"></Panel>
+    <Panel id="code-board" class="quiz-board">
+      <Image id="code-board-art" class="quiz-board-art" src="/textures/playtest_student/UI_Background.png" />
+      <Panel id="code-board-content" class="quiz-board-content">
+        <Image id="code-face" class="quiz-board-art" src="/textures/playtest_student/UI_Background.png" />
+      </Panel>
+    </Panel>
+  </Panel>
+  <Panel class="quiz-column">
+    <Panel class="quiz-title-slot"></Panel>
+    <Text id="quiz-title" class="quiz-title">Challenge</Text>
+    <Text id="quiz-kicker" class="quiz-kicker">Student Challenge</Text>
+    <Text id="quiz-progress" class="quiz-progress"></Text>
+
+    <Panel class="quiz-board">
+      <Image class="quiz-board-art" src="/textures/playtest_student/UI_Background.png" />
+      <Panel class="quiz-board-content">
+        <Panel id="quiz-main" class="quiz-main">
+        <Panel id="quiz-header" class="quiz-header">
+          <Panel id="quiz-steps" class="quiz-steps answer-hidden">
+            <Image id="quiz-steps-rail" class="quiz-steps-rail" src="/textures/quiz/icons/check.png" />
+            <Panel class="quiz-step-hits">
+              <Button id="quiz-step-0" class="quiz-step-hit"></Button>
+              <Button id="quiz-step-1" class="quiz-step-hit"></Button>
+              <Button id="quiz-step-2" class="quiz-step-hit"></Button>
+              <Button id="quiz-step-3" class="quiz-step-hit"></Button>
+              <Button id="quiz-step-4" class="quiz-step-hit"></Button>
+              <Button id="quiz-step-5" class="quiz-step-hit answer-hidden"></Button>
+              <Button id="quiz-step-6" class="quiz-step-hit answer-hidden"></Button>
+            </Panel>
+          </Panel>
+        </Panel>
+
+        <Image id="quiz-question-face" class="quiz-question-face answer-hidden" src="/textures/quiz/icons/check.png" />
+        <Text id="quiz-question" class="quiz-question">
+          Loading question from the classroom server…
+        </Text>
+
+        <Panel id="quiz-answer-row-1" class="answer-row">
+          <Button id="quiz-answer-0" class="answer-button">
+            <Image id="quiz-answer-face-0" class="answer-face answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+            <Image id="quiz-answer-icon-0" class="answer-icon answer-hidden" src="/textures/quiz/icons/check.png" />
+            <Text id="quiz-answer-label-0" class="answer-label"></Text>
+          </Button>
+          <Button id="quiz-answer-1" class="answer-button">
+            <Image id="quiz-answer-face-1" class="answer-face answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+            <Image id="quiz-answer-icon-1" class="answer-icon answer-hidden" src="/textures/quiz/icons/cross.png" />
+            <Text id="quiz-answer-label-1" class="answer-label"></Text>
+          </Button>
+        </Panel>
+
+        <Image id="quiz-dnd-face" class="quiz-dnd-face answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+
+        <Panel id="quiz-answer-row-2" class="answer-row">
+          <Button id="quiz-answer-2" class="answer-button">
+            <Image id="quiz-answer-face-2" class="answer-face answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+            <Image id="quiz-answer-icon-2" class="answer-icon answer-hidden" src="/textures/quiz/icons/check.png" />
+            <Text id="quiz-answer-label-2" class="answer-label"></Text>
+          </Button>
+          <Button id="quiz-answer-3" class="answer-button">
+            <Image id="quiz-answer-face-3" class="answer-face answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+            <Image id="quiz-answer-icon-3" class="answer-icon answer-hidden" src="/textures/quiz/icons/cross.png" />
+            <Text id="quiz-answer-label-3" class="answer-label"></Text>
+          </Button>
+        </Panel>
+
+        <Panel id="quiz-answer-row-3" class="answer-row answer-hidden">
+          <Button id="quiz-answer-4" class="answer-button answer-button-wide">
+            <Image id="quiz-answer-face-4" class="answer-face answer-face-wide answer-hidden" src="/textures/playtest_student/LightUIButton.png" />
+            <Image id="quiz-answer-icon-4" class="answer-icon answer-hidden" src="/textures/quiz/icons/cross.png" />
+            <Text id="quiz-answer-label-4" class="answer-label"></Text>
+          </Button>
+        </Panel>
+
+        <Text id="quiz-instruction" class="quiz-instruction answer-hidden">Select one answer</Text>
+        <Image id="quiz-explain-face" class="quiz-explain-face answer-hidden" src="/textures/quiz/icons/check.png" />
+        <Text id="quiz-explanation" class="quiz-explanation answer-hidden"></Text>
+        <Text id="quiz-feedback" class="quiz-feedback answer-hidden"></Text>
+
+        <Panel id="quiz-result-card" class="quiz-result-card quiz-result-hidden">
+          <Image id="quiz-score-hero" class="quiz-score-hero answer-hidden" src="/textures/quiz/icons/check.png" />
+          <Text id="quiz-result-status" class="quiz-result-status">SCORE</Text>
+          <Text id="quiz-result-answer" class="quiz-result-answer"></Text>
+          <Panel id="quiz-review-questions" class="quiz-review-row answer-hidden">
+            <Button id="quiz-review-q-0" class="quiz-review-q"><Image id="quiz-review-glyph-0" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-1" class="quiz-review-q"><Image id="quiz-review-glyph-1" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-2" class="quiz-review-q"><Image id="quiz-review-glyph-2" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-3" class="quiz-review-q"><Image id="quiz-review-glyph-3" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-4" class="quiz-review-q"><Image id="quiz-review-glyph-4" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-5" class="quiz-review-q answer-hidden"><Image id="quiz-review-glyph-5" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-q-6" class="quiz-review-q answer-hidden"><Image id="quiz-review-glyph-6" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+          </Panel>
+          <Text id="quiz-result-hint" class="quiz-result-hint answer-hidden">tap to review</Text>
+          <Text id="quiz-result-time" class="quiz-result-time">Time taken: 0.0 seconds</Text>
+          <Text id="quiz-result-winner" class="quiz-result-winner"></Text>
+        </Panel>
+        </Panel>
+
+        <Panel class="quiz-footer">
+        <Panel id="quiz-toolbar" class="quiz-toolbar">
+          <Button id="quiz-prev" class="nav-button answer-hidden">
+            <Image id="quiz-prev-face" class="nav-face" src="/textures/playtest_student/Previous.png" />
+          </Button>
+          <Button id="quiz-submit" class="submit-button">
+            <Image id="quiz-submit-face" class="submit-face" src="/textures/playtest_student/Submit_Button.png" />
+            <Text id="quiz-submit-label" class="quiz-instruction">SUBMIT ONLY IF ALL ANSWERED.</Text>
+          </Button>
+          <Button id="quiz-next" class="nav-button answer-hidden">
+            <Image id="quiz-next-face" class="nav-face" src="/textures/playtest_student/Next.png" />
+          </Button>
+        </Panel>
+        <Panel id="quiz-result-actions" class="quiz-result-actions answer-hidden">
+          <Button id="quiz-result-reset" class="quiz-result-reset quiz-result-hidden">
+            <Image id="quiz-reset-face" class="action-face" src="/textures/playtest_student/LightUIButton.png" />
+          </Button>
+          <Button id="quiz-result-close" class="quiz-result-close quiz-result-hidden">
+            <Image id="quiz-close-face" class="action-face" src="/textures/playtest_student/DarkUIButton.png" />
+          </Button>
+        </Panel>
+        </Panel>
+      </Panel>
+    </Panel>
+    <Image id="quiz-title-banner" class="quiz-title-banner" src="/textures/playtest_student/Title_for_assignment.png" />
+  </Panel>
+
+  <Panel id="quiz-timer-ring" class="quiz-timer-dock">
+    <Image id="quiz-timer-progress" class="quiz-timer-progress" src="/textures/playtest_student/Clock_Background.png" />
+    <Text id="quiz-timer" class="quiz-timer">05:00</Text>
+    <Text id="quiz-timer-caption" class="quiz-timer-caption">TIME REMAINING</Text>
+  </Panel>
+</Panel>

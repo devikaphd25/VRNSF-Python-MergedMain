@@ -13,11 +13,45 @@ import { setInstructorPanelRayInteraction } from "../src/instructor/panel-ray-in
 import { DashboardControllerRays } from "../src/instructor/dashboard-controller-rays.ts";
 import { setEndClassConfirmationVisible } from "../src/instructor/end-class-confirmation.ts";
 import { InstructorControllerVisuals } from "../src/instructor/controller-overlay-visuals.ts";
+import { setPanelRayInteraction } from "../src/ui/panel-ray-interaction.ts";
 
 // UIKit uses many subscriptions per component while laying out a document.
 setMaxListeners(0);
 // UIKit updates the browser cursor during hover; the layout test has no DOM.
 (globalThis as any).document = { body: { style: { cursor: "" } } };
+
+for (const choices of [2, 4]) {
+  test(`curriculum student controls remain reachable with ${choices} database options`, async () => {
+    const parsed = parse(readFileSync('ui/curriculum-challenge.uikitml', 'utf8'));
+    function layoutOnly(element: any): any {
+      if (typeof element === 'string') return null;
+      return { ...element, type: 'container', children: (element.children ?? []).map(layoutOnly).filter(Boolean) };
+    }
+    parsed.element = layoutOnly(parsed.element);
+    const root = interpret(parsed)!;
+    const scene = new Scene(), panel = new Group();
+    panel.add(root); scene.add(panel);
+    const elements = new Map<string, any>();
+    root.traverse(object => { if (object.userData.id) elements.set(object.userData.id, object); });
+    if (choices === 2) elements.get('quiz-answer-row-2').classList.add('answer-hidden');
+    for (const id of ['quiz-prev', 'quiz-next']) elements.get(id).classList.remove('answer-hidden');
+    setPanelRayInteraction(panel, true, 50000);
+    for (let frame = 0; frame < 8; frame++) { await new Promise(resolve => setTimeout(resolve, 20)); root.update(16); }
+    for (const id of [...Array.from({ length: choices }, (_, i) => `quiz-answer-${i}`), 'quiz-prev', 'quiz-next', 'quiz-submit']) {
+      const button = elements.get(id);
+      assert.ok(button.size.value[0] > 10 && button.size.value[1] > 5, `${id} needs a usable hit area`);
+      const position = button.globalMatrix.value.elements;
+      const target = hit(scene, position[12], position[13]);
+      let receiver: Object3D | null = target;
+      while (receiver && receiver !== button) receiver = receiver.parent;
+      assert.ok(receiver === button, `${id} must receive a controller ray (hit ${target.userData.id ?? target.type})`);
+    }
+    setPanelRayInteraction(panel, false, 50000);
+    const position = elements.get('quiz-answer-0').globalMatrix.value.elements;
+    assert.notEqual(hit(scene, position[12], position[13]), elements.get('quiz-answer-0'), 'hidden student panels must not intercept other activities');
+    root.dispose();
+  });
+}
 
 function dashboardEndClassControls(document: any, rays: DashboardControllerRays, ended: () => void) {
   // Run the production event bindings and end-class handler, without a WebGL world.

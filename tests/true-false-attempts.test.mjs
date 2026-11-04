@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {isQuickChallengeSeries,isRetryableChallenge} from '../shared/challenge-types.ts';
+import {gradeChallengeAnswer} from '../server/services/grade-challenge-answer.ts';
 import {TRUE_FALSE_MAX_ATTEMPTS} from '../shared/true-false-settings.ts';
 
 function handlers() {
@@ -20,7 +22,7 @@ function handlers() {
   const emitted=[],saved=[];
   const socket={id:'student-1',connected:true,data:{roomId:'room-1',role:'student',participantId:'p1'},
     emit:(event,payload)=>emitted.push({event,payload})};
-  const context=vm.createContext({socket,TRUE_FALSE_MAX_ATTEMPTS,TRUE_FALSE_CHALLENGE_TYPE:'TrueAndFalse',
+  const context=vm.createContext({socket,isQuickChallengeSeries,isRetryableChallenge,gradeChallengeAnswer,TRUE_FALSE_MAX_ATTEMPTS,TRUE_FALSE_CHALLENGE_TYPE:'TrueAndFalse',
     activeQuickChallenges:new Map([['room-1',challenge]]),students:{'student-1':{}},challengeRetryPending:false,
     saveChallengeResponses:async()=>{saved.push(structuredClone(challenge.studentProgress.get(socket.id)));},
     notifyInstructorStudentProgress(){},publishQuickChallengeReview(){},finishFivePartsIfEveryoneDone(){},

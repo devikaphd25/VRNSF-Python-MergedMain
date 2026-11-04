@@ -7,6 +7,7 @@
  * Used by: server.ts, repositories, services, socket handlers, and LabAttemptState.
  */
 import type { Socket } from "socket.io";
+import type { ChallengePresentation } from '../shared/challenge-presentation.js';
 
 export type UserRole = "instructor" | "student";
 export type UserLocation = "classroom" | "python_lab";
@@ -76,10 +77,13 @@ export interface RoomRecord {
 }
 
 export interface QuickChallengeQuestion {
+  presentation?: ChallengePresentation;
   id?: string;
   prompt: string;
   options: string[];
   correctIndex: number;
+  correctIndices?: number[];
+  instructorLabel?: string;
   explanation?: string;
 }
 
@@ -91,6 +95,7 @@ export interface QuickChallengeStudentProgress {
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
+    placementCorrect?: number;
   }>;
   completed: boolean;
   finishedAt?: number;

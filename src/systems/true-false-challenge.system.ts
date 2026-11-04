@@ -19,7 +19,7 @@ import {
 import { Matrix4, Quaternion, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket-client";
-import { attachHologramFrame } from "../ui/hologram-frame";
+import { applyStudentQuizSceneDepth, attachHologramFrame } from "../ui/hologram-frame";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
 import { hitStepIndex, paintStepsRail } from "../ui/steps-rail";
 import {
@@ -1756,7 +1756,7 @@ export class TrueFalseChallengeSystem extends createSystem({
   private bringQuizPanelForward(): void {
     const panel = (window as any).quickChallengeEntity?.object3D;
     if (!panel?.visible) return;
-    (window as any).bringInstructorOverlayPanelForward?.(panel, 50000);
+    applyStudentQuizSceneDepth(panel);
   }
 
   private stopTimer(): void {

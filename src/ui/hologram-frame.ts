@@ -26,3 +26,37 @@ export function removeHologramFrame(panel: Object3D): void {
 export function attachHologramFrame(panel: Object3D): void {
   removeHologramFrame(panel);
 }
+
+function isRocketObject(object: Object3D): boolean {
+  let current: Object3D | null = object;
+  while (current) {
+    if (
+      current.name === "ClassRocketCompanion" ||
+      current.name === "StudentRocketRig" ||
+      current.userData?.isClassRocket ||
+      current.userData?.isStudentRocket
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/** Keep the student quiz in the scene depth buffer so XR hands and the default controller ray stay visible. */
+export function applyStudentQuizSceneDepth(panel: Object3D): void {
+  panel.renderOrder = 0;
+  panel.traverse(object => {
+    if (isRocketObject(object)) return;
+    object.renderOrder = 0;
+    const mesh = object as any;
+    if (!mesh.isMesh || !mesh.material) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((material: any) => {
+      if (material.depthTest === false) {
+        material.depthTest = true;
+        material.needsUpdate = true;
+      }
+    });
+  });
+}

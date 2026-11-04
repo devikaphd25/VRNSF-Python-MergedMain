@@ -1,4 +1,4 @@
-import { TRUE_FALSE_CHALLENGE_TYPE } from "../../shared/challenge-types";
+import { TRUE_FALSE_CHALLENGE_TYPE, isCurriculumChallenge } from "../../shared/challenge-types";
 import { STUDENT_RESULT_AUTO_CLOSE_MS } from "../config/student-result-settings";
 /**
  * Database-backed multiple-choice challenge UI (Challenge 3).
@@ -330,7 +330,7 @@ export class MultipleChoiceChallengeSystem extends createSystem({
   private startChallenge = (
     payload: QuickChallengePayload
   ): void => {
-    if (!payload || payload.challengeType === TRUE_FALSE_CHALLENGE_TYPE || !Array.isArray(payload.options)) {
+    if (!payload || payload.challengeType === TRUE_FALSE_CHALLENGE_TYPE || isCurriculumChallenge(payload.challengeType) || !Array.isArray(payload.options)) {
       return;
     }
 
