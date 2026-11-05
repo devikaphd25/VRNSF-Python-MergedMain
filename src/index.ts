@@ -47,11 +47,13 @@ import { SeatSelectionSystem } from "./systems/seat-selection.system";
 import { ClassroomPanelScene } from "./components/classroom-panel-scene.component";
 
 import { connectSocketForUser, socket } from "./network/socket-client";
+import { bindChallengeAvatarVisibility } from './student/challenge-avatar-visibility';
 import {
   disposeVRLoginResources,
   showVRLoginPanel
 } from "./systems/classroom-login.system";
 if (typeof socket !== 'undefined') {
+  bindChallengeAvatarVisibility(socket, window, () => updateMarkerVisibility((window as any).player));
   socket.on("modeChanged", (data) => {
     console.log(`[Student] 🔔 TOP-LEVEL modeChanged received:`, data);
   });

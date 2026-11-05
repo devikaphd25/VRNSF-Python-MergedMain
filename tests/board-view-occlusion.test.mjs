@@ -13,7 +13,7 @@ function client() {
   vm.runInContext(ts.transpileModule(code + '\nexport { markers as fixtureMarkers };', { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, context);
   const api = context.exports;
   const marker = (id, seat) => { const object = new Group(); object.userData.studentId = id; object.userData.seatName = seat; api.fixtureMarkers.set(id, object); return object; };
-  return { api, target: marker('occupant', 'Seat_R1_03'), other: marker('other', 'Seat_R1_04'), ownHands: new Group() };
+  return { api, state: context.window, target: marker('occupant', 'Seat_R1_03'), other: marker('other', 'Seat_R1_04'), ownHands: new Group() };
 }
 
 test('the viewing-seat occupant stays hidden across every visibility refresh, only on the viewing client', () => {
@@ -38,4 +38,18 @@ test('RETURN honors existing global suppression instead of exposing hidden class
   viewer.api.setSeatMarkersSuppressed(true); viewer.api.setLocalBoardViewSeat(null);
   assert.equal(viewer.target.visible, false);
   viewer.api.setSeatMarkersSuppressed(false); assert.equal(viewer.target.visible, true);
+});
+
+test('challenge hides all classmates across refreshes and restores them without hiding first-person hands', () => {
+  const viewer = client(), instructor = client();
+  viewer.state.isStudentChallengeActive = true;
+  for (const refresh of [() => viewer.api.updateMarkerVisibility(undefined), () => viewer.api.showAllMarkers(),
+    () => viewer.api.setSeatMarkersForcedVisible(true), () => viewer.api.setSeatMarkersSuppressed(false)]) {
+    refresh(); assert.equal(viewer.target.visible, false); assert.equal(viewer.other.visible, false);
+    assert.equal(viewer.ownHands.visible, true);
+  }
+  instructor.state.isInstructor = true; instructor.state.isStudentChallengeActive = true;
+  instructor.api.showAllMarkers(); assert.equal(instructor.target.visible, true);
+  viewer.state.isStudentChallengeActive = false; viewer.api.updateMarkerVisibility(undefined);
+  assert.equal(viewer.target.visible, true); assert.equal(viewer.other.visible, true);
 });

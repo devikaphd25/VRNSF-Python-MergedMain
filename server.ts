@@ -1,4 +1,5 @@
 import { saveAppGameResult, getRecentAppGameResults } from "./server/services/game-results.service.js";
+import { loadDebriefMistakes } from "./server/repositories/debrief-mistakes.repository.js";
 import { pickRandomAvatar } from "./shared/vr-avatars.js";
 import {bindGameRun,recordGameResponse} from "./server/services/game-results.service.js";
 import classroomRoutes from "./server/routes/classroom.routes.js";
@@ -714,6 +715,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       if (user) { user.mode = "Game Mode"; user.inLab = true; }
     } else if (activity.event === "presentationContentChanged") {
       student.mode = "Presentation Mode";
+      socket.emit("debriefMistakesData", activity.payload.debriefMistakes ?? null);
       const review = lastQuickChallengeReviews.get(roomId);
       if (review && activity.payload.mediaType === "image") socket.emit("debriefReviewData", review);
     }
@@ -3402,9 +3404,11 @@ socket.on(
     );
 
     const activityRoomId = String(socket.data.roomId ?? "").trim();
+    let debriefMistakes = null;
     if(destination==='Presentation'&&activityId){
       const activity=await activityForSession(activityRoomId,undefined,Number(activityId));
       if(!['video','debrief'].includes(activity.activity_type))throw Error('Invalid media activity');
+      if (activity.activity_type === 'debrief') debriefMistakes = await loadDebriefMistakes(Number(activityRoomId), activity);
       await selectSessionActivity(activityRoomId,activity.id);
     }else if(destination==='Game 1'){
       const activity=await activityForSession(activityRoomId,'variable-sorting');
@@ -3416,7 +3420,7 @@ socket.on(
     if (destination === "Presentation" && assetPath) {
       roomActivities.set(activityRoomId, {
         event: "presentationContentChanged",
-        payload: { assetPath, mediaType: mediaType === "image" ? "image" : "video", debriefView: "classroom" },
+        payload: { assetPath, mediaType: mediaType === "image" ? "image" : "video", debriefView: "classroom", debriefMistakes },
         playback: { command: "pause", currentTime: 0, sentAt: Date.now() },
       });
     } else if (destination === "Game 1") {
@@ -3427,6 +3431,11 @@ socket.on(
       roomActivities.clear(activityRoomId);
     }
 
+    if (destination === "Presentation") {
+      for (const client of io.sockets.sockets.values()) {
+        if (client.data.roomId === activityRoomId) client.emit("debriefMistakesData", debriefMistakes);
+      }
+    }
     // A debrief can be opened after the challenge monitor was closed. Replay
     // the retained review payload so every connected display uses the latest
     // completed challenge statistics instead of placeholder values.

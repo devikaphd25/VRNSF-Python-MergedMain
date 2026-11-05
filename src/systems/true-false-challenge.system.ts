@@ -19,6 +19,7 @@ import {
 import { Matrix4, Quaternion, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket-client";
+import { maintainChallengeSeatClearance } from '../ui/challenge-seat-clearance';
 import { applyStudentQuizSceneDepth, attachHologramFrame } from "../ui/hologram-frame";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
 import { hitStepIndex, paintStepsRail } from "../ui/steps-rail";
@@ -1756,6 +1757,7 @@ export class TrueFalseChallengeSystem extends createSystem({
   private bringQuizPanelForward(): void {
     const panel = (window as any).quickChallengeEntity?.object3D;
     if (!panel?.visible) return;
+    if (this.renderer.xr.isPresenting) maintainChallengeSeatClearance(panel, this.world.scene, this.renderer.xr.getCamera(), this.document);
     applyStudentQuizSceneDepth(panel);
   }
 

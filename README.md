@@ -249,7 +249,7 @@ warning bypass does not install trust on a Quest. The LAN IP may change when the
 computer changes Wi-Fi. Use a trusted HTTPS tunnel if certificate trust is not set up.
 
 The APK uses a separate production host and a trusted HTTPS launch address.
-See [APK-UPDATE-STEPS.txt](APK-UPDATE-STEPS.txt) and [apk/README.md](apk/README.md).
+See [apk/README.md](apk/README.md) for APK instructions.
 After `npm run build`, set `PORT=3100` in the private `.env.server` (or hosting
 environment), then run:
 
@@ -458,7 +458,30 @@ matching panel by question ID from that document. Choices, question prompts and
 answer keys remain table-owned. This prevents an older seed script or options-only
 edit from deleting the code panels. No lesson content is hardcoded as a fallback.
 Renaming or reordering an activity does not change its ID/key or its question links.
-For Day 1, positions 4, 8 and 14 launch activities 177, 178 and 179 respectively.
+For Day 1, positions 4, 10 and 16 launch activities 177, 178 and 179 respectively.
+Each challenge is immediately followed by its debrief image (activities 260–262,
+positions 5, 11 and 17), loaded from `course-media/csdp-99/week1/day-1/debriefs/`.
+Challenge 2 follows video 7, "Repetition Structure (Loops)".
+Debriefs use the classroom presentation board and instructor media controls.
+Students can use the left-controller SCREEN/RETURN shortcut for images and videos.
+While centered at Seat_R1_03, that seat's occupant is hidden only on the viewing
+student's client; RETURN restores the avatar and the student's saved position.
+In headset mode, challenge panels measure the nearby seat geometry and lift
+their bottom edge at least 16 cm above obstructing seat backs. Browser panels
+retain their camera-centered layout. Classmates hide locally for the duration
+of a student challenge; first-person hands remain visible.
+The Day 1 challenge UI includes selection/hover highlights and reveals Submit
+after every question has an answer. These visual rules use challenge types;
+question text, options, presentation content and grading keys still come from
+Supabase. Student submissions continue through the server's database result writer.
+Opening a debrief loads the preceding challenge in that same day and reads
+`challenge_results` / `challenge_responses` for the current class session only.
+The right board lists only the question number and distinct saved wrong answers,
+including first-attempt mistakes even when later retries correct them. Student
+counts are not displayed, and repeated identical wrong answers appear once.
+Correct and unanswered responses are excluded; incorrect multi-select answers
+are shown as combinations. Long lists page automatically every ten seconds.
+Students retain Raise Hand and their name above the mistake list.
 
 `correct_answer` contains a zero-based `choice_index`, or `choice_indices` for
 multi-selection. For example, OK/Error options `["OK", "Error"]` use index `0`

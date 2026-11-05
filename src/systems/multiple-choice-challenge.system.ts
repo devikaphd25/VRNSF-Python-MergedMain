@@ -19,6 +19,7 @@ import {
 import { Matrix4, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket-client";
+import { maintainChallengeSeatClearance } from '../ui/challenge-seat-clearance';
 
 interface QuickChallengeQuestion {
   question: string;
@@ -988,6 +989,13 @@ export class MultipleChoiceChallengeSystem extends createSystem({
     const document = this.document as any;
     document?.requestUpdate?.();
     document?.update?.();
+  }
+
+  update(): void {
+    const panel = (window as any).databaseChallengeEntity?.object3D;
+    if (panel?.visible && this.renderer.xr.isPresenting) {
+      maintainChallengeSeatClearance(panel, this.world.scene, this.renderer.xr.getCamera(), this.document);
+    }
   }
 
   destroy(): void {

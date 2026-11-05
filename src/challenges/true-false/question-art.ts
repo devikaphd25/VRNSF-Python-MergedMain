@@ -27,8 +27,12 @@ const PLAYTEST_STUDENT = {
   light: "/textures/playtest_student/LightUIButton.png",
   dark: "/textures/playtest_student/DarkUIButton.png",
   submit: "/textures/playtest_student/Submit_Button.png",
+  previous: "/textures/playtest_student/Previous.png",
+  next: "/textures/playtest_student/Next.png",
   yes: "/textures/playtest_student/True.png",
   no: "/textures/playtest_student/False.png",
+  mc: "/textures/playtest_student/MultipleChoice_Button.png",
+  mcHighlight: "/textures/playtest_student/Highlighted_MultipleChoice_button.png",
 };
 
 const PLAYTEST_INSTRUCTOR = {
@@ -143,11 +147,50 @@ export function paintTitleBanner(options: {
   return options.canvas.toDataURL("image/png");
 }
 
+const HOVER_WASH = "rgba(175, 245, 255, 0.34)";
+
+export function applyHoverWash(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  fill = HOVER_WASH
+): void {
+  ctx.save();
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.fillStyle = fill;
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+}
+
+export function paintHoverArt(options: {
+  canvas: HTMLCanvasElement;
+  src: string;
+  wash?: string;
+  onReady?: () => void;
+}): string {
+  const ctx = options.canvas.getContext("2d");
+  if (!ctx) return options.src;
+  const plate = getImage(options.src, options.onReady);
+  if (!plate) return options.src;
+  if (plate.naturalWidth > 0 && plate.naturalHeight > 0) {
+    options.canvas.width = plate.naturalWidth;
+    options.canvas.height = plate.naturalHeight;
+  }
+  const drawWidth = options.canvas.width;
+  const drawHeight = options.canvas.height;
+  ctx.clearRect(0, 0, drawWidth, drawHeight);
+  ctx.drawImage(plate, 0, 0, drawWidth, drawHeight);
+  applyHoverWash(ctx, drawWidth, drawHeight, options.wash);
+  return options.canvas.toDataURL("image/png");
+}
+
 export function paintHudPlate(options: {
   canvas: HTMLCanvasElement;
   src: string;
   text: string;
   color?: string;
+  fontWeight?: number;
+  hover?: boolean;
   onReady?: () => void;
 }): string {
   const ctx = options.canvas.getContext("2d");
@@ -157,14 +200,16 @@ export function paintHudPlate(options: {
   ctx.clearRect(0, 0, width, height);
   const plate = getImage(options.src, options.onReady);
   if (plate) ctx.drawImage(plate, 0, 0, width, height);
+  if (options.hover && plate) applyHoverWash(ctx, width, height);
   ctx.fillStyle = options.color ?? "#f4fbff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const maxWidth = width - 40;
+  const fontWeight = options.fontWeight ?? 700;
   let fontSize = Math.round(height * 0.34);
   let lines = [options.text];
   while (fontSize >= 16) {
-    ctx.font = `700 ${fontSize}px Inter, sans-serif`;
+    ctx.font = `${fontWeight} ${fontSize}px Inter, sans-serif`;
     const words = options.text.split(/\s+/).filter(Boolean);
     lines = [];
     let current = "";
@@ -196,6 +241,7 @@ export function paintReviewChip(options: {
   correct: boolean;
   correctSrc?: string;
   missSrc?: string;
+  hover?: boolean;
   onReady?: () => void;
 }): string {
   const ctx = options.canvas.getContext("2d");
@@ -207,6 +253,14 @@ export function paintReviewChip(options: {
     options.onReady
   );
   if (plate) ctx.drawImage(plate, 0, 0, size, size);
+  if (options.hover && plate) {
+    applyHoverWash(
+      ctx,
+      size,
+      size,
+      options.correct ? "rgba(0, 88, 22, 0.58)" : "rgba(70, 0, 0, 0.38)"
+    );
+  }
   ctx.fillStyle = "#f8fbff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";

@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { io } from 'socket.io-client';
 import { loadDatabaseChallengeQuestions } from '../build/server/repositories/challenge-content.repository.js';
+import { loadSavedChallengeMistakes } from '../build/server/repositories/debrief-mistakes.repository.js';
 
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false }, realtime: { transport: WebSocket } });
 const tag = `curriculum-test-${Date.now()}`;
@@ -112,6 +113,10 @@ try {
         else { assert.equal(response.student_answer.choice_index, question.correct_answer.choice_index); assert.equal(response.student_answer.value, question.options.choices[question.correct_answer.choice_index]); }
       }
       checkedResponses += saved.challenge_responses.length;
+      const mistakes = await loadSavedChallengeMistakes(Number(session.room_id), activity);
+      assert.equal(mistakes.studentCount, 1);
+      assert.equal(mistakes.questions.length, answers.length);
+      assert.ok(mistakes.questions.every(question => question.answers.length === 0));
       // A repeated submission must not create a second attempt.
       pupil.emit('quickChallengeAnswer', { quizId: launch.id, answers });
       if (checkedChallenges === 0) {
@@ -123,6 +128,8 @@ try {
           await poll(async () => { const rows = await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id', activity.id)); const row = rows.find(r => r.attempt_number === attempt && r.status === 'completed'); if (!row) return false; assert.equal(Number(row.score), answers.length - 1); assert.equal(row.challenge_responses.find(r => r.question_id === activity.questions[0].id).is_correct, false); return true; });
         }
         assert.equal((await new Promise(resolve => pupil.emit('quickChallengeRetry', { quizId: launch.id }, resolve))).success, false);
+        const retryMistakes = await loadSavedChallengeMistakes(Number(session.room_id), activity);
+        assert.equal(retryMistakes.questions[0].answers[0].studentCount, 1, 'Retries must not count the same student twice');
       }
       let partialRetry;
       if (activity.activity_key === 'string_clean') {
@@ -138,6 +145,21 @@ try {
       checkedChallenges++;
       console.log(`PASS ${activity.activity_key}: database UI content, monitor, grading and ${answers.length} saved responses`);
     }
+    const lastActivity = group.activities.at(-1);
+    const debrief = await value(db.from('activities').insert({ week_id: group.week.id, day_id: group.day.id,
+      activity_type: 'debrief', activity_key: `debrief-${tag}`, title: 'Test debrief', activity_order: 4,
+      file_path: 'supabase://course-media/csdp-99/week1/day-1/debriefs/03-match-flowchart-shapes.png' }).select().single());
+    activityIds.push(debrief.id);
+    const teacherReview = event(teacher, 'debriefMistakesData'), studentReview = event(pupil, 'debriefMistakesData');
+    teacher.emit('instructorSendAllToDestination', { destination: 'Presentation', mediaType: 'image', activityId: debrief.id, assetPath: '/test-debrief.png' });
+    const displayed = await teacherReview;
+    assert.equal(displayed.activityId, lastActivity.id);
+    assert.deepEqual(await studentReview, displayed, 'Both sides receive the same session-scoped saved mistake list');
+    pupil.disconnect();
+    const reconnected = await connect(studentUser, session, join);
+    const resumedReview = event(reconnected, 'debriefMistakesData'); reconnected.emit('classroomSceneReady');
+    assert.deepEqual(await resumedReview, displayed, 'A reconnected student receives the selected debrief statistics');
+    console.log('PASS selected debrief loads preceding challenge mistakes for both sides and reconnect');
     await new Promise((resolve, reject) => teacher.emit('endClass', {}, reply => reply.success ? resolve() : reject(Error(reply.message))));
     teacher.disconnect(); pupil.disconnect();
   }

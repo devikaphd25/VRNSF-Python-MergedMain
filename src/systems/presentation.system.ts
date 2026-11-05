@@ -40,6 +40,9 @@ import {
 import { DEBRIEF_IN_CLASSROOM_ONLY } from "../config/presentation-settings";
 import { DebriefDoorTransition } from "../presentation/debrief-transition";
 
+import type { DebriefMistakes } from '../../shared/debrief-mistakes';
+import { drawDebriefMistakes } from '../presentation/debrief-mistakes-panel';
+
 type DebriefReviewData = {
   cycleLabel: string;
   question: string;
@@ -122,6 +125,9 @@ export class PresentationSystem extends createSystem({
   private debriefLeftTexture?: CanvasTexture;
   private debriefRightTexture?: CanvasTexture;
   private debriefReview?: DebriefReviewData;
+  private debriefMistakes?: DebriefMistakes | null;
+  private debriefMistakePageTick = 0;
+  private debriefMistakeReceivedAt = 0;
   private savedClassroomLightIntensities = new Map<any, number>();
   private classroomProjector?: Mesh;
   private classroomProjectorOriginalMaterial?: any;
@@ -141,6 +147,7 @@ export class PresentationSystem extends createSystem({
     socket.on("presentationContentChanged", this.onPresentationContentChanged);
     socket.on("briefingAnnotation", this.onBriefingAnnotation);
     socket.on("debriefReviewData", this.onDebriefReviewData);
+    socket.on("debriefMistakesData", this.onDebriefMistakesData);
     socket.on("raiseHandUpdated", this.onStudentHandUpdated);
     socket.on("handToggled", this.onStudentHandUpdated);
     socket.on("disconnect", this.onHandDisconnected);
@@ -177,6 +184,13 @@ export class PresentationSystem extends createSystem({
     this.redrawDebriefScreens();
   };
 
+  private onDebriefMistakesData = (data: DebriefMistakes | null): void => {
+    this.debriefMistakes = data;
+    this.debriefMistakePageTick = 0;
+    this.debriefMistakeReceivedAt = Date.now();
+    this.redrawDebriefScreens();
+  };
+
   update() {
     // Transform entities join the scene after index.ts finishes setup.
     if (!this.sideScreensInitialized) this.initializeClassroomSideScreens();
@@ -184,6 +198,13 @@ export class PresentationSystem extends createSystem({
       this.createSideHandModel();
     }
     this.updateClassroomSideScreenVisibility();
+    if (this.isPresentationMode && this.presentationMediaType === 'image' && this.debriefMistakes) {
+      const tick = Math.floor((Date.now() - this.debriefMistakeReceivedAt) / 10000);
+      if (tick !== this.debriefMistakePageTick) {
+        this.debriefMistakePageTick = tick;
+        this.redrawDebriefScreens();
+      }
+    }
     // Draw only when the HTML video advances. CanvasTexture is more reliable
     // than VideoTexture on Quest for locally served MP4 files.
     if (
@@ -295,6 +316,7 @@ export class PresentationSystem extends createSystem({
     assetPath?: string,
     debriefView: DebriefView = "classroom"
   ): void {
+    this.onDebriefMistakesData(null);
     this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : debriefView;
     if (assetPath) this.setImageSource(assetPath);
     this.enterPresentationMode();
@@ -456,6 +478,9 @@ export class PresentationSystem extends createSystem({
     // Classroom media controls sit in front of the first row.
     const isBriefing = this.presentationMediaType === "image";
     const isClassroomPresentation = !isBriefing || this.debriefView === "classroom";
+    // Debrief images extend down to the board's bottom edge. Lower their
+    // controls while keeping the scaled panel clear of the classroom floor.
+    const classroomControlsHeight = isBriefing ? 0.42 : 0.68;
     if (visible && isClassroomPresentation) {
       // Place controls in the open space between the first row and stage. This
       // avoids XR camera timing differences and keeps them above the floor.
@@ -479,13 +504,13 @@ export class PresentationSystem extends createSystem({
             .copy(seatPosition)
             .addScaledVector(towardProjector, 1.65);
           // Keep the complete 0.39 m-tall scaled panel visibly above the floor.
-          object.position.y = 0.68;
+          object.position.y = classroomControlsHeight;
           object.lookAt(
             new Vector3(seatPosition.x, object.position.y, seatPosition.z)
           );
         }
       } else {
-        object.position.set(0, 0.68, 0.65);
+        object.position.set(0, classroomControlsHeight, 0.65);
         object.rotation.set(0, Math.PI, 0);
       }
     } else {
@@ -1319,16 +1344,7 @@ export class PresentationSystem extends createSystem({
     context.fillRect(0, 0, canvas.width, canvas.height);
     // Physical trim supplies the border; a second canvas outline looks doubled.
     if (kind === "errors") {
-      // Students get an interactive panel here; instructors see an explanation.
-      if ((window as any).isInstructor) {
-        context.textAlign = "center";
-        context.fillStyle = "#e0f2fe";
-        context.font = "700 48px Arial";
-        context.fillText("STUDENT CONTROLS", 450, 300);
-        context.font = "32px Arial";
-        context.fillStyle = "#94a3b8";
-        context.fillText("Students can raise their hand here", 450, 380);
-      }
+      drawDebriefMistakes(context, this.debriefMistakes, Boolean((window as any).isInstructor), this.debriefMistakePageTick);
       return;
     }
     context.textAlign = "left";
@@ -1911,6 +1927,7 @@ export class PresentationSystem extends createSystem({
     socket.off("presentationContentChanged", this.onPresentationContentChanged);
     socket.off("briefingAnnotation", this.onBriefingAnnotation);
     socket.off("debriefReviewData", this.onDebriefReviewData);
+    socket.off("debriefMistakesData", this.onDebriefMistakesData);
     socket.off("raiseHandUpdated", this.onStudentHandUpdated);
     socket.off("handToggled", this.onStudentHandUpdated);
     socket.off("disconnect", this.onHandDisconnected);

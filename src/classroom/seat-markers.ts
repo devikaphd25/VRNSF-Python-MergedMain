@@ -39,6 +39,7 @@ const markers = new Map<string, SeatMarker>();
 let localBoardViewSeat: string | null = null;
 
 function isStudentHiddenInThisView(studentId: string, seatName?: string): boolean {
+  if (!(window as any).isInstructor && (window as any).isStudentChallengeActive) return true;
   const seat = seatName ?? markers.get(studentId)?.userData.seatName;
   return isLocalStudent(studentId) || Boolean(localBoardViewSeat && seat === localBoardViewSeat);
 }
