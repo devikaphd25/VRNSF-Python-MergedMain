@@ -20,7 +20,7 @@ import {
   STRING_CLEAN_ACTIVITY_KEY,
   isCurriculumChallenge,
 } from "../../shared/challenge-types";
-import { instructorContentUrl } from "../services/classroom-session.service";
+import { loadClassroomContent } from '../content/classroom-content-loader';
 import { ActivitySequence } from "../instructor/activity-sequence";
 import { DashboardControllerRays } from "../instructor/dashboard-controller-rays";
 import { InstructorControllerVisuals } from "../instructor/controller-overlay-visuals";
@@ -46,7 +46,7 @@ import {
 import {
   socket
 } from "../network/socket-client";
-import { findNextChallengeIndex, type ClassroomActivity, type ClassroomContent } from "../content/classroom-content";
+import { findNextChallengeIndex, type ClassroomActivity } from "../content/classroom-content";
 import { paintChallenge1Countdown } from "../ui/countdown-ring";
 import { C1I, PLAYTEST_INSTRUCTOR, paintHoverArt, paintTitleBanner, preloadChallenge1InstructorArt, preloadPlaytestInstructorArt } from "../challenges/true-false/question-art";
 
@@ -987,12 +987,9 @@ export class InstructorDashboardSystem extends createSystem({
     );
   }
 
-  private async loadInstructorMenuContent(): Promise<void> {
+  private async loadInstructorMenuContent(fresh = false): Promise<void> {
     try {
-      const response = await fetch(instructorContentUrl());
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const content: ClassroomContent = await response.json();
+      const content = await loadClassroomContent(fresh);
       if (!Array.isArray(content.videos)) throw new Error("Video list missing from server response");
       this.databaseVideos = content.videos;
       this.databaseActivities = content.activities ?? [];
@@ -2359,7 +2356,7 @@ export class InstructorDashboardSystem extends createSystem({
     const advanceSequence = this.taskView === "current";
     try {
     // Refresh expiring Storage links while preserving the selected database ID.
-    await this.loadInstructorMenuContent();
+    await this.loadInstructorMenuContent(true);
     const item=this.getTaskQueue().find(a=>a.activityId===selected.activityId);
     if(!item)return;
     this.selectedActivityId=item.activityId;

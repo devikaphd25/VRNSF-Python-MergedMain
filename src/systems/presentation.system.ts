@@ -1,4 +1,4 @@
-import { instructorContentUrl } from "../services/classroom-session.service";
+import { loadClassroomContent } from '../content/classroom-content-loader';
 import { setClassroomBoardCourse } from "../classroom/board-content";
 import { createClassroomBoardFrame } from "../classroom/classroom-board-frame";
 /**
@@ -30,7 +30,7 @@ import {
 } from "@iwsdk/core";
 import { Box3, Object3D, CanvasTexture, Raycaster, SRGBColorSpace, TextureLoader, Vector2 } from "three";
 import { socket } from "../network/socket-client";
-import { summarizeActivities, type ClassroomContent } from "../content/classroom-content";
+import { summarizeActivities } from "../content/classroom-content";
 import {
   restoreSeatMarkersAfterDebrief,
   setSeatMarkerTheme,
@@ -1128,9 +1128,7 @@ export class PresentationSystem extends createSystem({
 
   private async loadSideScreenTasks(): Promise<void> {
     try {
-      const response = await fetch(instructorContentUrl());
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const content: ClassroomContent = await response.json();
+      const content = await loadClassroomContent();
       setClassroomBoardCourse(content);
       this.activitySummary = summarizeActivities(content.activities ?? []);
       this.redrawDebriefScreens();

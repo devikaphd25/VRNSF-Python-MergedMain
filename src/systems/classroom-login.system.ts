@@ -27,6 +27,7 @@ import {
   type Camera,
 } from "three";
 import { ClassroomSessionService, type CourseOptions } from "../services/classroom-session.service";
+import { loadClassroomContent } from '../content/classroom-content-loader';
 import { getPersistentDeviceId } from "../services/device-identity.service";
 
 export type VRLoginUser = {
@@ -237,6 +238,8 @@ export class ClassroomLoginSystem extends createSystem({
       participantId: result.participantId ?? null,
       currentSlide: result.currentSlide ?? 0,
     }));
+    // Start the database request while the classroom and UIKit panels initialize.
+    void loadClassroomContent().catch(error => console.warn('[Classroom content prefetch]', error));
     if (loginPanelEntity?.object3D) loginPanelEntity.object3D.visible = false;
     // Remove the large campus panorama immediately. A normal browser RAF can
     // be suspended while Quest is presenting an XR session, which previously
@@ -366,9 +369,8 @@ export class ClassroomLoginSystem extends createSystem({
       setClass(studentButton, "role-segment-selected", true);
       setClass(professorButton, "role-segment-selected", false);
       [pinLabel, pinRow, keypad].forEach((item) => setClass(item, "is-hidden", true));
-      setClass(confirmButton, "is-hidden", false);
+      setClass(confirmButton, "is-hidden", true);
       title.setProperties({ text: "Join a Classroom" });
-      (confirmButton as UIKit.Text).setProperties({ text: "Join Latest Classroom" });
       positionLoginLogo("student");
       setStatus("Finding the latest active classroom...");
       this.stopWaiting();
@@ -437,7 +439,6 @@ export class ClassroomLoginSystem extends createSystem({
     confirmButton.addEventListener("pointerdown", async () => {
       if (this.busy) return;
       if (this.selectedRole === "student") {
-        await tryStudentJoin();
         return;
       }
 

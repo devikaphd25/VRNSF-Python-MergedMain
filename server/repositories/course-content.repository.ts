@@ -1,6 +1,7 @@
 /** The database decides which week and ordered tasks appear in the dashboard. */
 import { serial } from "../utils/serial-work-queue.js";
 import { supabaseAdmin as db } from '../database/supabase-client.js';
+import { batchMediaLinks } from '../services/batch-media-links.js';
 /** Codes are strings so values such as 012345 keep their leading zero. */
 export async function courseByAccessCode(accessCode: unknown) {
     if (typeof accessCode !== 'string' || !/^[0-9]{6}$/.test(accessCode)) {
@@ -58,10 +59,11 @@ export async function weekForSession(roomId: string) {
     if (se || !session) throw new Error('This classroom is no longer active.');
     const { data: week, error: we } = await db.from('weeks').select('*').eq('id', session.week_id).single();
     if (we) throw new Error('The classroom week is unavailable.');
-    const { data: course, error: ce } = await db.from('courses')
-        .select('id,course_code,title').eq('id', week.course_id).single();
+    const [{ data: course, error: ce }, { data: day, error: de }] = await Promise.all([
+        db.from('courses').select('id,course_code,title').eq('id', week.course_id).single(),
+        db.from('days').select('*').eq('id', session.day_id).eq('week_id', week.id).maybeSingle(),
+    ]);
     if (ce) throw new Error('The classroom course is unavailable.');
-    const { data: day, error: de } = await db.from('days').select('*').eq('id', session.day_id).eq('week_id', week.id).maybeSingle();
     if (de || !day) throw new Error('This classroom has no selected day. Check the database setup and start a new class.');
     return { ...week, course, day };
 }
@@ -82,10 +84,11 @@ export async function instructorContent(roomId: string) {
     const { data, error } = await db.from('activities').select('*').eq('week_id', week.id).eq('day_id', week.day.id).order('activity_order');
     if (error)
         throw error;
-    const activities = await Promise.all((data ?? []).map(async (a) => ({
+    const media = await batchMediaLinks((data ?? []).filter(a => a.activity_type !== 'challenge').map(a => a.file_path), db.storage);
+    const activities = (data ?? []).map(a => ({
         activityId: a.id, activityOrder: a.activity_order, activityType: ({ video: 'presentation', debrief: 'briefing' } as Record<string, string>)[a.activity_type] ?? a.activity_type,
-        activityKey: a.activity_key, title: a.title, description: '', assetPath: a.activity_type === 'challenge' ? null : await resolveMedia(a.file_path),
-    })));
+        activityKey: a.activity_key, title: a.title, description: '', assetPath: a.activity_type === 'challenge' ? null : media.get(a.file_path ?? '') ?? null,
+    }));
     return { dayId: week.day.id, dayNumber: week.day.day_number, dayTitle: week.day.title, weekId: week.id, weekNumber: week.week_number, weekTitle: week.title, courseCode: week.course.course_code, courseTitle: week.course.title,
         activities, videos: activities.filter(a => a.activityType === 'presentation') };
 }
