@@ -99,6 +99,12 @@ export interface QuickChallengeStudentProgress {
   finishedAt?: number;
   totalTimeSeconds?: number;
   attemptCount?: number;
+  extraCreditAnswers?: Array<{
+    questionIndex: number;
+    selectedIndex: number;
+    correct: boolean;
+    answeredAt: number;
+  }>;
 }
 
 export interface QuickChallenge {

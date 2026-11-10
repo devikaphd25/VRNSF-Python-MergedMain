@@ -87,7 +87,9 @@ import { CSDP99_W1D1_CHALLENGE1_QUESTIONS } from "./shared/csdp99-w1d1-challenge
 import { CSDP99_W1D1_CHALLENGE2_QUESTIONS } from "./shared/csdp99-w1d1-challenge2.js";
 import { CSDP99_W1D1_CHALLENGE3_QUESTIONS } from "./shared/csdp99-w1d1-challenge3.js";
 import { CSDP99_W1D2_CHALLENGE1_QUESTIONS } from "./shared/csdp99-w1d2-challenge1.js";
+import { getCurriculumExtraCredit } from "./shared/curriculum-extra-credit.js";
 import { CSDP99_W1D2_CHALLENGE2_QUESTIONS } from "./shared/csdp99-w1d2-challenge2.js";
+import { CHALLENGE_2_ITEMS } from "./shared/device-classification.js";
 import { CSDP99_W1D2_CHALLENGE3_QUESTIONS } from "./shared/csdp99-w1d2-challenge3.js";
 import { CSDP120_W13D2_CHALLENGE1_QUESTIONS } from "./shared/csdp120-w13d2-challenge1.js";
 import { CSDP120_W13D2_CHALLENGE2_QUESTIONS } from "./shared/csdp120-w13d2-challenge2.js";
@@ -122,9 +124,28 @@ const activeQuickChallenges = new Map<string, QuickChallenge>();
 const lastQuickChallengeReviews = new Map<string, QuickChallengeReview>();
 const activeChallenge2Sessions = new Map<string, Challenge2Session>();
 
-// Leave just enough time for the final correct feedback to render, then stop
-// both instructor and student timers and publish the ranking immediately.
-const CHALLENGE_2_ALL_COMPLETE_DELAY_MS = 150;
+function getChallenge2QuestionStats(session: Challenge2Session) {
+  return session.questions.map((question, questionIndex) => {
+    const itemId = String(question.options?.item?.id ?? "");
+    const itemName = String(question.options?.item?.name ?? `Device ${questionIndex + 1}`);
+    const progress = Array.from(session.progress.values());
+    const correctCount = progress.filter(student => student.completedItemIds.has(itemId)).length;
+    const wrongCount = progress.reduce((sum, student) => {
+      const selections = student.wrongSelections.get(itemId);
+      if (!selections) return sum;
+      return sum + Array.from(selections.values()).reduce((total, count) => total + count, 0);
+    }, 0);
+    const answered = correctCount + wrongCount;
+    return {
+      questionIndex,
+      label: `Q${questionIndex + 1}`,
+      prompt: itemName,
+      correctCount,
+      wrongCount,
+      accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
+    };
+  });
+}
 
 function buildChallenge2FinalResults(session: Challenge2Session) {
   const endedAt = Date.now();
@@ -323,6 +344,85 @@ function getFivePartsScore(progress: QuickChallengeStudentProgress) {
   return progress.answers.filter(answer => answer.correct).length;
 }
 
+function getExtraCreditQuestionStats(challenge: QuickChallenge) {
+  const catalog = getCurriculumExtraCredit(challenge.challengeType);
+  if (catalog.length === 0) return [];
+  const progress = Array.from(challenge.studentProgress.values());
+  return catalog.map((question, questionIndex) => {
+    const answers = progress.flatMap(student =>
+      (student.extraCreditAnswers ?? []).filter(answer =>
+        answer.questionIndex === questionIndex && Number(answer.selectedIndex) >= 0
+      )
+    );
+    const correctCount = answers.filter(answer => answer.correct).length;
+    const wrongCount = answers.filter(answer => !answer.correct).length;
+    const answered = correctCount + wrongCount;
+    return {
+      questionIndex,
+      label: `Q${questionIndex + 1}`,
+      prompt: question.instructorLabel ?? question.prompt,
+      correctCount,
+      wrongCount,
+      accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
+    };
+  });
+}
+
+function getInstructorQuestionStats(challenge: QuickChallenge) {
+  const mainStats = getFivePartsQuestionStats(challenge);
+  const extraStats = getExtraCreditQuestionStats(challenge);
+  return extraStats.length > 0 ? [...mainStats, ...extraStats] : mainStats;
+}
+
+function findStudentProgressKey(challenge: QuickChallenge, socketId: string): string {
+  if (challenge.studentProgress.has(socketId)) return socketId;
+  const userId = students[socketId]?.userId;
+  const participantId = io.sockets.sockets.get(socketId)?.data.participantId;
+  if (userId) {
+    for (const id of challenge.studentProgress.keys()) {
+      if (students[id]?.userId === userId) return id;
+    }
+  }
+  if (participantId && challenge.responseParticipants) {
+    for (const [id, boundId] of challenge.responseParticipants) {
+      if (String(boundId) === String(participantId) && challenge.studentProgress.has(id)) return id;
+    }
+  }
+  return socketId;
+}
+
+function saveExtraCreditAnswers(
+  challenge: QuickChallenge,
+  socketId: string,
+  rawAnswers: unknown
+): boolean {
+  const catalog = getCurriculumExtraCredit(challenge.challengeType);
+  if (catalog.length === 0) return false;
+  const progressKey = findStudentProgressKey(challenge, socketId);
+  const progress = challenge.studentProgress.get(progressKey) ?? {
+    answers: [],
+    completed: true,
+    attemptCount: 0,
+  };
+  const answers = Array.isArray(rawAnswers)
+    ? rawAnswers
+    : rawAnswers && typeof rawAnswers === "object"
+      ? catalog.map((_, questionIndex) => (rawAnswers as Record<string, unknown>)[questionIndex])
+      : [];
+  const extraCreditAnswers = catalog.flatMap((question, questionIndex) => {
+    const selectedIndex = Number(answers[questionIndex]);
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0) return [];
+    return [{
+      questionIndex,
+      selectedIndex,
+      correct: selectedIndex === question.correctIndex,
+      answeredAt: Date.now(),
+    }];
+  });
+  challenge.studentProgress.set(progressKey, { ...progress, extraCreditAnswers });
+  return true;
+}
+
 function getQuickChallengeWinner(challenge: QuickChallenge): {
   socketId: string | null;
   name: string | null;
@@ -454,7 +554,8 @@ function notifyInstructorStudentProgress(
     totalQuestions: challenge.totalQuestions ?? challenge.questions?.length ?? 0,
     completed: Boolean(progress?.completed),
     responseTimeSeconds: progress?.totalTimeSeconds,
-    questionStats: getFivePartsQuestionStats(challenge),
+    questionStats: getInstructorQuestionStats(challenge),
+    extraCreditStats: getExtraCreditQuestionStats(challenge),
     ...extra,
   };
 
@@ -507,21 +608,11 @@ function endChallenge2Session(
     console.error('[Challenge 2] Results pending:',error);
     for(const client of io.sockets.sockets.values())if(client.data.roomId===session.roomId&&isInstructorSocket(client))client.emit('challengeSaveFailed',{message:'Results pending. A server backup was retained.'});
   });
-  const finalResults = buildChallenge2FinalResults(session);
-  // A manually stopped activity is a review, not a completed competition.
-  // Preserve progress and mistakes but do not award placements.
-  if (reason === "instructor_stop") {
-    finalResults.rankings.forEach(result => {
-      result.placement = null;
-    });
-  }
-
   for (const client of io.sockets.sockets.values()) {
     if (client.data.roomId !== session.roomId) continue;
     client.emit("challenge2Ended", {
       challengeId: session.id,
       reason,
-      finalResults,
     });
 
     if (client.data.role !== "instructor") {
@@ -837,8 +928,9 @@ io.on("connection", (socket: ClassroomSocket) => {
         : "multiple_choice";
     const activity=await activityForSession(roomId,requestedKey,Number(data.activityId)||undefined);
     if(activity.activity_type!=='challenge'||!['true_false','multiple_choice',CODE_PATTERN_ACTIVITY_KEY,LOOP_SORT_ACTIVITY_KEY,FLOWCHART_SHAPE_ACTIVITY_KEY,WHILE_TRACE_ACTIVITY_KEY,WHILE_PARTS_ACTIVITY_KEY,WHILE_FACTORIAL_ACTIVITY_KEY,STRING_OK_ERROR_ACTIVITY_KEY,STRING_IN_ACTIVITY_KEY,STRING_CLEAN_ACTIVITY_KEY].includes(activity.activity_key))throw Error('Select a question challenge');
-    const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
+    const {data:loadedRows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
     if(error)throw error;
+    let rows = loadedRows ?? [];
     const isCodePattern = activity.activity_key === CODE_PATTERN_ACTIVITY_KEY;
     const isLoopSort = activity.activity_key === LOOP_SORT_ACTIVITY_KEY;
     const isFlowchartShape = activity.activity_key === FLOWCHART_SHAPE_ACTIVITY_KEY;
@@ -866,11 +958,19 @@ io.on("connection", (socket: ClassroomSocket) => {
           ? CSDP120_W13D2_CHALLENGE2_QUESTIONS
         : isStringClean
           ? CSDP120_W13D2_CHALLENGE3_QUESTIONS
-        : undefined;
+          : undefined;
+    if (curriculumCatalog && rows.length > curriculumCatalog.length) {
+      await supabaseAdmin
+        .from("challenge_questions")
+        .delete()
+        .eq("activity_id", activity.id)
+        .gt("question_order", curriculumCatalog.length);
+      rows = rows.slice(0, curriculumCatalog.length);
+    }
     const questionsValid = curriculumCatalog
-      ? Boolean(rows?.length) && rows.every((q, index) => {
-          const catalog = curriculumCatalog[index];
-          if (!catalog || !Array.isArray(q.options) || q.options.length !== catalog.options.length) return false;
+      ? curriculumCatalog.every((catalog, index) => {
+          const q = rows[index];
+          if (!q || !Array.isArray(q.options) || q.options.length !== catalog.options.length) return false;
           if (catalog.correctIndices) {
             return Array.isArray(q.correct_answer?.choice_indices);
           }
@@ -878,7 +978,7 @@ io.on("connection", (socket: ClassroomSocket) => {
             q.correct_answer.choice_index >= 0 &&
             q.correct_answer.choice_index < q.options.length;
         })
-      : Boolean(rows?.length) && rows.every(q =>
+      : Boolean(rows.length) && rows.every(q =>
           Array.isArray(q.options) &&
           q.options.length >= 2 &&
           q.options.length <= 4 &&
@@ -890,8 +990,9 @@ io.on("connection", (socket: ClassroomSocket) => {
     const isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false' && !curriculumCatalog;
     const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||DEFAULT_CHALLENGE_DURATION_SECONDS));
     const cycleLabel=activity.title;
-    const fivePartsQuestions=rows.map((q, index) => {
+    const fivePartsQuestions=(curriculumCatalog ?? rows).map((catalogOrRow, index) => {
       const catalog = curriculumCatalog?.[index];
+      const q = rows[index] ?? catalogOrRow;
       const correctIndices = Array.isArray(q.correct_answer?.choice_indices)
         ? q.correct_answer.choice_indices.filter((value: unknown) => Number.isInteger(value))
         : catalog?.correctIndices;
@@ -998,7 +1099,8 @@ io.on("connection", (socket: ClassroomSocket) => {
       ...studentPayload,
       studentCount: roomStudents.length,
       students: roomStudents,
-      questionStats: isFiveParts ? getFivePartsQuestionStats(challenge) : undefined,
+      questionStats: isFiveParts ? getInstructorQuestionStats(challenge) : undefined,
+      extraCreditStats: isFiveParts ? getExtraCreditQuestionStats(challenge) : undefined,
     });
 
     challenge.timeout = setTimeout(() => {
@@ -1054,7 +1156,14 @@ io.on("connection", (socket: ClassroomSocket) => {
   socket.on("quickChallengeDraft", (data = {}) => {
     const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ""));
     if (!challenge || challenge.id !== data.quizId || !isQuickChallengeSeries(challenge.challengeType) ||
-      socket.data.role !== "student" || !students[socket.id] || challenge.studentProgress.get(socket.id)?.completed) return;
+      socket.data.role !== "student" || !students[socket.id]) return;
+    if (data.extraCredit) {
+      if (saveExtraCreditAnswers(challenge, socket.id, data.answers)) {
+        notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
+      }
+      return;
+    }
+    if (challenge.studentProgress.get(socket.id)?.completed) return;
     const progress = challenge.studentProgress.get(socket.id);
     if (progress?.attemptStartedAt && data.attemptStartedAt !== progress.attemptStartedAt) return;
     if (!Array.isArray(data.answers) || data.answers.length > (challenge.questions?.length ?? 0)) return;
@@ -1240,9 +1349,9 @@ io.on("connection", (socket: ClassroomSocket) => {
         ? "Correct!"
         : challenge.options.length === 2
           ? `Not quite. The correct answer is ${challenge.options[challenge.correctIndex]}.`
-          : `Not quite. The correct answer is ${String.fromCharCode(
-              65 + challenge.correctIndex
-            )}. ${challenge.options[challenge.correctIndex]}.`,
+        : `Not quite. The correct answer is ${String.fromCharCode(
+            65 + challenge.correctIndex
+          )}. ${challenge.options[challenge.correctIndex]}.`,
     });
 
     const answerPayload = {
@@ -1269,6 +1378,15 @@ io.on("connection", (socket: ClassroomSocket) => {
         client.emit("quickChallengeStudentAnswered", answerPayload);
       }
     }
+  });
+
+  socket.on("quickChallengeExtraCredit", (data = {}) => {
+    const roomId = String(socket.data.roomId ?? "").trim();
+    const challenge = activeQuickChallenges.get(roomId);
+    const student = students[socket.id];
+    if (!student || socket.data.role === "instructor" || !challenge || data.quizId !== challenge.id) return;
+    if (!saveExtraCreditAnswers(challenge, socket.id, data.answers)) return;
+    notifyInstructorStudentProgress(challenge, socket.id, student);
   });
 
   socket.on("stopQuickChallenge", (data = {}) => {
@@ -1319,11 +1437,49 @@ io.on("connection", (socket: ClassroomSocket) => {
       return;
     }
 
-    const activity=await activityForSession(roomId,'drag_drop',Number(data.activityId)||undefined);
-    const {data:questions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
+    const requestedId = Number(data.activityId) || undefined;
+    let activity;
+    try {
+      activity = await activityForSession(roomId, "drag_drop", requestedId);
+    } catch {
+      try {
+        activity = await activityForSession(roomId, "drag_drop");
+      } catch {
+        activity = await activityForSession(roomId, WHILE_PARTS_ACTIVITY_KEY, requestedId);
+      }
+    }
+    const {data:loadedQuestions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
     if(error)throw error;
-    if(!questions?.length||questions.some(q=>q.question_type!=='drag_drop'||!q.options?.item?.id||!['input','output','both','storage'].includes(q.correct_answer?.category)))throw Error('Drag/drop questions are missing or invalid');
-    const items=questions.map(q=>({id:q.options.item.id,name:q.options.item.name,modelPath:q.options.item.model_path,imagePath:q.options.item.image_path,modelRotationY:q.options.item.model_rotation_y,feedback:q.options.item.feedback,category:q.correct_answer.category}));
+    const dbValid = Boolean(loadedQuestions?.length) && loadedQuestions.every(q =>
+      q.question_type === "drag_drop" &&
+      q.options?.item?.id &&
+      ["input", "output", "both", "storage"].includes(q.correct_answer?.category)
+    );
+    const questions = dbValid
+      ? loadedQuestions
+      : CHALLENGE_2_ITEMS.map((item, index) => ({
+          id: index + 1,
+          options: {
+            item: {
+              id: item.id,
+              name: item.name,
+              model_path: item.modelPath,
+              image_path: item.imagePath,
+              model_rotation_y: item.modelRotationY,
+              feedback: item.feedback,
+            },
+          },
+          correct_answer: { category: item.category },
+        }));
+    const items = questions.map(q => ({
+      id: q.options.item.id,
+      name: q.options.item.name,
+      modelPath: q.options.item.model_path,
+      imagePath: q.options.item.image_path,
+      modelRotationY: q.options.item.model_rotation_y,
+      feedback: q.options.item.feedback,
+      category: q.correct_answer.category,
+    }));
     const previous = activeChallenge2Sessions.get(roomId);
     if (previous) endChallenge2Session(previous, "instructor_stop");
     await selectSessionActivity(roomId,activity.id);
@@ -1393,15 +1549,15 @@ io.on("connection", (socket: ClassroomSocket) => {
       durationSeconds,
       startedAt: session.startedAt,
       totalItems: session.questions.length,
+      totalQuestions: session.questions.length,
+      challengeType: "challenge-2",
+      questionStats: getChallenge2QuestionStats(session),
       studentCount: roomStudents.length,
       students: roomStudents,
     });
     broadcastStudentList(io);
 
-    session.timeout = setTimeout(() => {
-      if (activeChallenge2Sessions.get(roomId)?.id !== session.id) return;
-      endChallenge2Session(session, "timeout");
-    }, durationSeconds * 1000);
+    session.timeout = null;
     } catch(error) {console.error('[Activity]',error);socket.emit('error',{message:error instanceof Error?error.message:'Could not start activity'});}
 
   });
@@ -1483,24 +1639,9 @@ io.on("connection", (socket: ClassroomSocket) => {
           attempts: progress.attempts,
           wrongAttempts: progress.wrongAttempts,
           responseTimeSeconds,
+          questionStats: getChallenge2QuestionStats(session),
         });
       }
-    }
-
-    const connectedStudentIds = [...session.progress.keys()].filter(id =>
-      io.sockets.sockets.has(id)
-    );
-    const everyoneCompleted =
-      connectedStudentIds.length > 0 &&
-      connectedStudentIds.every(id =>
-        session.progress.get(id)?.completedItemIds.size === session.questions.length
-      );
-    if (everyoneCompleted) {
-      setTimeout(() => {
-        if (activeChallenge2Sessions.get(roomId)?.id === session.id) {
-          endChallenge2Session(session, "completed");
-        }
-      }, CHALLENGE_2_ALL_COMPLETE_DELAY_MS);
     }
   });
 

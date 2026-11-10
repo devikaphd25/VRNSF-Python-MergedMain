@@ -58,7 +58,8 @@ export class StudentRocketRig {
         color: 0xffb36b,
         transparent: true,
         opacity: 0.85,
-        depthTest: false,
+        depthTest: true,
+        depthWrite: true,
       })
     );
     this.flame.rotation.x = Math.PI;
@@ -71,7 +72,8 @@ export class StudentRocketRig {
       new THREE.MeshBasicMaterial({
         map: makeButtonTexture("LAUNCH", false),
         transparent: true,
-        depthTest: false,
+        depthTest: true,
+        depthWrite: true,
       })
     );
     this.launchButton.name = "StudentRocketLaunch";
@@ -87,9 +89,10 @@ export class StudentRocketRig {
     void this.tryLoadModel();
   }
 
-  attach(parent: THREE.Object3D, localPosition: THREE.Vector3): void {
+  attach(parent: THREE.Object3D, localPosition: THREE.Vector3, yaw = 0): void {
     if (this.root.parent !== parent) parent.add(this.root);
     this.root.position.copy(localPosition);
+    this.root.rotation.set(0, yaw, 0);
     this.restPosition.copy(localPosition);
     this.applyOverlay();
     this.refreshPointerEvents();
@@ -415,12 +418,13 @@ export class StudentRocketRig {
         new THREE.SpriteMaterial({
           map: this.getLockTexture(),
           transparent: true,
-          depthTest: false,
+          depthTest: true,
+          depthWrite: false,
         })
       );
       lock.position.set(-0.02, 0, 0.04);
       lock.scale.set(0.13, 0.13, 1);
-      lock.renderOrder = OVERLAY_ORDER + 6;
+      lock.renderOrder = OVERLAY_ORDER + 1;
       wrapper.add(lock);
       wrapper.position.copy(rest);
       this.rack.add(wrapper);
@@ -614,6 +618,15 @@ export class StudentRocketRig {
   private applyOverlay(): void {
     this.root.traverse(object => {
       object.frustumCulled = false;
+      const sprite = object as THREE.Sprite;
+      if (sprite.isSprite) {
+        const mat = sprite.material as THREE.SpriteMaterial;
+        mat.depthTest = true;
+        mat.depthWrite = false;
+        mat.needsUpdate = true;
+        sprite.renderOrder = OVERLAY_ORDER + 1;
+        return;
+      }
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh || !mesh.material) return;
       if (mesh.userData?.isDepthMask) {
@@ -628,16 +641,16 @@ export class StudentRocketRig {
         return;
       }
       const isHud =
-        mesh === this.launchButton ||
-        mesh === this.flame ||
-        mesh instanceof THREE.Sprite ||
         mesh.name.startsWith("RocketPickupHit") ||
         mesh.parent?.name?.startsWith("RocketCell");
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       materials.forEach(material => {
         const mat = material as THREE.MeshBasicMaterial;
         mat.side = THREE.FrontSide;
-        if (isHud) {
+        if (mesh === this.launchButton || mesh === this.flame) {
+          mat.depthTest = true;
+          mat.depthWrite = true;
+        } else if (isHud) {
           mat.depthTest = false;
           mat.depthWrite = false;
           if (mesh.name.startsWith("RocketPickupHit")) {
@@ -649,8 +662,8 @@ export class StudentRocketRig {
       });
       mesh.renderOrder = isHud ? OVERLAY_ORDER + 2 : OVERLAY_ORDER + 1;
     });
-    this.flame.renderOrder = OVERLAY_ORDER + 2;
-    this.launchButton.renderOrder = OVERLAY_ORDER + 2;
+    this.flame.renderOrder = OVERLAY_ORDER + 1;
+    this.launchButton.renderOrder = OVERLAY_ORDER + 1;
   }
 }
 

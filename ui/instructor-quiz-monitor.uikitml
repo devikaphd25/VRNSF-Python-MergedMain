@@ -347,7 +347,7 @@
     width: 164;
     height: 128;
     color: #d9f7ff;
-    font-size: 18;
+    font-size: 20;
     font-weight: 500;
     font-family: inter;
     text-align: left;
@@ -403,7 +403,7 @@
   .fp-card-q-compact {
     width: 132;
     height: 72;
-    font-size: 16;
+    font-size: 18;
   }
 
   .fp-bar-track-compact {
@@ -550,6 +550,16 @@
                 <Panel id="fp-bar-track-6" class="fp-bar-track"><Panel id="fp-bar-fill-6" class="fp-bar-fill"></Panel></Panel>
                 <Text id="fp-card-pct-6" class="fp-card-pct">0%</Text>
                 <Text id="fp-card-counts-6" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-7" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-7" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-7" class="fp-card-body">
+                <Text id="fp-card-label-7" class="fp-card-label">Q3</Text>
+                <Text id="fp-card-q-7" class="fp-card-q">Question 3</Text>
+                <Panel id="fp-bar-track-7" class="fp-bar-track"><Panel id="fp-bar-fill-7" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-7" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-7" class="fp-card-counts">0 correct / 0 wrong</Text>
               </Panel>
             </Panel>
           </Panel>

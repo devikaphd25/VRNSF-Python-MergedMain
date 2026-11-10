@@ -18,10 +18,8 @@ import {
   CSDP99_W1D2_CHALLENGE1_QUESTIONS,
   CSDP99_W1D2_CHALLENGE1_TITLE,
 } from "../../shared/csdp99-w1d2-challenge1.js";
-import {
-  CSDP99_W1D2_CHALLENGE2_QUESTIONS,
-  CSDP99_W1D2_CHALLENGE2_TITLE,
-} from "../../shared/csdp99-w1d2-challenge2.js";
+import { CSDP99_W1D2_CHALLENGE2_TITLE } from "../../shared/csdp99-w1d2-challenge2.js";
+import { CHALLENGE_2_ITEMS } from "../../shared/device-classification.js";
 import {
   CSDP99_W1D2_CHALLENGE3_QUESTIONS,
   CSDP99_W1D2_CHALLENGE3_TITLE,
@@ -179,6 +177,97 @@ async function ensureCsdp99Challenge(
         .from("challenge_questions")
         .upsert(rows, { onConflict: "activity_id,question_order" });
     if (error) throw error;
+    await db
+        .from("challenge_questions")
+        .delete()
+        .eq("activity_id", activityId)
+        .gt("question_order", questions.length);
+}
+
+async function ensureDeviceClassificationChallenge(
+    week: Awaited<ReturnType<typeof weekForSession>>,
+) {
+    if (courseCodeKey(week.course.course_code) !== "CSDP99") return;
+    if (week.week_number !== 1 || week.day.day_number !== 2) return;
+
+    const { data: whilePartsRows, error: whilePartsError } = await db
+        .from("activities")
+        .select("id,activity_key")
+        .eq("day_id", week.day.id)
+        .eq("activity_key", WHILE_PARTS_ACTIVITY_KEY)
+        .limit(1);
+    if (whilePartsError) throw whilePartsError;
+    const { data: dragDropRows, error: dragDropError } = await db
+        .from("activities")
+        .select("id,activity_key")
+        .eq("day_id", week.day.id)
+        .eq("activity_key", "drag_drop")
+        .limit(1);
+    if (dragDropError) throw dragDropError;
+    const whileParts = whilePartsRows?.[0];
+    const dragDrop = dragDropRows?.[0];
+
+    let activityId = (dragDrop?.id ?? whileParts?.id) as number | undefined;
+    if (!dragDrop?.id && whileParts?.id) {
+        const { error } = await db
+            .from("activities")
+            .update({
+                activity_key: "drag_drop",
+                activity_type: "challenge",
+                title: CSDP99_W1D2_CHALLENGE2_TITLE,
+            })
+            .eq("id", whileParts.id);
+        if (error) throw error;
+        activityId = whileParts.id;
+    }
+    if (!activityId) {
+        const { data: last } = await db
+            .from("activities")
+            .select("activity_order")
+            .eq("day_id", week.day.id)
+            .order("activity_order", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        const { data: inserted, error } = await db
+            .from("activities")
+            .insert({
+                week_id: week.id,
+                day_id: week.day.id,
+                title: CSDP99_W1D2_CHALLENGE2_TITLE,
+                activity_type: "challenge",
+                activity_key: "drag_drop",
+                activity_order: (last?.activity_order ?? 0) + 1,
+            })
+            .select("id")
+            .single();
+        if (error) throw error;
+        activityId = inserted.id;
+    }
+
+    const { error: clearError } = await db
+        .from("challenge_questions")
+        .delete()
+        .eq("activity_id", activityId);
+    if (clearError) throw clearError;
+    const rows = CHALLENGE_2_ITEMS.map((item, index) => ({
+        activity_id: activityId,
+        question_order: index + 1,
+        question_type: "drag_drop",
+        question_text: item.name,
+        options: {
+            item: {
+                id: item.id,
+                name: item.name,
+                model_path: item.modelPath,
+                image_path: item.imagePath,
+                model_rotation_y: item.modelRotationY,
+                feedback: item.feedback,
+            },
+        },
+        correct_answer: { category: item.category },
+    }));
+    const { error } = await db.from("challenge_questions").insert(rows);
+    if (error) throw error;
 }
 
 export async function instructorContent(roomId: string) {
@@ -212,13 +301,7 @@ export async function instructorContent(roomId: string) {
             CSDP99_W1D2_CHALLENGE1_TITLE,
             CSDP99_W1D2_CHALLENGE1_QUESTIONS,
         );
-        await ensureCsdp99Challenge(
-            week,
-            2,
-            WHILE_PARTS_ACTIVITY_KEY,
-            CSDP99_W1D2_CHALLENGE2_TITLE,
-            CSDP99_W1D2_CHALLENGE2_QUESTIONS,
-        );
+        await ensureDeviceClassificationChallenge(week);
         await ensureCsdp99Challenge(
             week,
             2,

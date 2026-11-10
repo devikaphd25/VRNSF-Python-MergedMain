@@ -59,6 +59,7 @@ const IDLE_ROTATION_SPEED = 0.42;
 const DROP_SNAP_DISTANCE = 0.16;
 const WRONG_FEEDBACK_DELAY_MS = 300;
 const CORRECT_FEEDBACK_DELAY_MS = 400;
+const RETURN_AFTER_COMPLETE_MS = 30_000;
 
 type DisabledUi = {
   // Remember the original state of another student panel so it can be
@@ -136,6 +137,7 @@ export class DeviceClassificationSystem extends createSystem({
   private desktopPointer = new THREE.Vector2();
   private desktopDragPlane = new THREE.Plane();
   private desktopDragOffset = new THREE.Vector3();
+  private returnTimer?: number;
 
   /** Connect release events, browser events, and temporary test commands. */
   init(): void {
@@ -201,6 +203,7 @@ export class DeviceClassificationSystem extends createSystem({
       );
       delete (window as any).startChallenge2;
       delete (window as any).stopChallenge2;
+      this.clearReturnTimer();
       this.disposeScene();
     });
   }
@@ -293,20 +296,6 @@ export class DeviceClassificationSystem extends createSystem({
       return;
     }
     this.stopChallenge2();
-    if (payload.finalResults) {
-      const finalResults = payload.finalResults as {
-        rankings?: Array<{ studentId?: string; mistakes?: unknown[] }>;
-      };
-      const personal = finalResults.rankings?.find(
-        result => result.studentId === socket.id
-      );
-      if (personal && (!Array.isArray(personal.mistakes) || personal.mistakes.length === 0)) {
-        personal.mistakes = [...this.personalMistakes.values()];
-      }
-      window.dispatchEvent(new CustomEvent("challenge2FinalResult", {
-        detail: finalResults
-      }));
-    }
   };
 
   /** Convert a browser pointer position into a Three.js camera ray. */
@@ -411,6 +400,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   private startChallenge2Immediately = (): void => {
     if (this.active) return;
+    this.clearReturnTimer();
     this.active = true;
     this.advancing = false;
     this.currentIndex = 0;
@@ -427,6 +417,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   /** Close Challenge 2 and restore the normal classroom/UI state. */
   private stopChallenge2 = (): void => {
+    this.clearReturnTimer();
     this.entryVersion += 1;
     this.entryPending = false;
     if (!this.active && !this.root?.visible) return;
@@ -952,15 +943,34 @@ export class DeviceClassificationSystem extends createSystem({
     this.device.object3D.updateMatrixWorld(true);
   }
 
-  /** Keep the completed scene visible and notify future instructor logic. */
+  /** Keep the completed scene visible, then return this student to class. */
   private finishChallenge(): void {
     this.advancing = false;
     this.updateStatus(
       "Challenge complete!",
-      `${this.items.length} devices classified.`,
+      "Returning to class in 30 seconds.",
       "#86efac"
     );
     window.dispatchEvent(new CustomEvent("challenge2:complete"));
+    this.clearReturnTimer();
+    this.returnTimer = window.setTimeout(() => {
+      this.returnToClassroomAfterComplete();
+    }, RETURN_AFTER_COMPLETE_MS);
+  }
+
+  private clearReturnTimer(): void {
+    if (this.returnTimer === undefined) return;
+    window.clearTimeout(this.returnTimer);
+    this.returnTimer = undefined;
+  }
+
+  private returnToClassroomAfterComplete(): void {
+    this.returnTimer = undefined;
+    if (!this.active) return;
+    const transition = (window as any).performActivityEntrance as
+      ((action: () => void) => Promise<void>) | undefined;
+    const leave = () => this.stopChallenge2();
+    void (transition ? transition(leave) : Promise.resolve().then(leave));
   }
 
   /** Notify shared classroom UI when the challenge opens or closes. */

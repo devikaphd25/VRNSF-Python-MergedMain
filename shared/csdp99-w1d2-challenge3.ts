@@ -55,10 +55,35 @@ export const CSDP99_W1D2_CHALLENGE3_QUESTIONS: Array<{
     options: ["1", "5", "6", "0"],
     correctIndex: 2,
   },
+];
+
+export const CSDP99_W1D2_CHALLENGE3_EXTRA_CREDIT: Array<{
+  prompt: string;
+  instructorLabel: string;
+  options: string[];
+  correctIndex: number;
+}> = [
   {
     prompt: "What is the final value of factorial after the loop completes?",
     instructorLabel: "Final factorial value",
     options: ["24", "120", "720", "0"],
     correctIndex: 1,
+  },
+  {
+    prompt: "What is the initial value of the factorial variable?",
+    instructorLabel: "Initial factorial",
+    options: ["0", "1", "5", "120"],
+    correctIndex: 1,
+  },
+  {
+    prompt: "What is another way to write the assignment line factorial *= count?",
+    instructorLabel: "factorial *= count",
+    options: [
+      "factorial = factorial * count",
+      "factorial = factorial + count",
+      "count = factorial * count",
+      "factorial = count",
+    ],
+    correctIndex: 0,
   },
 ];
