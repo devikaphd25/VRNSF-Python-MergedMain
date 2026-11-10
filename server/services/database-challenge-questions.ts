@@ -28,6 +28,7 @@ export function databaseChallengeQuestions(rows: any[], requirePresentation = fa
     ))) throw Error(`Missing or invalid presentation in Supabase question ${row.id}.`);
     return {
       id: String(row.id), prompt: presentation?.prompt ?? row.question_text,
+      ...(rich && row.options.extra_credit === true ? { extraCredit: true } : {}),
       options: [...options], correctIndex: multi ? -1 : answer.choice_index,
       ...(multi ? { correctIndices: [...multi] } : {}),
       ...(presentation ? { presentation, instructorLabel: presentation.instructorLabel } : {}),

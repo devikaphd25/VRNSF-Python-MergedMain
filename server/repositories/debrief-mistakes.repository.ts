@@ -13,7 +13,7 @@ export async function loadSavedChallengeMistakes(sessionId: number, activity: { 
     .select('participant_id,attempt_number,started_at,challenge_responses(question_id,student_answer,is_correct)')
     .eq('activity_id', activity.id).in('participant_id', participants.map(row => row.id))
     .in('status', ['completed', 'stopped'])) : [];
-  return summarizeDebriefMistakes(activity, questions, results);
+  return summarizeDebriefMistakes(activity, questions.filter(question => !question.options?.archived), results);
 }
 
 /** Match the selected debrief to the preceding challenge in its own course day. */

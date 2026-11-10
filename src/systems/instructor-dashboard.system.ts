@@ -114,6 +114,7 @@ interface InstructorQuizPayload {
   totalQuestions?: number;
   totalItems?: number;
   questionStats?: FivePartsQuestionStat[];
+  extraCreditStats?: FivePartsQuestionStat[];
 }
 
 type FivePartsQuestionStat = {
@@ -265,8 +266,10 @@ export class InstructorDashboardSystem extends createSystem({
   private quizSeriesType?: string;
   private quizSeriesTotal = 1;
   private fivePartsQuestionStats: FivePartsQuestionStat[] = [];
+  private extraCreditQuestionStats: FivePartsQuestionStat[] = [];
   private challenge2FinalResults?: any;
   private challenge2EndReason?: "completed" | "timeout" | "instructor_stop";
+  private challenge2LaunchPending = false;
   private returnToQuizAfterMistakes = false;
   private activeQuizKind: "quick-challenge" | "challenge-2" = "quick-challenge";
   private resultsButtonDocument?: UIKitDocument;
@@ -441,6 +444,16 @@ export class InstructorDashboardSystem extends createSystem({
       "qualify",
       entity => this.connectQuizMonitor(entity.index)
     );
+
+    socket.on("error", data => {
+      const message = data?.message || "Could not start activity";
+      this.showStatusMessage(message);
+      if (this.challenge2LaunchPending) {
+        this.challenge2LaunchPending = false;
+        this.setDashboardVisible(true);
+        this.setLabMonitorAvailable(true);
+      }
+    });
 
     socket.on(
       "labReportSaved",
@@ -684,10 +697,12 @@ export class InstructorDashboardSystem extends createSystem({
               wrongCount: 0,
               accuracy: 0
             }));
+          this.extraCreditQuestionStats = data.extraCreditStats ?? [];
         } else {
           this.quizSeriesType = undefined;
           this.quizSeriesTotal = 1;
           this.fivePartsQuestionStats = [];
+          this.extraCreditQuestionStats = [];
         }
 
         this.startQuizCountdown();
@@ -700,6 +715,14 @@ export class InstructorDashboardSystem extends createSystem({
       "quickChallengeStudentAnswered",
       data => {
         if (!this.activeQuiz || data?.quizId !== this.activeQuiz.id) return;
+        if (this.isFivePartsSeries()) {
+          if (Array.isArray(data.questionStats)) {
+            this.fivePartsQuestionStats = data.questionStats;
+          }
+          if (Array.isArray(data.extraCreditStats) && data.extraCreditStats.length > 0) {
+            this.extraCreditQuestionStats = data.extraCreditStats;
+          }
+        }
         let student = this.quizStudents.find(
           item => item.studentId === data.studentId
         );
@@ -708,12 +731,12 @@ export class InstructorDashboardSystem extends createSystem({
           student = { studentId: data.studentId, name: data.name || "Student" };
           this.quizStudents.push(student);
         }
-        if (!student) return;
+        if (!student) {
+          if (this.isFivePartsSeries()) this.renderQuizMonitor();
+          return;
+        }
 
         if (this.isFivePartsSeries()) {
-          if (Array.isArray(data.questionStats)) {
-            this.fivePartsQuestionStats = data.questionStats;
-          }
           student.answered = Number(data.answeredCount) > 0;
           student.completed = Boolean(data.completed);
           student.correctCount = Number(data.correctCount) || 0;
@@ -771,6 +794,7 @@ export class InstructorDashboardSystem extends createSystem({
       "challenge2StartedForInstructor",
       (data: InstructorQuizPayload) => {
         this.pendingChallengeActivityId = undefined;
+        this.challenge2LaunchPending = false;
         this.activeQuizKind = "challenge-2";
         this.activeQuiz = data;
         this.quizMonitorPage = 0;
@@ -788,6 +812,17 @@ export class InstructorDashboardSystem extends createSystem({
           attempts: 0,
           wrongAttempts: 0
         }));
+        this.quizSeriesTotal = Number(data.totalQuestions || data.totalItems) || 5;
+        this.fivePartsQuestionStats = data.questionStats ??
+          Array.from({ length: this.quizSeriesTotal }, (_, index) => ({
+            questionIndex: index,
+            label: `Q${index + 1}`,
+            prompt: `Question ${index + 1}`,
+            correctCount: 0,
+            wrongCount: 0,
+            accuracy: 0
+          }));
+        this.extraCreditQuestionStats = [];
         this.startQuizCountdown();
         this.renderQuizMonitor();
         this.setQuizMonitorVisible(true);
@@ -811,6 +846,7 @@ export class InstructorDashboardSystem extends createSystem({
       student.attempts = Number(data.attempts) || 0;
       student.wrongAttempts = Number(data.wrongAttempts) || 0;
       student.answered = Boolean(data.completed);
+      student.completed = Boolean(data.completed);
       student.correct = Boolean(data.completed);
       student.selectedIndex = null;
       const currentQuestion = student.answered
@@ -824,6 +860,9 @@ export class InstructorDashboardSystem extends createSystem({
       student.responseTimeSeconds = student.answered
         ? Number(data.responseTimeSeconds) || 0
         : undefined;
+      if (Array.isArray(data.questionStats) && data.questionStats.length > 0) {
+        this.fivePartsQuestionStats = data.questionStats;
+      }
       this.renderQuizMonitor();
     });
 
@@ -854,11 +893,7 @@ export class InstructorDashboardSystem extends createSystem({
       this.stopQuizCountdown();
       this.quizMonitorFinished = true;
       this.setCurrentMode("Classroom Mode");
-      this.showStatusMessage(
-        data?.reason === "completed"
-          ? "All students completed the competition — final ranking ready"
-          : "Challenge 2 finished — final ranking ready"
-      );
+      this.showStatusMessage("Challenge 2 stopped");
       this.renderQuizMonitor(true);
       this.setLatestResultType("quick-challenge");
       this.setLabMonitorAvailable(true);
@@ -1322,7 +1357,9 @@ export class InstructorDashboardSystem extends createSystem({
       this.addClass(list, "quiz-row-hidden");
       this.removeClass(board, "quiz-row-hidden");
       this.removeClass(fpStatus, "quiz-row-hidden");
-      const seriesTitle = this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE ||
+      const seriesTitle = this.activeQuizKind === "challenge-2"
+        ? "CHALLENGE 2"
+        : this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE ||
           this.activeQuiz?.challengeType === WHILE_FACTORIAL_CHALLENGE_TYPE ||
           this.activeQuiz?.challengeType === STRING_CLEAN_CHALLENGE_TYPE
         ? "CHALLENGE 3"
@@ -1400,7 +1437,7 @@ export class InstructorDashboardSystem extends createSystem({
         : this.isRocketSeries() ? "ACCURACY" : "RESULT"
     });
     finalReview?.setProperties({
-      display: finished && this.activeQuizKind === "challenge-2" ? "flex" : "none"
+      display: "none"
     });
     if (this.isRocketSeries()) {
       this.renderFivePartsQuestionStats(document);
@@ -1524,7 +1561,7 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private renderFivePartsQuestionStats(document: UIKitDocument): void {
-    const stats = this.fivePartsQuestionStats.length > 0
+    const mainStats = this.fivePartsQuestionStats.length > 0
       ? this.fivePartsQuestionStats
       : Array.from({ length: this.quizSeriesTotal }, (_, index) => ({
           questionIndex: index,
@@ -1535,11 +1572,13 @@ export class InstructorDashboardSystem extends createSystem({
           accuracy: 0
         }));
 
+    const stats = [...mainStats, ...this.extraCreditQuestionStats];
     for (let row = 1; row <= 10; row += 1) {
       this.addClass(document.getElementById(`quiz-monitor-row-${row}`), "quiz-row-hidden");
     }
 
-    const compact = this.quizSeriesTotal > 5;
+    const extraRow = this.extraCreditQuestionStats.length > 0;
+    const compact = this.quizSeriesTotal > 5 || extraRow;
     const board = document.getElementById("quiz-five-parts-board");
     const row2 = document.getElementById("fp-row-2");
     if (compact) this.addClass(board, "fp-board-compact");
@@ -1547,7 +1586,7 @@ export class InstructorDashboardSystem extends createSystem({
     if (stats[5]) this.removeClass(row2, "quiz-row-hidden");
     else this.addClass(row2, "quiz-row-hidden");
 
-    for (let index = 0; index < 7; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       const stat = stats[index];
       const card = document.getElementById(`fp-card-${index}`);
       const art = document.getElementById(`fp-card-art-${index}`) as any;
@@ -1582,7 +1621,7 @@ export class InstructorDashboardSystem extends createSystem({
           ? PLAYTEST_INSTRUCTOR.question
           : C1I.question
       });
-      label?.setProperties({ text: `Q${index + 1}` });
+      label?.setProperties({ text: index >= mainStats.length ? `Extra Q${index - mainStats.length + 1}` : `Q${index + 1}` });
       prompt?.setProperties({
         text: this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE
           ? String(stat.prompt || `Question ${index + 1}`)
@@ -1701,9 +1740,13 @@ export class InstructorDashboardSystem extends createSystem({
     this.syncQuizMonitor();
   }
 
+  private usesPlaytestInstructorArt(): boolean {
+    return this.activeQuizKind === "challenge-2" ||
+      isCurriculumChallenge(this.activeQuiz?.challengeType);
+  }
+
   private applyMonitorBoardArt(): void {
-    const playtest = isCurriculumChallenge(this.activeQuiz?.challengeType);
-    const art = playtest ? PLAYTEST_INSTRUCTOR : C1I;
+    const art = this.usesPlaytestInstructorArt() ? PLAYTEST_INSTRUCTOR : C1I;
     const board = this.quizMonitorDocument?.getElementById("quiz-monitor-board-art") as any;
     board?.setProperties?.({ src: art.board });
     this.paintMonitorControlIcon("quiz-stop-face", art.stop, this.hoveredMonitorControl === "quiz-monitor-stop");
@@ -1728,7 +1771,7 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private syncMonitorHover(elementId: string): void {
-    const art = isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR : C1I;
+    const art = this.usesPlaytestInstructorArt() ? PLAYTEST_INSTRUCTOR : C1I;
     if (elementId === "quiz-monitor-stop") {
       this.paintMonitorControlIcon("quiz-stop-face", art.stop, this.hoveredMonitorControl === elementId);
     }
@@ -1772,7 +1815,7 @@ export class InstructorDashboardSystem extends createSystem({
       src: paintTitleBanner({
         canvas: this.quizTitleBannerCanvas,
         text,
-        src: isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR.title : C1I.title,
+        src: this.usesPlaytestInstructorArt() ? PLAYTEST_INSTRUCTOR.title : C1I.title,
         onReady: () => this.refreshMonitorTitleBanner(text),
       }),
     });
@@ -1802,7 +1845,7 @@ export class InstructorDashboardSystem extends createSystem({
         durationSeconds: duration,
         clockText,
         caption: "TIME REMAINING",
-        clockSrc: isCurriculumChallenge(this.activeQuiz?.challengeType) ? PLAYTEST_INSTRUCTOR.clock : C1I.clock,
+        clockSrc: this.usesPlaytestInstructorArt() ? PLAYTEST_INSTRUCTOR.clock : C1I.clock,
         onReady: () => this.updateQuizTimerRing(clockText),
       }),
     });
@@ -2370,13 +2413,12 @@ export class InstructorDashboardSystem extends createSystem({
       this.pendingBriefingAssetPath=item.assetPath!;this.launchBriefingMode('classroom');
     }else if(item.activityType==='challenge'){
       this.pendingChallengeActivityId = item.activityId;
-      if(item.activityKey==='drag_drop')this.activateChallenge2();
+      if(item.activityKey==='drag_drop'||item.activityKey===WHILE_PARTS_ACTIVITY_KEY)this.activateChallenge2();
       else if(item.activityKey==='true_false')this.activateFivePartsChallenge();
       else if(item.activityKey===CODE_PATTERN_ACTIVITY_KEY)this.activateCodePatternChallenge();
       else if(item.activityKey===LOOP_SORT_ACTIVITY_KEY)this.activateLoopSortChallenge();
       else if(item.activityKey===FLOWCHART_SHAPE_ACTIVITY_KEY)this.activateFlowchartShapeChallenge();
       else if(item.activityKey===WHILE_TRACE_ACTIVITY_KEY)this.activateWhileTraceChallenge();
-      else if(item.activityKey===WHILE_PARTS_ACTIVITY_KEY)this.activateWhilePartsChallenge();
       else if(item.activityKey===WHILE_FACTORIAL_ACTIVITY_KEY)this.activateWhileFactorialChallenge();
       else if(item.activityKey===STRING_OK_ERROR_ACTIVITY_KEY)this.activateStringOkErrorChallenge();
       else if(item.activityKey===STRING_IN_ACTIVITY_KEY)this.activateStringInChallenge();
@@ -2705,6 +2747,7 @@ export class InstructorDashboardSystem extends createSystem({
 
   private activateChallenge2(): void {
     console.log("[InstructorDashboard] Starting Challenge 2");
+    this.challenge2LaunchPending = true;
 
     socket.emit("instructorStartChallenge2", {
       durationSeconds: 180, activityId: this.selectedActivityId
@@ -2729,7 +2772,8 @@ export class InstructorDashboardSystem extends createSystem({
   }
 
   private isRocketSeries(): boolean {
-    return this.activeQuizKind !== "challenge-2" && (
+    if (this.activeQuizKind === "challenge-2") return true;
+    return (
       this.activeQuiz?.challengeType === TRUE_FALSE_CHALLENGE_TYPE ||
       isCurriculumChallenge(this.activeQuiz?.challengeType)
     );
@@ -2787,21 +2831,6 @@ export class InstructorDashboardSystem extends createSystem({
     this.setCurrentMode("Quick Challenge");
     this.setLatestResultType("quick-challenge");
     this.showStatusMessage("Challenge 1 started");
-    this.setDashboardVisible(false);
-    this.setLabMonitorVisible(false);
-    this.setLabMonitorAvailable(false);
-  }
-
-  private activateWhilePartsChallenge(): void {
-    console.log("[InstructorDashboard] Starting CSDP-99 Week 1 Day 2 Challenge 2");
-    socket.emit("instructorQuickChallenge", {
-      durationSeconds: 300,
-      challengeType: WHILE_PARTS_CHALLENGE_TYPE,
-      activityId: this.selectedActivityId
-    });
-    this.setCurrentMode("Quick Challenge");
-    this.setLatestResultType("quick-challenge");
-    this.showStatusMessage("Challenge 2 started");
     this.setDashboardVisible(false);
     this.setLabMonitorVisible(false);
     this.setLabMonitorAvailable(false);

@@ -17,6 +17,11 @@ export function getPanelLayoutBounds(panel: Object3D, document: any): Box3 | und
       bounds.expandByPoint(corner.set(x, y, 0).applyMatrix4(transform));
     }
   });
+  const rocket = panel.getObjectByName('StudentRocketRig');
+  if (rocket?.visible) {
+    const rocketBounds = new Box3().setFromObject(rocket).applyMatrix4(panel.matrixWorld.clone().invert());
+    bounds.union(rocketBounds);
+  }
   return bounds.isEmpty() ? undefined : bounds;
 }
 

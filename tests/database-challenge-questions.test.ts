@@ -7,6 +7,14 @@ const row = () => ({ id: 41, question_type: 'multiple_choice', question_text: 'D
   options: { choices: ['Database A', 'Database B'], presentation: { prompt: 'Edited prompt', codeLines: ['edited = 7'], instructorLabel: 'Edited monitor label' } },
   correct_answer: { choice_index: 1 } });
 
+test('bonus membership is supplied by database metadata without changing question identity or grading', () => {
+  const input = row();
+  const [question] = databaseChallengeQuestions([{ ...input, options: { ...input.options, extra_credit: true } }], true);
+  assert.equal(question.id, '41'); assert.equal(question.extraCredit, true);
+  assert.equal(gradeChallengeAnswer(question, 1).correct, true);
+  assert.equal(databaseChallengeQuestions([input], true)[0].extraCredit, undefined);
+});
+
 test('database edits supply the prompt, code, options, answer and instructor label without a catalog', () => {
   const input = row();
   const [question] = databaseChallengeQuestions([input], true);

@@ -10,7 +10,7 @@
  */
 import * as THREE from "three";
 
-import type { Challenge2Category } from "./device-catalog";
+import type { Challenge2Category } from "./device-types";
 
 export type Challenge2DropBox = {
   category: Challenge2Category;

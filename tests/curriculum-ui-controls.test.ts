@@ -8,7 +8,7 @@ import * as types from '../shared/challenge-types.ts';
 function controls(type: string) {
   const source = ts.createSourceFile('curriculum.ts', readFileSync('src/systems/curriculum-challenge.system.ts', 'utf8'), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(ts.isClassDeclaration)!;
-  const names = ['usesHighlightedMcButton', 'usesTiltedCodeBoard', 'updateSubmitButton', 'paintChoiceFace'];
+  const names = ['usesHighlightedMcButton', 'usesTiltedCodeBoard', 'updateSubmitButton', 'paintChoiceFace', 'currentQuestion', 'activeQuestions'];
   const methods = declaration.members.filter(member => names.includes(member.name?.getText(source) ?? '')).map(member => member.getText(source)).join('\n');
   const elements = new Map<string, Set<string>>();
   const get = (id: string) => { if (!elements.has(id)) elements.set(id, new Set()); return elements.get(id)!; };

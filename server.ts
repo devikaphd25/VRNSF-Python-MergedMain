@@ -143,6 +143,7 @@ function buildChallenge2FinalResults(session: Challenge2Session) {
       ([itemId, selections]) => ({
         itemId,
         itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+        imagePath: session.questions.find(q=>q.options.item.id===itemId)?.options.item.image_path,
         // Map insertion order preserves the student's first wrong category.
         firstAnswer: selections.keys().next().value as Challenge2Category,
         correctAnswer: session.questions.find(q=>q.options.item.id===itemId)?.correct_answer.category,
@@ -208,6 +209,7 @@ function buildChallenge2FinalResults(session: Challenge2Session) {
         ? [{
             itemId,
             itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+        imagePath: session.questions.find(q=>q.options.item.id===itemId)?.options.item.image_path,
             selectedCategory: mostCommon[0],
             correctCategory,
             count: mostCommon[1].count,
@@ -227,6 +229,7 @@ function buildChallenge2FinalResults(session: Challenge2Session) {
       ([itemId, category]) => ({
         itemId,
         itemName: session.questions.find(q=>q.options.item.id===itemId)?.options.item.name ?? itemId,
+        imagePath: session.questions.find(q=>q.options.item.id===itemId)?.options.item.image_path,
         category,
       })
     ),
@@ -286,6 +289,39 @@ function getFivePartsQuestionStats(challenge: QuickChallenge) {
 
 function getFivePartsScore(progress: QuickChallengeStudentProgress) {
   return progress.answers.filter(answer => answer.correct).length;
+}
+
+function getExtraCreditQuestionStats(challenge: QuickChallenge) {
+  return (challenge.extraCreditQuestions ?? []).map((question, index) => {
+    const answers = [...challenge.studentProgress.values()].flatMap(progress => progress.extraCredit?.answers.filter(answer => answer.questionIndex === index) ?? []);
+    const correctCount = answers.filter(answer => answer.correct).length;
+    const wrongCount = answers.length - correctCount;
+    return { questionIndex: index, label: `Extra Q${index + 1}`, prompt: question.instructorLabel ?? question.prompt,
+      correctCount, wrongCount, accuracy: answers.length ? Math.round(correctCount / answers.length * 100) : 0 };
+  });
+}
+
+function getChallenge2QuestionStats(session: Challenge2Session) {
+  return session.questions.map((question, index) => {
+    const progress = [...session.progress.values()];
+    const correctCount = progress.filter(student => student.completedItemIds.has(question.options.item.id)).length;
+    const wrongCount = progress.reduce((sum, student) => sum + [...(student.wrongSelections.get(question.options.item.id)?.values() ?? [])].reduce((a,b) => a+b, 0), 0);
+    return { questionIndex: index, label: `Q${index + 1}`, prompt: question.options.item.name, correctCount, wrongCount,
+      accuracy: correctCount + wrongCount ? Math.round(correctCount / (correctCount + wrongCount) * 100) : 0 };
+  });
+}
+
+function gradeExtraCredit(challenge: QuickChallenge, raw: unknown, partial = false) {
+  const questions = challenge.extraCreditQuestions ?? [];
+  if (!Array.isArray(raw) || raw.length !== questions.length || !questions.length) return null;
+  const answers: QuickChallengeStudentProgress['answers'] = [];
+  for (let index = 0; index < questions.length; index++) {
+    const value = raw[index];
+    if (partial && (value === null || value === -1)) continue;
+    if (!Number.isInteger(value) || value < 0 || value >= questions[index].options.length) return null;
+    answers.push({ questionIndex: index, selectedIndex: value, correct: gradeChallengeAnswer(questions[index], value).correct, answeredAt: Date.now() });
+  }
+  return answers;
 }
 
 function getQuickChallengeWinner(challenge: QuickChallenge): {
@@ -420,6 +456,7 @@ function notifyInstructorStudentProgress(
     completed: Boolean(progress?.completed),
     responseTimeSeconds: progress?.totalTimeSeconds,
     questionStats: getFivePartsQuestionStats(challenge),
+    extraCreditStats: getExtraCreditQuestionStats(challenge),
     ...extra,
   };
 
@@ -487,6 +524,7 @@ function endChallenge2Session(
       challengeId: session.id,
       reason,
       finalResults,
+      returnAfterCompleteSeconds: session.returnAfterCompleteSeconds,
     });
 
     if (client.data.role !== "instructor") {
@@ -697,6 +735,15 @@ io.on("connection", (socket: ClassroomSocket) => {
     } else if (activity.event === "challenge2Started") {
       const session = activeChallenge2Sessions.get(roomId);
       if (!session || session.id !== activity.payload.id) return;
+      const returningParticipant = String(socket.data.participantId ?? '');
+      const priorSocket = [...session.participants].find(([id, participant]) => id !== socket.id && participant === returningParticipant)?.[0];
+      if (priorSocket && session.progress.has(priorSocket)) {
+        session.progress.set(socket.id, session.progress.get(priorSocket)!);
+        session.progress.delete(priorSocket); session.participants.delete(priorSocket);
+      }
+      if (session.progress.get(socket.id)?.returnedAt) {
+        student.mode = 'Classroom Mode'; socket.emit('modeChanged', { mode: 'Classroom Mode' }); return;
+      }
       if(socket.data.participantId)session.participants.set(socket.id,String(socket.data.participantId));
       if (!session.progress.has(socket.id)) session.progress.set(socket.id, {
         completedItemIds: new Set(), attempts: 0, wrongAttempts: 0,
@@ -705,6 +752,13 @@ io.on("connection", (socket: ClassroomSocket) => {
       student.mode = "Challenge 2";
     } else if (activity.event === "quickChallengeStarted") {
       if (activeQuickChallenges.get(roomId)?.id !== activity.payload.id) return;
+      const challenge = activeQuickChallenges.get(roomId)!;
+      const participant = String(socket.data.participantId ?? '');
+      const previous = [...(challenge.responseParticipants ?? [])].find(([id, bound]) => id !== socket.id && bound === participant)?.[0];
+      if (previous && challenge.studentProgress.has(previous)) {
+        challenge.studentProgress.set(socket.id, challenge.studentProgress.get(previous)!);
+        challenge.studentProgress.delete(previous); challenge.responseParticipants?.delete(previous);
+      }
       if(socket.data.participantId) activeQuickChallenges.get(roomId)?.responseParticipants?.set(socket.id,String(socket.data.participantId));
       student.mode = "Quick Challenge";
     } else if (activity.event === "gameChanged") {
@@ -720,6 +774,23 @@ io.on("connection", (socket: ClassroomSocket) => {
       if (review && activity.payload.mediaType === "image") socket.emit("debriefReviewData", review);
     }
     socket.emit(activity.event, activity.payload);
+    if (activity.event === 'quickChallengeStarted') {
+      const challenge = activeQuickChallenges.get(roomId)!;
+      const progress = challenge.studentProgress.get(socket.id);
+      if (progress?.completed) {
+        socket.emit('quickChallengeResult', { quizId: challenge.id, completed: true, hasNext: false,
+          correctCount: getFivePartsScore(progress), attemptCount: progress.attemptCount,
+          results: progress.answers.map(answer => ({ ...answer, correctIndex: challenge.questions![answer.questionIndex].correctIndex })) });
+      }
+      if (progress?.extraCredit) {
+        const extra = progress.extraCredit;
+        socket.emit('quickChallengeExtraCreditRestored', { quizId: challenge.id, completed: extra.completed,
+          attemptStartedAt: extra.attemptStartedAt, attemptCount: extra.attemptCount,
+          answers: challenge.extraCreditQuestions!.map((_, index) => extra.answers.find(answer => answer.questionIndex === index)?.selectedIndex ?? null),
+          ...(extra.completed ? { correctCount: extra.answers.filter(answer => answer.correct).length,
+            results: extra.answers.map(answer => ({ ...answer, correctIndex: challenge.extraCreditQuestions![answer.questionIndex].correctIndex })) } : {}) });
+      }
+    }
     if (activity.event === "presentationContentChanged" && activity.payload.mediaType === "video" && activity.playback) {
       socket.emit("videoPlaybackCommand", activity.playback);
     }
@@ -819,7 +890,10 @@ io.on("connection", (socket: ClassroomSocket) => {
     const isFiveParts = true, isDatabaseSeries = activity.activity_key !== 'true_false' && !curriculum;
     const durationSeconds = Math.min(600, Math.max(15, Number(data.durationSeconds) || DEFAULT_CHALLENGE_DURATION_SECONDS));
     const cycleLabel = activity.title;
-    const fivePartsQuestions = await loadDatabaseChallengeQuestions(activity, curriculum);
+    const allQuestions = await loadDatabaseChallengeQuestions(activity, curriculum);
+    const fivePartsQuestions = allQuestions.filter(question => !question.extraCredit);
+    const extraCreditQuestions = allQuestions.filter(question => question.extraCredit);
+    if (!fivePartsQuestions.length) throw Error('Main challenge questions are missing.');
     const fivePartsQuestion=fivePartsQuestions[0];
     await selectSessionActivity(roomId,activity.id);
     const challenge: QuickChallenge = {
@@ -854,6 +928,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       questionIndex: 0,
       totalQuestions: fivePartsQuestions.length,
       questions: fivePartsQuestions,
+      extraCreditQuestions,
       answers: new Map(),
       responseParticipants: new Map(getRoomClassroomStudents(roomId).flatMap(([id]) => {
         const participant = io.sockets.sockets.get(id)?.data.participantId;
@@ -875,6 +950,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       challengeType: challenge.challengeType,
       questionIndex: challenge.questionIndex,
       totalQuestions: challenge.totalQuestions,
+      extraCreditQuestions: extraCreditQuestions.map(item => ({ question: item.prompt, options: item.options, presentation: item.presentation })),
       questions: isFiveParts
         ? fivePartsQuestions.map(item => ({
             question: item.prompt,
@@ -913,6 +989,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       studentCount: roomStudents.length,
       students: roomStudents,
       questionStats: isFiveParts ? getFivePartsQuestionStats(challenge) : undefined,
+      extraCreditStats: getExtraCreditQuestionStats(challenge),
     });
 
     challenge.timeout = setTimeout(() => {
@@ -929,6 +1006,57 @@ io.on("connection", (socket: ClassroomSocket) => {
 
   // A retry is explicit and acknowledged only after the previous result is durable.
   let challengeRetryPending = false;
+  let extraCreditPending = false;
+  socket.on('quickChallengeExtraCreditStart', async (data = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ''));
+    const progress = challenge?.studentProgress.get(socket.id);
+    if (extraCreditPending || socket.data.role !== 'student' || !students[socket.id] || !challenge || challenge.id !== data.quizId ||
+        !challenge.extraCreditQuestions?.length || !progress?.completed || getFivePartsScore(progress) !== challenge.questions?.length ||
+        Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+      reply({ success: false, message: 'Extra credit requires a perfect main score in an active challenge.' }); return;
+    }
+    if (progress.extraCredit && !progress.extraCredit.completed) {
+      reply({ success: true, attemptStartedAt: progress.extraCredit.attemptStartedAt }); return;
+    }
+    const attempts = progress.extraCredit?.attemptCount ?? 0;
+    if (attempts >= TRUE_FALSE_MAX_ATTEMPTS) { reply({ success: false, message: 'You have used all extra-credit attempts.' }); return; }
+    extraCreditPending = true;
+    try {
+      await saveChallengeResponses(challenge, 'completed');
+      if (activeQuickChallenges.get(challenge.roomId) !== challenge || !socket.connected || Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+        reply({ success: false, message: 'The challenge has ended.' }); return;
+      }
+      const attemptStartedAt = Math.max(Date.now(), (progress.extraCredit?.attemptStartedAt ?? progress.attemptStartedAt ?? challenge.startedAt) + 1);
+      progress.extraCredit = { answers: [], completed: false, attemptCount: attempts, attemptStartedAt };
+      reply({ success: true, attemptStartedAt });
+    } catch (error) { console.error('[Extra credit start]', error); reply({ success: false, message: 'Could not preserve your previous attempt.' }); }
+    finally { extraCreditPending = false; }
+  });
+  socket.on('quickChallengeExtraCredit', async (data = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ''));
+    const progress = challenge?.studentProgress.get(socket.id);
+    const extra = progress?.extraCredit;
+    if (extraCreditPending || socket.data.role !== 'student' || !students[socket.id] || !challenge || challenge.id !== data.quizId ||
+        !progress?.completed || !extra || extra.attemptStartedAt !== data.attemptStartedAt ||
+        Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
+      reply({ success: false, message: 'This extra-credit attempt is no longer active.' }); return;
+    }
+    const answers = gradeExtraCredit(challenge, data.answers);
+    if (!answers) { reply({ success: false, message: 'Answer all extra-credit questions.' }); return; }
+    if (!extra.completed) {
+      extra.answers = answers; extra.completed = true; extra.finishedAt = Date.now(); extra.attemptCount++;
+    }
+    extraCreditPending = true;
+    try {
+      await saveChallengeResponses(challenge, 'completed');
+      notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
+      reply({ success: true, correctCount: extra.answers.filter(answer => answer.correct).length, attemptCount: extra.attemptCount,
+        results: extra.answers.map(answer => ({ ...answer, correctIndex: challenge.extraCreditQuestions![answer.questionIndex].correctIndex })) });
+    } catch (error) { console.error('[Extra credit save]', error); reply({ success: false, message: 'Could not save extra credit. Please retry submission.' }); }
+    finally { extraCreditPending = false; }
+  });
   socket.on("quickChallengeRetry", async (data = {}, acknowledge) => {
     const reply = typeof acknowledge === "function" ? acknowledge : () => {};
     const roomId = String(socket.data.roomId ?? "");
@@ -936,7 +1064,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     const progress = challenge?.studentProgress.get(socket.id);
     if (challengeRetryPending || !challenge || challenge.id !== data.quizId ||
         !isRetryableChallenge(challenge.challengeType) || socket.data.role !== "student" ||
-        !students[socket.id] || !progress?.completed ||
+        !students[socket.id] || !progress?.completed || Boolean(progress.extraCredit) ||
         Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) {
       reply({ success: false, message: "This challenge is no longer available for retry." });
       return;
@@ -967,6 +1095,17 @@ io.on("connection", (socket: ClassroomSocket) => {
 
   socket.on("quickChallengeDraft", (data = {}) => {
     const challenge = activeQuickChallenges.get(String(socket.data.roomId ?? ""));
+    if (data.extraCredit) {
+      const progress = challenge?.studentProgress.get(socket.id);
+      const extra = progress?.extraCredit;
+      if (!challenge || challenge.id !== data.quizId || socket.data.role !== 'student' || !students[socket.id] || !extra || extra.completed ||
+          extra.attemptStartedAt !== data.attemptStartedAt || Date.now() >= challenge.startedAt + challenge.durationSeconds * 1000) return;
+      const answers = gradeExtraCredit(challenge, data.answers, true);
+      if (!answers) return;
+      extra.answers = answers;
+      notifyInstructorStudentProgress(challenge, socket.id, students[socket.id]);
+      return;
+    }
     if (!challenge || challenge.id !== data.quizId || !isQuickChallengeSeries(challenge.challengeType) ||
       socket.data.role !== "student" || !students[socket.id] || challenge.studentProgress.get(socket.id)?.completed) return;
     const progress = challenge.studentProgress.get(socket.id);
@@ -1234,7 +1373,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
 
     const activity=await activityForSession(roomId,'drag_drop',Number(data.activityId)||undefined);
-    const {data:questions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
+    const {data:questions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).eq('question_type','drag_drop').order('question_order');
     if(error)throw error;
     if(!questions?.length||questions.some(q=>q.question_type!=='drag_drop'||!q.options?.item?.id||!['input','output','both','storage'].includes(q.correct_answer?.category)))throw Error('Drag/drop questions are missing or invalid');
     const items=questions.map(q=>({id:q.options.item.id,name:q.options.item.name,modelPath:q.options.item.model_path,imagePath:q.options.item.image_path,modelRotationY:q.options.item.model_rotation_y,feedback:q.options.item.feedback,category:q.correct_answer.category}));
@@ -1247,6 +1386,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       Math.max(60, Number(data.durationSeconds) || 180)
     );
     const session: Challenge2Session = {
+      returnAfterCompleteSeconds: Number(questions[0]?.options?.completion_return_seconds) || undefined,
       activityId:activity.id,questions,
       participants:new Map(getRoomClassroomStudents(roomId).flatMap(([id])=>{
         const participant=io.sockets.sockets.get(id)?.data.participantId;
@@ -1262,7 +1402,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     activeChallenge2Sessions.set(roomId, session);
     roomActivities.set(roomId, {
       event: "challenge2Started",
-      payload: { id: session.id, durationSeconds, startedAt: session.startedAt, totalItems: session.questions.length, items },
+      payload: { id: session.id, durationSeconds, startedAt: session.startedAt, totalItems: session.questions.length, items, returnAfterCompleteSeconds: session.returnAfterCompleteSeconds },
       expiresAt: session.startedAt + durationSeconds * 1000,
     });
 
@@ -1292,6 +1432,7 @@ io.on("connection", (socket: ClassroomSocket) => {
         seat: student.seat,
       });
       studentSocket.emit("challenge2Started", {
+        returnAfterCompleteSeconds: session.returnAfterCompleteSeconds,
         items,
         id: session.id,
         durationSeconds,
@@ -1301,6 +1442,8 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
 
     socket.emit("challenge2StartedForInstructor", {
+      totalQuestions: session.questions.length,
+      questionStats: getChallenge2QuestionStats(session),
       id: session.id,
       question: "Challenge 2: Predict - Devices In & Out",
       options: ["Input", "Output", "Both", "Storage"],
@@ -1394,6 +1537,7 @@ io.on("connection", (socket: ClassroomSocket) => {
           completed,
           completedCount,
           totalItems: session.questions.length,
+          questionStats: getChallenge2QuestionStats(session),
           attempts: progress.attempts,
           wrongAttempts: progress.wrongAttempts,
           responseTimeSeconds,
@@ -1409,13 +1553,25 @@ io.on("connection", (socket: ClassroomSocket) => {
       connectedStudentIds.every(id =>
         session.progress.get(id)?.completedItemIds.size === session.questions.length
       );
-    if (everyoneCompleted) {
+    if (everyoneCompleted && !session.returnAfterCompleteSeconds) {
       setTimeout(() => {
         if (activeChallenge2Sessions.get(roomId)?.id === session.id) {
           endChallenge2Session(session, "completed");
         }
       }, CHALLENGE_2_ALL_COMPLETE_DELAY_MS);
     }
+  });
+
+  socket.on('challenge2ReturnToClass', (data = {}) => {
+    const session = activeChallenge2Sessions.get(String(socket.data.roomId ?? ''));
+    const progress = session?.progress.get(socket.id);
+    if (socket.data.role !== 'student' || !session || session.id !== data.challengeId || !session.returnAfterCompleteSeconds ||
+        !progress?.completedAt || Date.now() < progress.completedAt + session.returnAfterCompleteSeconds * 1000) return;
+    progress.returnedAt = Date.now();
+    if (students[socket.id]) students[socket.id].mode = 'Classroom Mode';
+    socket.emit('challenge2Ended', { challengeId: session.id, reason: 'completed', returnAfterCompleteSeconds: session.returnAfterCompleteSeconds });
+    socket.emit('modeChanged', { mode: 'Classroom Mode' });
+    broadcastStudentList(io);
   });
 
   socket.on("instructorStopChallenge2", (data = {}) => {

@@ -35,6 +35,7 @@ import {
 } from "../challenges/true-false/question-art";
 import { paintSerifBlock, SCORE_SERIF, wrapCanvasLines } from "../ui/serif-type";
 import { TrueFalseSounds } from "../challenges/true-false/sound-effects";
+import { StudentRocketRig } from "../challenges/true-false/student-rocket";
 
 
 
@@ -56,6 +57,7 @@ interface QuickChallengePayload {
   challengeType?: string;
   totalQuestions?: number;
   questions?: QuickChallengeQuestion[];
+  extraCreditQuestions?: QuickChallengeQuestion[];
 }
 
 interface QuickChallengeResult {
@@ -126,6 +128,17 @@ export class CurriculumChallengeSystem extends createSystem({
   private lastDesktopActivation = 0;
   private lastNavAt = 0;
   private fivePartsAttempts = 0;
+  private extraCreditQuestions: QuickChallengeQuestion[] = [];
+  private extraCreditStartedAt?: number;
+  private extraCreditActive = false;
+  private extraCreditSelections: Array<number | null> = [];
+  private extraCreditReview: Array<{
+    selectedIndex: number;
+    correctIndex: number;
+    correct: boolean;
+  }> | null = null;
+  private extraCreditAttempts = 0;
+  private extraCreditCorrectCount = 0;
   private responseTimeSeconds = 0;
   private timerFaceCanvas?: HTMLCanvasElement;
   private stepsRailCanvas?: HTMLCanvasElement;
@@ -137,6 +150,11 @@ export class CurriculumChallengeSystem extends createSystem({
   private hudPlateCanvases = new Map<string, HTMLCanvasElement>();
   private readonly buttonArt = new StablePanelArt();
   private sounds = new TrueFalseSounds();
+  private studentRocket = new StudentRocketRig(() => this.sounds.launch(), () => this.sounds.stop());
+  private desktopRocketDragging = false;
+  private xrRocketDragging = false;
+  private hoveringRocketLaunch = false;
+  private lastRocketFrameAt = 0;
   private hoveredDesktopAction = "";
   private hoveredControlId = "";
   private readonly hoverControlIds = [
@@ -163,6 +181,9 @@ export class CurriculumChallengeSystem extends createSystem({
     "quiz-review-q-4",
     "quiz-review-q-5",
     "quiz-review-q-6",
+    "quiz-review-extra-0",
+    "quiz-review-extra-1",
+    "quiz-review-extra-2",
   ];
   private codeFaceCanvas?: HTMLCanvasElement;
   private dndFaceCanvas?: HTMLCanvasElement;
@@ -189,6 +210,7 @@ export class CurriculumChallengeSystem extends createSystem({
     socket.on("quickChallengeStarted", this.startChallenge);
     socket.on("quickChallengeResult", this.showResult);
     socket.on("quickChallengeEnded", this.endChallenge);
+    socket.on('quickChallengeExtraCreditRestored', this.restoreExtraCredit);
     preloadPlaytestStudentArt(() => {
       this.updateStepLights();
       this.updateTimer();
@@ -248,6 +270,20 @@ export class CurriculumChallengeSystem extends createSystem({
     const raycaster = new Raycaster();
     raycaster.setFromCamera(pointer, this.camera);
 
+    if (this.hasRocket()) {
+      const rocketHit = raycaster.intersectObject(this.studentRocket.root, true)[0];
+      if (rocketHit) {
+        if (this.studentRocket.beginDrag(raycaster)) {
+          this.sounds.click();
+          this.desktopRocketDragging = true;
+          this.renderer.domElement.setPointerCapture?.(event.pointerId);
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+
     const { action, actionName } = this.getPanelAction(raycaster) ?? {};
 
     if (!action) return;
@@ -299,7 +335,7 @@ export class CurriculumChallengeSystem extends createSystem({
       return { action: this.goNext, actionName: "next" };
     }
     if (this.hitUiElement(raycaster, "quiz-result-reset") && this.isSummaryView()) {
-      return { action: this.retryQuiz, actionName: "retry" };
+      return { action: this.handleScoreAction, actionName: "retry" };
     }
     for (let index = 0; index < 7; index += 1) {
       if (this.hitUiElement(raycaster, `quiz-step-${index}`)) {
@@ -307,6 +343,9 @@ export class CurriculumChallengeSystem extends createSystem({
       }
       if (this.hitUiElement(raycaster, `quiz-review-q-${index}`)) {
         return { action: () => this.jumpToQuestion(index), actionName: `review-${index}` };
+      }
+      if (index < 3 && this.hitUiElement(raycaster, `quiz-review-extra-${index}`)) {
+        return { action: () => this.jumpToExtraCredit(index), actionName: `extra-${index}` };
       }
     }
 
@@ -316,7 +355,7 @@ export class CurriculumChallengeSystem extends createSystem({
         action = () => this.goToQuestion(stepIndex);
         actionName = `step-${stepIndex}`;
       } else if (this.isSummaryView() && y >= 0.80) {
-        action = this.retryQuiz;
+        action = this.handleScoreAction;
         actionName = "retry";
       }
     } else if (this.showingResult) {
@@ -361,7 +400,7 @@ export class CurriculumChallengeSystem extends createSystem({
   }
 
   private hitAnswerIndex(raycaster: Raycaster): number | null {
-    const optionCount = this.questions[this.questionIndex]?.options.length ?? 0;
+    const optionCount = this.currentQuestion()?.options.length ?? 0;
     for (let index = 0; index < optionCount; index += 1) {
       if (this.hitUiElement(raycaster, `quiz-answer-${index}`)) return index;
     }
@@ -417,6 +456,9 @@ export class CurriculumChallengeSystem extends createSystem({
       "quiz-review-q-4",
       "quiz-review-q-5",
       "quiz-review-q-6",
+      "quiz-review-extra-0",
+      "quiz-review-extra-1",
+      "quiz-review-extra-2",
       "quiz-step-0",
       "quiz-step-1",
       "quiz-step-2",
@@ -470,7 +512,7 @@ export class CurriculumChallengeSystem extends createSystem({
     );
     this.bindSpatialButton(
       "quiz-result-reset",
-      this.retryQuiz
+      this.handleScoreAction
     );
     for (let index = 0; index < 7; index += 1) {
       this.bindSpatialButton(
@@ -482,6 +524,13 @@ export class CurriculumChallengeSystem extends createSystem({
         `quiz-step-${index}`,
         () => this.goToQuestion(index),
         ["pointerdown", "click"]
+      );
+    }
+    for (let index = 0; index < 3; index += 1) {
+      this.bindSpatialButton(
+        `quiz-review-extra-${index}`,
+        () => this.jumpToExtraCredit(index),
+        ["pointerdown"]
       );
     }
 
@@ -554,9 +603,20 @@ export class CurriculumChallengeSystem extends createSystem({
     this.selectedIndex = null;
     this.submitted = false;
     this.fivePartsAttempts = 0;
+    const extraCredit = payload.extraCreditQuestions ?? [];
+    this.extraCreditQuestions = extraCredit.map(question => ({
+      ...question,
+    }));
+    this.extraCreditStartedAt = undefined;
+    this.extraCreditActive = false;
+    this.extraCreditSelections = this.extraCreditQuestions.map(() => null);
+    this.extraCreditReview = null;
+    this.extraCreditAttempts = 0;
+    this.extraCreditCorrectCount = 0;
     this.challengeClosed = false;
     this.timeExpired = false;
     this.responseTimeSeconds = 0;
+    if (this.hasRocket()) this.studentRocket.resetAll();
     this.layoutStudentShell();
     this.paintLeftPanel();
     this.renderCurrentView();
@@ -567,6 +627,61 @@ export class CurriculumChallengeSystem extends createSystem({
 
   private isFivePartsChallenge(): boolean {
     return isCurriculumChallenge(this.challenge?.challengeType) && this.questions.length > 0;
+  }
+
+  private hasExtraCredit(): boolean {
+    return this.extraCreditQuestions.length > 0;
+  }
+
+  private hasRocket(): boolean {
+    return (
+      this.challenge?.challengeType === WHILE_TRACE_CHALLENGE_TYPE ||
+      this.challenge?.challengeType === WHILE_FACTORIAL_CHALLENGE_TYPE
+    );
+  }
+
+  private activeQuestions(): QuickChallengeQuestion[] {
+    return this.extraCreditActive ? this.extraCreditQuestions : this.questions;
+  }
+
+  private currentQuestion(): QuickChallengeQuestion | undefined {
+    return this.activeQuestions()[this.questionIndex];
+  }
+
+  private currentReview(): Array<{
+    selectedIndex: number;
+    correctIndex: number;
+    correct: boolean;
+  }> | null {
+    return this.extraCreditActive ? this.extraCreditReview : this.reviewResults;
+  }
+
+  private hasPerfectMainScore(): boolean {
+    return Boolean(
+      this.reviewResults &&
+        this.questions.length > 0 &&
+        this.reviewResults.length === this.questions.length &&
+        this.reviewResults.every(item => item.correct)
+    );
+  }
+
+  private canStartExtraCredit(): boolean {
+    return (
+      this.hasExtraCredit() &&
+      this.hasPerfectMainScore() &&
+      !this.extraCreditReview &&
+      !this.extraCreditActive &&
+      !this.challengeClosed
+    );
+  }
+
+  private canRetryExtraCredit(): boolean {
+    return (
+      Boolean(this.extraCreditReview) &&
+      !this.challengeClosed &&
+      this.extraCreditAttempts < TRUE_FALSE_MAX_ATTEMPTS &&
+      this.extraCreditCorrectCount < this.extraCreditQuestions.length
+    );
   }
 
   private isSingleBoardChallenge(): boolean {
@@ -592,7 +707,7 @@ export class CurriculumChallengeSystem extends createSystem({
   }
 
   private leftPanelGuide(): string[] | null {
-    return this.questions[this.questionIndex]?.presentation?.guide ?? null;
+    return this.currentQuestion()?.presentation?.guide ?? null;
   }
 
   private isMultiSelectQuestion(index = this.questionIndex): boolean {
@@ -612,14 +727,14 @@ export class CurriculumChallengeSystem extends createSystem({
 
   /** Single-select stores an index; multi-select stores a bitmask. Review uses the graded value. */
   private selectedChoiceValue(): number | null {
-    return this.reviewResults?.[this.questionIndex]?.selectedIndex ?? this.selectedIndex;
+    return this.currentReview()?.[this.questionIndex]?.selectedIndex ?? this.selectedIndex;
   }
 
   private isSummaryView(): boolean {
     return (
       this.isFivePartsChallenge() &&
-      Boolean(this.reviewResults) &&
-      this.questionIndex >= this.questions.length
+      Boolean(this.currentReview()) &&
+      this.questionIndex >= this.activeQuestions().length
     );
   }
 
@@ -633,10 +748,12 @@ export class CurriculumChallengeSystem extends createSystem({
 
   private renderCurrentQuestion(): void {
     const payload = this.challenge;
-    const current = this.questions[this.questionIndex];
+    const current = this.currentQuestion();
     if (!payload || !current) return;
 
-    this.selectedIndex = this.selections[this.questionIndex] ?? null;
+    this.selectedIndex = this.extraCreditActive
+      ? this.extraCreditSelections[this.questionIndex] ?? null
+      : this.selections[this.questionIndex] ?? null;
     this.setResultMode(false);
     this.setText("quiz-question", current.question);
     this.updateQuestionFace(current.question);
@@ -682,10 +799,10 @@ export class CurriculumChallengeSystem extends createSystem({
             ? `${String.fromCharCode(65 + index)}. ${option}`
             : option
         );
-        this.addClass(icon, "answer-hidden");
-        this.addClass(label, "answer-hidden");
-        this.removeClass(icon, "answer-icon-large");
-        this.removeClass(label, "answer-label-large");
+          this.addClass(icon, "answer-hidden");
+          this.addClass(label, "answer-hidden");
+          this.removeClass(icon, "answer-icon-large");
+          this.removeClass(label, "answer-label-large");
         const face = this.document?.getElementById(`quiz-answer-face-${index}`);
         if (tfArt) {
           this.addClass(face, "answer-face-pair");
@@ -736,18 +853,17 @@ export class CurriculumChallengeSystem extends createSystem({
     this.addClass(this.document?.getElementById("quiz-result-status"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-result-answer"), "answer-hidden");
     this.removeClass(this.document?.getElementById("quiz-score-hero"), "answer-hidden");
+    if (this.extraCreditReview) {
+      this.paintScoreHero(this.extraCreditCorrectCount, this.extraCreditQuestions.length);
+    } else {
     this.paintScoreHero(this.correctCount, total);
+    }
     this.setText("quiz-result-time", "");
     this.setText("quiz-result-winner", "");
     this.setText("quiz-result-hint", "tap to review");
     this.removeClass(this.document?.getElementById("quiz-result-hint"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-dnd-face"), "answer-hidden");
-    if (this.canRetryFiveParts()) {
-      this.removeClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
-      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, this.hoveredControlId === "quiz-result-reset");
-    } else {
-      this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
-    }
+    this.updateScoreActionButton();
     this.addClass(this.document?.getElementById("quiz-steps"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-timer-ring"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-kicker"), "answer-hidden");
@@ -765,6 +881,96 @@ export class CurriculumChallengeSystem extends createSystem({
     this.removeClass(reviewRow, "answer-hidden");
     this.updateReviewQuestionButtons();
     this.sync();
+    this.syncStudentRocket();
+  }
+
+  private updateScoreActionButton(): void {
+    const reset = this.document?.getElementById("quiz-result-reset");
+    const hovered = this.hoveredControlId === "quiz-result-reset";
+    if (this.canStartExtraCredit()) {
+      this.removeClass(reset, "quiz-result-hidden");
+      this.paintHudFace("quiz-reset-face", C1.light, "Extra Credit", undefined, 500, hovered);
+      return;
+    }
+    if (this.canRetryExtraCredit() || this.canRetryFiveParts()) {
+      this.removeClass(reset, "quiz-result-hidden");
+      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, hovered);
+      return;
+    }
+    this.addClass(reset, "quiz-result-hidden");
+  }
+
+  private handleScoreAction = (): void => {
+    if (this.canStartExtraCredit()) {
+      this.startExtraCredit();
+      return;
+    }
+    if (this.extraCreditActive && !this.extraCreditReview) return;
+    if (this.canRetryExtraCredit()) {
+      this.retryExtraCredit();
+      return;
+    }
+    this.retryQuiz();
+  };
+
+  private startExtraCredit(): void {
+    if (!this.canStartExtraCredit() || this.retryPending || !this.challenge) return;
+    this.retryPending = true;
+    socket.timeout(15000).emit('quickChallengeExtraCreditStart', { quizId: this.challenge.id }, (error: Error | null, reply: any) => {
+      this.retryPending = false;
+      if (error || !reply?.success) { this.setFeedback(reply?.message ?? 'Could not start extra credit. Try again.'); return; }
+      this.extraCreditStartedAt = reply.attemptStartedAt;
+      this.extraCreditActive = true; this.submitted = false; this.extraCreditReview = null;
+      this.extraCreditSelections = this.extraCreditQuestions.map(() => null);
+      this.questionIndex = 0; this.selectedIndex = null;
+      this.setResultMode(false); this.addClass(this.document?.getElementById('quiz-result-reset'), 'quiz-result-hidden');
+      this.renderCurrentView(); this.syncStudentRocket();
+    });
+  }
+
+  private retryExtraCredit(): void {
+    if (!this.canRetryExtraCredit() || this.retryPending || !this.challenge) return;
+    this.retryPending = true;
+    socket.timeout(15000).emit('quickChallengeExtraCreditStart', { quizId: this.challenge.id }, (error: Error | null, reply: any) => {
+      this.retryPending = false;
+      if (error || !reply?.success) { this.setFeedback(reply?.message ?? 'Could not start extra credit. Try again.'); return; }
+      this.extraCreditStartedAt = reply.attemptStartedAt;
+      this.extraCreditActive = true; this.submitted = false; this.extraCreditReview = null;
+      this.extraCreditSelections = this.extraCreditQuestions.map(() => null);
+      this.questionIndex = 0; this.selectedIndex = null;
+      this.setResultMode(false); this.addClass(this.document?.getElementById('quiz-result-reset'), 'quiz-result-hidden');
+      this.renderCurrentView(); this.syncStudentRocket();
+    });
+  }
+
+  private restoreExtraCredit = (data: any): void => {
+    if (!this.challenge || data.quizId !== this.challenge.id) return;
+    this.extraCreditStartedAt = data.attemptStartedAt;
+    this.extraCreditAttempts = data.attemptCount;
+    this.extraCreditSelections = data.answers;
+    this.extraCreditActive = true;
+    this.submitted = Boolean(data.completed);
+    if (data.completed) {
+      this.extraCreditReview = data.results; this.extraCreditCorrectCount = data.correctCount;
+      this.questionIndex = this.extraCreditQuestions.length; this.renderSummaryView();
+    } else {
+      this.questionIndex = 0; this.selectedIndex = data.answers[0];
+      this.setResultMode(false); this.renderCurrentView();
+    }
+  };
+
+  private submitExtraCredit(): void {
+    if (!this.allQuestionsAnswered() || !this.challenge || this.retryPending) return;
+    this.retryPending = true;
+    socket.timeout(15000).emit('quickChallengeExtraCredit', {
+      quizId: this.challenge.id, attemptStartedAt: this.extraCreditStartedAt, answers: this.extraCreditSelections,
+    }, (error: Error | null, reply: any) => {
+      this.retryPending = false;
+      if (error || !reply?.success) { this.setFeedback(reply?.message ?? 'Could not save extra credit. Try again.'); return; }
+      this.submitted = true; this.extraCreditAttempts = reply.attemptCount;
+      this.extraCreditReview = reply.results; this.extraCreditCorrectCount = reply.correctCount;
+      this.questionIndex = this.extraCreditQuestions.length; this.renderSummaryView();
+    });
   }
 
   private paintScoreHero(correct: number, total: number): void {
@@ -772,17 +978,37 @@ export class CurriculumChallengeSystem extends createSystem({
       this.scoreHeroCanvas = document.createElement("canvas");
     }
     this.scoreHeroCanvas.width = 820;
-    this.scoreHeroCanvas.height = 240;
+    const rocketHint = this.hasRocket() && !this.extraCreditReview;
+    this.scoreHeroCanvas.height = rocketHint ? 330 : 240;
     const canvas = this.scoreHeroCanvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const compact = Boolean(this.extraCreditReview);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#f4fbff";
-    ctx.font = `700 120px ${SCORE_SERIF}`;
-    ctx.fillText(`Score: ${correct}/${total}`, canvas.width / 2, canvas.height / 2);
+    ctx.font = `700 ${compact ? 96 : rocketHint ? 72 : 120}px ${SCORE_SERIF}`;
+    ctx.fillText(`Score: ${correct}/${total}`, canvas.width / 2, rocketHint ? 70 : canvas.height / 2);
+    if (rocketHint) {
+      const message =
+        correct === total
+          ? "All parts unlocked — drag them onto your rocket, then launch."
+          : correct > 0
+            ? "Correct answers unlocked parts. Drag them onto the rocket, or retry to unlock more."
+            : "No parts unlocked. Retry the quiz to try again.";
+      ctx.fillStyle = correct > 0 ? "#c5f2fa" : "#9ec0cc";
+      ctx.font = `italic 500 38px ${SCORE_SERIF}`;
+      const lines = wrapCanvasLines(ctx, message, canvas.width - 64);
+      const lineHeight = 50;
+      const startY = 200 - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach((line, index) => {
+        ctx.fillText(line, canvas.width / 2, startY + index * lineHeight);
+      });
+    }
     const hero = this.document?.getElementById("quiz-score-hero") as any;
+    if (compact) this.addClass(hero, "quiz-score-hero-compact");
+    else this.removeClass(hero, "quiz-score-hero-compact");
     hero?.setProperties?.({ src: canvas.toDataURL("image/png") });
   }
 
@@ -790,13 +1016,23 @@ export class CurriculumChallengeSystem extends createSystem({
     if (!this.reviewResults || index < 0 || index >= this.questions.length) {
       return;
     }
+    this.extraCreditActive = false;
+    this.questionIndex = index;
+    this.renderCurrentView();
+  }
+
+  private jumpToExtraCredit(index: number): void {
+    if (!this.extraCreditReview || index < 0 || index >= this.extraCreditQuestions.length) {
+      return;
+    }
+    this.extraCreditActive = true;
     this.questionIndex = index;
     this.renderCurrentView();
   }
 
   private goToQuestion(index: number): void {
     if (!this.isFivePartsChallenge() || this.isSummaryView()) return;
-    if (index < 0 || index >= this.questions.length) return;
+    if (index < 0 || index >= this.activeQuestions().length) return;
     if (index === this.questionIndex) return;
     if (!this.beginNav()) return;
     this.questionIndex = index;
@@ -822,7 +1058,7 @@ export class CurriculumChallengeSystem extends createSystem({
     ) {
       return null;
     }
-    return hitStepIndex((px - railX) / railWidth, (py - railY) / railHeight, this.questions.length);
+    return hitStepIndex((px - railX) / railWidth, (py - railY) / railHeight, this.activeQuestions().length);
   }
 
   private updateReviewQuestionButtons(): void {
@@ -852,6 +1088,37 @@ export class CurriculumChallengeSystem extends createSystem({
           onReady: () => this.updateReviewQuestionButtons(),
         });
       glyph?.setProperties?.({ src: this.buttonArt.update(`review-${index}`, this.reviewGlyphCanvas) });
+    }
+    const extraRow = this.document?.getElementById("quiz-review-extra");
+    const reviewStack = this.document?.getElementById("quiz-review-stack");
+    if (this.extraCreditReview) {
+      this.removeClass(extraRow, "answer-hidden");
+      this.addClass(reviewStack, "quiz-review-stack-extra");
+    } else {
+      this.addClass(extraRow, "answer-hidden");
+      this.removeClass(reviewStack, "quiz-review-stack-extra");
+    }
+    for (let index = 0; index < 3; index += 1) {
+      const button = this.document?.getElementById(`quiz-review-extra-${index}`);
+      const glyph = this.document?.getElementById(`quiz-review-extra-glyph-${index}`) as any;
+      const review = this.extraCreditReview?.[index];
+      this.removeClass(button, "answer-correct", "answer-wrong");
+      if (!review) {
+        this.addClass(button, "answer-hidden");
+        continue;
+      }
+      this.removeClass(button, "answer-hidden");
+      this.addClass(button, review.correct ? "answer-correct" : "answer-wrong");
+      paintReviewChip({
+          canvas: this.reviewGlyphCanvas,
+          digit: String(index + 1),
+          correct: review.correct,
+          correctSrc: C1.correct,
+          missSrc: C1.miss,
+          hover: this.hoveredControlId === `quiz-review-extra-${index}`,
+          onReady: () => this.updateReviewQuestionButtons(),
+        });
+      glyph?.setProperties?.({ src: this.buttonArt.update(`extra-review-${index}`, this.reviewGlyphCanvas) });
     }
   }
 
@@ -991,9 +1258,14 @@ export class CurriculumChallengeSystem extends createSystem({
         this.setText("quiz-progress", "");
       } else {
         this.removeClass(kicker, "answer-hidden");
-        this.removeClass(timerRing, "answer-hidden");
         this.removeClass(this.document?.getElementById("quiz-header"), "answer-hidden");
-        this.setText("quiz-kicker", this.challengeKicker());
+        if (this.extraCreditActive) {
+          this.addClass(timerRing, "answer-hidden");
+          this.setText("quiz-kicker", "Extra Credit");
+        } else {
+          this.removeClass(timerRing, "answer-hidden");
+          this.setText("quiz-kicker", this.challengeKicker());
+        }
         this.refreshTitleBanner(this.challengeTitle());
         this.setText("quiz-progress", "");
       }
@@ -1018,10 +1290,13 @@ export class CurriculumChallengeSystem extends createSystem({
     }
     this.removeClass(row, "answer-hidden");
     const states: Array<"idle" | "current" | "done" | "miss"> = [];
-    for (let index = 0; index < this.questions.length; index += 1) {
+    const questions = this.activeQuestions();
+    const selections = this.extraCreditActive ? this.extraCreditSelections : this.selections;
+    const review = this.currentReview();
+    for (let index = 0; index < questions.length; index += 1) {
       if (index === this.questionIndex && !this.isSummaryView()) {
         states.push("current");
-      } else if (this.selections[index] !== null || this.reviewResults?.[index]) {
+      } else if (selections[index] !== null || review?.[index]) {
         states.push("done");
       } else {
         states.push("idle");
@@ -1045,18 +1320,20 @@ export class CurriculumChallengeSystem extends createSystem({
     rail?.setProperties?.({ src: this.buttonArt.update('steps', this.stepsRailCanvas) });
     for (let index = 0; index < 7; index += 1) {
       const hit = this.document?.getElementById(`quiz-step-${index}`);
-      if (index < this.questions.length) this.removeClass(hit, "answer-hidden");
+      if (index < this.activeQuestions().length) this.removeClass(hit, "answer-hidden");
       else this.addClass(hit, "answer-hidden");
     }
     this.sync();
   }
 
   private allQuestionsAnswered(): boolean {
+    const questions = this.activeQuestions();
+    const selections = this.extraCreditActive ? this.extraCreditSelections : this.selections;
     return (
-      this.selections.length === this.questions.length &&
-      this.selections.every((selection, index) => {
+      selections.length === questions.length &&
+      selections.every((selection, index) => {
         if (selection === null) return false;
-        if (this.isMultiSelectQuestion(index)) return this.bitCount(selection) >= 1;
+        if (!this.extraCreditActive && this.isMultiSelectQuestion(index)) return this.bitCount(selection) >= 1;
         return true;
       })
     );
@@ -1070,7 +1347,7 @@ export class CurriculumChallengeSystem extends createSystem({
     }
     const banner = this.document?.getElementById("quiz-title-banner") as any;
     banner?.setProperties?.({
-        src: paintTitleBanner({
+      src: paintTitleBanner({
         canvas: this.titleBannerCanvas,
         text,
         src: C1.title,
@@ -1084,13 +1361,28 @@ export class CurriculumChallengeSystem extends createSystem({
     return (
       type === CODE_PATTERN_CHALLENGE_TYPE ||
       type === LOOP_SORT_CHALLENGE_TYPE ||
-      type === FLOWCHART_SHAPE_CHALLENGE_TYPE
+      type === FLOWCHART_SHAPE_CHALLENGE_TYPE ||
+      type === WHILE_TRACE_CHALLENGE_TYPE ||
+      type === WHILE_PARTS_CHALLENGE_TYPE ||
+      type === WHILE_FACTORIAL_CHALLENGE_TYPE ||
+      type === STRING_OK_ERROR_CHALLENGE_TYPE ||
+      type === STRING_IN_CHALLENGE_TYPE ||
+      type === STRING_CLEAN_CHALLENGE_TYPE
     );
   }
 
   private usesTiltedCodeBoard(): boolean {
     const type = this.challenge?.challengeType;
-    return type === CODE_PATTERN_CHALLENGE_TYPE || type === LOOP_SORT_CHALLENGE_TYPE;
+    return (
+      type === CODE_PATTERN_CHALLENGE_TYPE ||
+      type === LOOP_SORT_CHALLENGE_TYPE ||
+      type === WHILE_TRACE_CHALLENGE_TYPE ||
+      type === WHILE_PARTS_CHALLENGE_TYPE ||
+      type === WHILE_FACTORIAL_CHALLENGE_TYPE ||
+      type === STRING_OK_ERROR_CHALLENGE_TYPE ||
+      type === STRING_IN_CHALLENGE_TYPE ||
+      type === STRING_CLEAN_CHALLENGE_TYPE
+    );
   }
 
   private updateSubmitButton(): void {
@@ -1174,6 +1466,7 @@ export class CurriculumChallengeSystem extends createSystem({
     if (actionName.startsWith("answer-")) return `quiz-answer-${actionName.slice("answer-".length)}`;
     if (actionName.startsWith("step-")) return `quiz-step-${actionName.slice("step-".length)}`;
     if (actionName.startsWith("review-")) return `quiz-review-q-${actionName.slice("review-".length)}`;
+    if (actionName.startsWith("extra-")) return `quiz-review-extra-${actionName.slice("extra-".length)}`;
     if (actionName === "submit") return "quiz-submit";
     if (actionName === "prev") return "quiz-prev";
     if (actionName === "next") return "quiz-next";
@@ -1198,8 +1491,13 @@ export class CurriculumChallengeSystem extends createSystem({
     const hovered = this.hoveredControlId === elementId;
     if (elementId.startsWith("quiz-answer-")) {
       const element = this.document?.getElementById(elementId);
-      if (hovered) this.addClass(element, "answer-hovered");
-      else this.removeClass(element, "answer-hovered");
+      if (this.usesTrueFalseArt()) {
+        this.removeClass(element, "answer-hovered");
+      } else if (hovered) {
+        this.addClass(element, "answer-hovered");
+      } else {
+        this.removeClass(element, "answer-hovered");
+      }
       const index = Number(elementId.slice("quiz-answer-".length));
       if (Number.isInteger(index)) this.paintChoiceFace(index);
       return;
@@ -1217,14 +1515,14 @@ export class CurriculumChallengeSystem extends createSystem({
       return;
     }
     if (elementId === "quiz-result-reset") {
-      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, hovered);
+      this.updateScoreActionButton();
       return;
     }
     if (elementId.startsWith("quiz-step-")) {
       this.updateStepLights();
       return;
     }
-    if (elementId.startsWith("quiz-review-q-")) {
+    if (elementId.startsWith("quiz-review-q-") || elementId.startsWith("quiz-review-extra-")) {
       this.updateReviewQuestionButtons();
     }
   }
@@ -1232,9 +1530,10 @@ export class CurriculumChallengeSystem extends createSystem({
   private updateNavButtons(): void {
     const prev = this.document?.getElementById("quiz-prev");
     const next = this.document?.getElementById("quiz-next");
-    const maxIndex = this.reviewResults
-      ? this.questions.length
-      : Math.max(0, this.questions.length - 1);
+    const questions = this.activeQuestions();
+    const maxIndex = this.currentReview()
+      ? questions.length
+      : Math.max(0, questions.length - 1);
     if (this.questionIndex <= 0) this.addClass(prev, "nav-disabled");
     else this.removeClass(prev, "nav-disabled");
     if (this.questionIndex >= maxIndex) this.addClass(next, "nav-disabled");
@@ -1252,9 +1551,10 @@ export class CurriculumChallengeSystem extends createSystem({
 
   private goNext = (): void => {
     if (!this.isFivePartsChallenge()) return;
-    const maxIndex = this.reviewResults
-      ? this.questions.length
-      : Math.max(0, this.questions.length - 1);
+    const questions = this.activeQuestions();
+    const maxIndex = this.currentReview()
+      ? questions.length
+      : Math.max(0, questions.length - 1);
     if (this.questionIndex >= maxIndex) return;
     if (!this.beginNav()) return;
     this.questionIndex += 1;
@@ -1269,6 +1569,7 @@ export class CurriculumChallengeSystem extends createSystem({
   };
 
   private canRetryFiveParts(): boolean {
+    if (this.hasExtraCredit() && this.hasPerfectMainScore()) return false;
     return (
       this.isFivePartsChallenge() &&
       !this.challengeClosed &&
@@ -1297,10 +1598,12 @@ export class CurriculumChallengeSystem extends createSystem({
       this.questionIndex = 0;
       this.selectedIndex = null;
       this.selections = this.questions.map(() => null);
+      if (this.hasRocket()) this.studentRocket.resetAll();
       this.setResultMode(false);
       this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
       this.renderCurrentView();
       this.startTimer();
+      this.syncStudentRocket();
     });
   };
 
@@ -1318,8 +1621,18 @@ export class CurriculumChallengeSystem extends createSystem({
 
     this.selectedIndex = index;
     if (this.isFivePartsChallenge()) {
+      if (this.extraCreditActive) {
+        this.extraCreditSelections[this.questionIndex] = index;
+        socket.emit("quickChallengeDraft", {
+          quizId: this.challenge.id,
+          extraCredit: true,
+          attemptStartedAt: this.extraCreditStartedAt,
+          answers: this.extraCreditSelections,
+        });
+      } else {
       this.selections[this.questionIndex] = index;
       socket.emit("quickChallengeDraft", { quizId: this.challenge.id, attemptStartedAt: this.attemptStartedAt, answers: this.selections });
+      }
     }
     this.setFeedback("");
     this.updateSelection();
@@ -1352,6 +1665,10 @@ export class CurriculumChallengeSystem extends createSystem({
     }
 
     if (this.isFivePartsChallenge()) {
+      if (this.extraCreditActive) {
+        this.submitExtraCredit();
+        return;
+      }
       if (!this.allQuestionsAnswered()) {
         this.setFeedback("Answer every question before submitting.");
         return;
@@ -1426,6 +1743,12 @@ export class CurriculumChallengeSystem extends createSystem({
           }));
       this.questionIndex = this.questions.length;
       this.renderSummaryView();
+      if (this.hasRocket()) {
+        this.studentRocket.setUnlocks(
+          this.reviewResults.map(item => Boolean(item.correct))
+        );
+        this.syncStudentRocket();
+      }
       return;
     }
 
@@ -1478,6 +1801,7 @@ export class CurriculumChallengeSystem extends createSystem({
     this.addClass(this.document?.getElementById("quiz-prev"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-next"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-review-questions"), "answer-hidden");
+    this.addClass(this.document?.getElementById("quiz-review-extra"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-result-hint"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-steps"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-explanation"), "answer-hidden");
@@ -1523,6 +1847,7 @@ export class CurriculumChallengeSystem extends createSystem({
       durationSeconds: this.challenge.durationSeconds,
       clockText: `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`,
       caption: "TIME REMAINING",
+      clockSrc: C1.clock,
       onReady: () => this.updateTimer(),
     });
     const face = this.document?.getElementById("quiz-timer-progress") as any;
@@ -1576,9 +1901,9 @@ export class CurriculumChallengeSystem extends createSystem({
           dimmed = true;
         }
       } else if (this.isChoiceSelected(index, selected)) {
-        this.addClass(button, "answer-selected");
+          this.addClass(button, "answer-selected");
       } else if (tfArt && selected !== null && index < 2) {
-        this.addClass(button, "answer-dimmed");
+          this.addClass(button, "answer-dimmed");
         dimmed = true;
       }
       this.paintChoiceFace(index);
@@ -1594,20 +1919,35 @@ export class CurriculumChallengeSystem extends createSystem({
 
   private paintTrueFalseFace(index: number, option: string): void {
     const isTrue = option.trim().toLowerCase() === "true";
+    const src = isTrue ? C1.yes : C1.no;
+    const hover = this.hoveredControlId === `quiz-answer-${index}`;
     const button = this.document?.getElementById(`quiz-answer-${index}`) as any;
     const face = this.document?.getElementById(`quiz-answer-face-${index}`) as any;
     button?.setProperties?.({ width: 36, height: 21 });
     this.removeClass(face, "answer-hidden");
+    const layout = { width: 36, height: 21, keepAspectRatio: true };
+    if (!hover) {
+      face?.setProperties?.({ ...layout, src });
+      return;
+    }
+    const faceId = `quiz-answer-face-${index}`;
+    let canvas = this.hudPlateCanvases.get(faceId);
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      this.hudPlateCanvases.set(faceId, canvas);
+    }
     face?.setProperties?.({
-      src: isTrue ? C1.yes : C1.no,
-      width: 36,
-      height: 21,
-      keepAspectRatio: true,
+      ...layout,
+      src: paintHoverArt({
+        canvas,
+        src,
+        onReady: () => this.paintTrueFalseFace(index, option),
+      }),
     });
   }
 
   private paintChoiceFace(index: number): void {
-    const current = this.questions[this.questionIndex];
+    const current = this.currentQuestion();
     const option = current?.options[index];
     const face = this.document?.getElementById(`quiz-answer-face-${index}`);
     if (!option || !face) return;
@@ -1690,6 +2030,7 @@ export class CurriculumChallengeSystem extends createSystem({
       result.correct ? "quiz-result-correct" : "quiz-result-wrong"
     );
     this.addClass(this.document?.getElementById("quiz-review-questions"), "answer-hidden");
+    this.addClass(this.document?.getElementById("quiz-review-extra"), "answer-hidden");
     this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
     this.removeClass(this.document?.getElementById("quiz-result-time"), "answer-hidden");
     this.setResultMode(true);
@@ -1825,7 +2166,9 @@ export class CurriculumChallengeSystem extends createSystem({
         const distance = 2.4;
         entity.object3D.position.copy(eye).addScaledVector(direction, distance);
         entity.object3D.quaternion.copy(orientation);
-        if (this.isFivePartsChallenge() && !this.isSingleBoardChallenge()) {
+        if (this.hasRocket()) {
+          entity.object3D.position.add(new Vector3(-0.55, 0, 0).applyQuaternion(entity.object3D.quaternion));
+        } else if (this.isFivePartsChallenge() && !this.isSingleBoardChallenge()) {
           const left = new Vector3(-0.35, 0, 0).applyQuaternion(entity.object3D.quaternion);
           entity.object3D.position.add(left);
         }
@@ -1850,6 +2193,7 @@ export class CurriculumChallengeSystem extends createSystem({
     }
 
     (window as any).isCodePatternChallengeOpen = visible;
+    this.syncStudentRocket();
 
     window.dispatchEvent(
       new CustomEvent(
@@ -1936,8 +2280,15 @@ export class CurriculumChallengeSystem extends createSystem({
     );
     const raycaster = new Raycaster();
     raycaster.setFromCamera(pointer, this.camera);
+    if (this.desktopRocketDragging) {
+      this.studentRocket.updateDrag(raycaster);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (this.dndDragIndex === null) {
-      const target = this.getPanelAction(raycaster)?.actionName ?? "";
+      const target = this.hasRocket() && this.studentRocket.hitLaunch(raycaster)
+        ? "launch" : this.getPanelAction(raycaster)?.actionName ?? "";
       if (target && target !== this.hoveredDesktopAction) this.sounds.hover();
       this.hoveredDesktopAction = target;
       this.setHoveredControl(this.hoverIdFromAction(target));
@@ -1948,6 +2299,16 @@ export class CurriculumChallengeSystem extends createSystem({
   };
 
   private handleDesktopRocketUp = (event: PointerEvent): void => {
+    if (this.desktopRocketDragging) {
+      this.desktopRocketDragging = false;
+      if (this.renderer.domElement.hasPointerCapture?.(event.pointerId)) {
+        this.renderer.domElement.releasePointerCapture?.(event.pointerId);
+      }
+      this.studentRocket.endDrag();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (this.dndDragIndex === null) return;
     const cardIndex = this.dndDragIndex;
     this.dndDragIndex = null;
@@ -2142,7 +2503,7 @@ export class CurriculumChallengeSystem extends createSystem({
     const stringOkError = this.challenge?.challengeType === STRING_OK_ERROR_CHALLENGE_TYPE;
     const stringIn = this.challenge?.challengeType === STRING_IN_CHALLENGE_TYPE;
     const stringClean = this.challenge?.challengeType === STRING_CLEAN_CHALLENGE_TYPE;
-    const presentation = this.questions[this.questionIndex]?.presentation;
+    const presentation = this.currentQuestion()?.presentation;
     const lines = presentation?.codeLines ?? [];
     const mono = whileTrace || whileParts || whileFactorial || stringOkError || stringIn || stringClean;
     canvas.width = whileTrace ? 1180 : 920;
@@ -2314,6 +2675,10 @@ export class CurriculumChallengeSystem extends createSystem({
   }
 
   update(): void {
+    const now = performance.now();
+    const delta = this.lastRocketFrameAt ? Math.min(0.05, (now - this.lastRocketFrameAt) / 1000) : 1 / 60;
+    this.lastRocketFrameAt = now;
+    if (this.hasRocket()) { this.studentRocket.update(delta); this.pollRocketXrInput(); }
     if ((window as any).isCodePatternChallengeOpen) {
       this.positionDesktopPanel();
       this.bringQuizPanelForward();
@@ -2329,6 +2694,67 @@ export class CurriculumChallengeSystem extends createSystem({
     if (bounds) frameDesktopPanel(panel, this.camera, bounds);
   }
 
+  private syncStudentRocket(): void {
+    const panel = (window as any).codePatternChallengeEntity?.object3D;
+    const show = Boolean(panel?.visible) && this.hasRocket();
+    if (!show || !panel) {
+      this.studentRocket.setVisible(false);
+      return;
+    }
+    this.studentRocket.attach(panel, new Vector3(2.08, -0.58, 0.78), -0.62);
+    this.studentRocket.setVisible(true);
+    if (this.reviewResults) {
+      this.studentRocket.setUnlocks(this.reviewResults.map(item => Boolean(item.correct)));
+    }
+    this.studentRocket.refreshPointerEvents();
+  }
+
+  private pollRocketXrInput(): void {
+    if (
+      !this.renderer.xr.isPresenting ||
+      !(window as any).isCodePatternChallengeOpen ||
+      !this.hasRocket()
+    ) {
+      this.xrRocketDragging = false;
+      this.lastXrTriggerDown = false;
+      this.hoveringRocketLaunch = false;
+      return;
+    }
+    const session = this.renderer.xr.getSession();
+    const rightInput = session
+      ? [...session.inputSources].find(source => source.handedness === "right")
+      : undefined;
+    const triggerHeld = Boolean(rightInput?.gamepad?.buttons?.[0]?.pressed);
+    const raycaster = this.getXrRocketRaycaster();
+    if (!raycaster) return;
+    const hoveringLaunch = this.studentRocket.hitLaunch(raycaster);
+    if (hoveringLaunch && !this.hoveringRocketLaunch) this.sounds.hover();
+    this.hoveringRocketLaunch = hoveringLaunch;
+    if (triggerHeld && !this.lastXrTriggerDown) {
+      this.xrRocketDragging = this.studentRocket.beginDrag(raycaster);
+      if (this.xrRocketDragging) this.sounds.click();
+    } else if (this.xrRocketDragging && triggerHeld) {
+      this.studentRocket.updateDrag(raycaster);
+    } else if (this.xrRocketDragging && !triggerHeld) {
+      this.studentRocket.endDrag();
+      this.xrRocketDragging = false;
+    }
+    this.lastXrTriggerDown = triggerHeld;
+  }
+
+  private getXrRocketRaycaster(): Raycaster | null {
+    const raySpace = (this.world as any).player?.raySpaces?.right;
+    if (!raySpace) return null;
+    raySpace.updateWorldMatrix(true, true);
+    const origin = new Vector3();
+    const direction = new Vector3(0, 0, -1);
+    const rotation = new Quaternion();
+    raySpace.getWorldPosition(origin);
+    raySpace.getWorldQuaternion(rotation);
+    direction.applyQuaternion(rotation).normalize();
+    return new Raycaster(origin, direction);
+  }
+
   private pollDndXrInput(): void {
     if (!this.renderer.xr.isPresenting || this.submitted || !this.isMultiSelectQuestion()) {
       this.lastXrTriggerDown = false;
@@ -2340,15 +2766,15 @@ export class CurriculumChallengeSystem extends createSystem({
       : undefined;
     const triggerHeld = Boolean(rightInput?.gamepad?.buttons?.[0]?.pressed);
     if (triggerHeld && !this.lastXrTriggerDown) {
-      const raySpace = (this.world as any).player?.raySpaces?.right;
+    const raySpace = (this.world as any).player?.raySpaces?.right;
       if (raySpace) {
-        raySpace.updateWorldMatrix(true, true);
-        const origin = new Vector3();
-        const direction = new Vector3(0, 0, -1);
-        const rotation = new Quaternion();
-        raySpace.getWorldPosition(origin);
-        raySpace.getWorldQuaternion(rotation);
-        direction.applyQuaternion(rotation).normalize();
+    raySpace.updateWorldMatrix(true, true);
+    const origin = new Vector3();
+    const direction = new Vector3(0, 0, -1);
+    const rotation = new Quaternion();
+    raySpace.getWorldPosition(origin);
+    raySpace.getWorldQuaternion(rotation);
+    direction.applyQuaternion(rotation).normalize();
         const cardIndex = this.hitDndCard(new Raycaster(origin, direction));
         if (cardIndex !== null) this.togglePlacementCard(cardIndex);
       }
@@ -2406,5 +2832,6 @@ export class CurriculumChallengeSystem extends createSystem({
     socket.off("quickChallengeStarted", this.startChallenge);
     socket.off("quickChallengeResult", this.showResult);
     socket.off("quickChallengeEnded", this.endChallenge);
+    socket.off('quickChallengeExtraCreditRestored', this.restoreExtraCredit);
   }
 }

@@ -77,6 +77,7 @@ export interface RoomRecord {
 }
 
 export interface QuickChallengeQuestion {
+  extraCredit?: boolean;
   presentation?: ChallengePresentation;
   id?: string;
   prompt: string;
@@ -88,6 +89,13 @@ export interface QuickChallengeQuestion {
 }
 
 export interface QuickChallengeStudentProgress {
+  extraCredit?: {
+    answers: QuickChallengeStudentProgress['answers'];
+    attemptCount: number;
+    attemptStartedAt: number;
+    completed: boolean;
+    finishedAt?: number;
+  };
   /** A deliberate retry gets its own persisted attempt; the class timer stays shared. */
   attemptStartedAt?: number;
   answers: Array<{
@@ -117,6 +125,7 @@ export interface QuickChallenge {
   questionIndex?: number;
   totalQuestions?: number;
   questions?: QuickChallengeQuestion[];
+  extraCreditQuestions?: QuickChallengeQuestion[];
   answers: Map<string, {
     selectedIndex: number;
     correct: boolean;
@@ -145,6 +154,7 @@ export interface QuickChallengeReview {
 export type Challenge2Category = "input" | "output" | "both" | "storage";
 
 export interface Challenge2StudentProgress {
+  returnedAt?: number;
   completedItemIds: Set<string>;
   attempts: number;
   wrongAttempts: number;
@@ -154,6 +164,7 @@ export interface Challenge2StudentProgress {
 }
 
 export interface Challenge2Session {
+  returnAfterCompleteSeconds?: number;
   activityId: number;
   questions: Array<{ id: number; options: any; correct_answer: { category: Challenge2Category } }>;
   participants: Map<string, string>;

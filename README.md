@@ -431,7 +431,7 @@ those tools further needs its own compatibility review.
 
 ## Curriculum questions and saved responses
 
-All nine curriculum challenges load their questions, code examples, instructions,
+All curriculum challenges load their questions, code examples, instructions,
 options and grading keys from Supabase. Opening the dashboard only reads content;
 it never seeds or overwrites questions. No lesson question catalogs are bundled
 into the student app. Missing content produces an error instead of a source-code fallback.
@@ -488,6 +488,24 @@ multi-selection. For example, OK/Error options `["OK", "Error"]` use index `0`
 for OK and `1` for Error. Correct answers stay on the server until submission.
 The Course 99 Day 2 Challenge 1 loop-count answer is corrected to three iterations.
 
+Course 99 Week 1 Day 2 uses videos 01–03 → Challenge 1 (180), videos 04–07 →
+Challenge 2 (181), and videos 08–11 → Challenge 3 (182). Challenges 1 and 3 have
+five main questions and three bonus questions. Bonus rows use `options.extra_credit: true`
+in the existing question table; all prompts, code, choices and grading keys remain
+in Supabase. A perfect main score unlocks bonus work. The server grades submissions,
+limits bonus retries, and saves each attempt (including partial work on Stop/timeout)
+with the main answers retained. It also restores bonus progress on reconnect.
+
+Challenge 2 loads five device records from database `drag_drop` questions. Its
+`options.completion_return_seconds` controls the completed student's return delay
+(30 seconds for this lesson). Old loop questions remain archived in the same table
+with `options.archived: true` and their IDs intact for historical response links.
+No dashboard read seeds, overwrites or deletes lesson questions.
+
+Run `npm run build` then `npm run test:course99-day2` for an isolated live test of
+both bonus rounds and the device challenge, including server grading, retries,
+reconnect, duplicate submissions and stored responses. The test cleans up its own data.
+
 Submitted attempts save to `challenge_results` (participant, activity, attempt,
 score and status). Every question's selected answer and correctness save to
 `challenge_responses`, linked by `challenge_result_id` and `question_id`.
@@ -508,7 +526,7 @@ a temporary course/users, verifies joins, media, challenges and game results, th
 removes its own records. The existing curriculum and student results are preserved.
 
 After `npm run build`, `npm run test:curriculum` runs the compiled production server
-on a temporary local port and tests all nine curriculum challenges against Supabase.
+on a temporary local port and tests the eight question-based curriculum challenges against Supabase.
 It creates its own temporary course, changes fixture content to verify database
 edits control the UI and grading, checks submissions/retries/partial saves, and
 deletes only its test records. It does not add test results to the real courses.

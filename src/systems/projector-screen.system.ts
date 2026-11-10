@@ -12,7 +12,6 @@ import {
 import * as THREE from "three";
 import {ProjectorScreenComponent} from "../components/projector-screen.component";
 import { CLASSROOM_BOARD_CONTENT } from "../classroom/board-content";
-import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-catalog";
 import { socket } from "../network/socket-client";
 
 type BoardChallengeResults = {
@@ -25,6 +24,7 @@ type BoardChallengeResults = {
     commonErrors?: Array<{
         itemId?: string;
         itemName?: string;
+        imagePath?: string;
         selectedCategory?: string;
         correctCategory?: string;
         count?: number;
@@ -297,7 +297,7 @@ export class ProjectorScreenSystem extends createSystem({
 
         errors.forEach((error, index) => {
             const y = 236 + index * 49;
-            const image = this.getMistakeImage(error.itemId ?? "");
+            const image = this.getMistakeImage(error.imagePath);
             if (image?.complete && image.naturalWidth > 0) {
                 context.drawImage(image, 530, y, 40, 40);
             } else {
@@ -324,16 +324,14 @@ export class ProjectorScreenSystem extends createSystem({
     }
 
     /** Load and cache the existing 2D Challenge 2 device image. */
-    private getMistakeImage(itemId: string): HTMLImageElement | undefined {
-        if (!itemId) return undefined;
-        const cached = this.mistakeImages.get(itemId);
+    private getMistakeImage(imagePath?: string): HTMLImageElement | undefined {
+        if (!imagePath) return undefined;
+        const cached = this.mistakeImages.get(imagePath);
         if (cached) return cached;
-        const item = CHALLENGE_2_ITEMS.find(entry => entry.id === itemId);
-        if (!item?.imagePath) return undefined;
         const image = new Image();
         image.onload = () => this.redrawBoardStatus();
-        image.src = item.imagePath;
-        this.mistakeImages.set(itemId, image);
+        image.src = imagePath;
+        this.mistakeImages.set(imagePath, image);
         return image;
     }
 

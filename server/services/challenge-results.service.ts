@@ -14,15 +14,18 @@ async function persist(id: string, attempts: Parameters<typeof writeChallengeAtt
     });
 }
 export function saveChallengeResponses(challenge: QuickChallenge, reason: string) {
-    if (!challenge.activityId || !challenge.questions?.every(q => q.id))
+    const questions = [...(challenge.questions ?? []), ...(challenge.extraCreditQuestions ?? [])];
+    if (!challenge.activityId || !questions.length || !questions.every(q => q.id))
         return Promise.reject(Error('Missing database challenge/question identity'));
     const attempts = [];
     for (const [socketId, participantId] of challenge.responseParticipants ?? []) {
         const progress = challenge.studentProgress.get(socketId);
-        if (reason === 'completed' && !progress?.completed)
+        if (reason === 'completed' && (!progress?.completed || (progress.extraCredit && !progress.extraCredit.completed)))
             continue;
-        const answers = challenge.questions.map((q, i) => {
-            const answer = progress?.answers.find(a => a.questionIndex === i);
+        const answers = questions.map((q, i) => {
+            const mainCount = challenge.questions?.length ?? 0;
+            const source = i < mainCount ? progress?.answers : progress?.extraCredit?.answers;
+            const answer = source?.find(a => a.questionIndex === (i < mainCount ? i : i - mainCount));
             const selectedIndices = q.correctIndices
                 ? q.options.map((_, index) => index).filter(index => answer ? ((answer.selectedIndex >> index) & 1) === 1 : false)
                 : [];
@@ -40,8 +43,8 @@ export function saveChallengeResponses(challenge: QuickChallenge, reason: string
                     : null
             };
         });
-        attempts.push({ participantId: Number(participantId), activityId: challenge.activityId, startedAt: progress?.attemptStartedAt ?? challenge.startedAt,
-            finishedAt: progress?.finishedAt ?? Date.now(), completed: !!progress?.completed, score: answers.filter(a => a.is_correct).length, answers });
+        attempts.push({ participantId: Number(participantId), activityId: challenge.activityId, startedAt: progress?.extraCredit?.attemptStartedAt ?? progress?.attemptStartedAt ?? challenge.startedAt,
+            finishedAt: progress?.extraCredit ? progress.extraCredit.finishedAt ?? Date.now() : progress?.finishedAt ?? Date.now(), completed: progress?.extraCredit ? progress.extraCredit.completed : !!progress?.completed, score: answers.filter(a => a.is_correct).length, answers });
     }
     return persist(challenge.id, attempts);
 }

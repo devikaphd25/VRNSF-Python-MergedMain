@@ -455,6 +455,11 @@
     height: 32;
   }
 
+  .quiz-score-hero-compact {
+    width: 78;
+    height: 24;
+  }
+
   .quiz-result-hint {
     color: #b9e7f2;
     font-size: 2.1;
@@ -478,6 +483,19 @@
     font-style: italic;
     font-weight: 500;
     font-family: inter;
+  }
+
+  .quiz-review-stack {
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.2;
+  }
+
+  .quiz-review-stack-extra {
+    gap: 6.4;
+    padding-top: 1.2;
+    padding-bottom: 1.6;
   }
 
   .quiz-review-row {
@@ -670,6 +688,7 @@
           <Image id="quiz-score-hero" class="quiz-score-hero answer-hidden" src="/textures/quiz/icons/check.png" />
           <Text id="quiz-result-status" class="quiz-result-status">SCORE</Text>
           <Text id="quiz-result-answer" class="quiz-result-answer"></Text>
+          <Panel id="quiz-review-stack" class="quiz-review-stack">
           <Panel id="quiz-review-questions" class="quiz-review-row answer-hidden">
             <Button id="quiz-review-q-0" class="quiz-review-q"><Image id="quiz-review-glyph-0" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
             <Button id="quiz-review-q-1" class="quiz-review-q"><Image id="quiz-review-glyph-1" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
@@ -678,6 +697,12 @@
             <Button id="quiz-review-q-4" class="quiz-review-q"><Image id="quiz-review-glyph-4" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
             <Button id="quiz-review-q-5" class="quiz-review-q answer-hidden"><Image id="quiz-review-glyph-5" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
             <Button id="quiz-review-q-6" class="quiz-review-q answer-hidden"><Image id="quiz-review-glyph-6" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+          </Panel>
+          <Panel id="quiz-review-extra" class="quiz-review-row answer-hidden">
+            <Button id="quiz-review-extra-0" class="quiz-review-q"><Image id="quiz-review-extra-glyph-0" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-extra-1" class="quiz-review-q"><Image id="quiz-review-extra-glyph-1" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+            <Button id="quiz-review-extra-2" class="quiz-review-q"><Image id="quiz-review-extra-glyph-2" class="quiz-review-glyph" src="/textures/quiz/icons/check.png" /></Button>
+          </Panel>
           </Panel>
           <Text id="quiz-result-hint" class="quiz-result-hint answer-hidden">tap to review</Text>
           <Text id="quiz-result-time" class="quiz-result-time">Time taken: 0.0 seconds</Text>

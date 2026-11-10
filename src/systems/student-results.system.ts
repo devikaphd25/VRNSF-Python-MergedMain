@@ -15,7 +15,6 @@ import {
 } from "@iwsdk/core";
 import * as THREE from "three";
 
-import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-catalog";
 import { socket } from "../network/socket-client";
 import { canUsePresentationBoardView } from "../student/presentation-board-control";
 import { setPanelRayInteraction } from "../ui/panel-ray-interaction";
@@ -184,16 +183,13 @@ export class StudentResultsSystem extends createSystem({
       const mistake = personalMistakes[index];
       this.setDisplay(`student-mistake-card-${row}`, Boolean(mistake));
       if (!mistake) continue;
-      const configuredItem = CHALLENGE_2_ITEMS.find(
-        item => item.id === mistake.itemId
-      );
       const image = this.document?.getElementById(
         `student-mistake-image-${row}`
       ) as UIKit.Image;
-      image?.setProperties({ src: configuredItem?.imagePath });
+      image?.setProperties({ src: mistake.imagePath });
       this.setText(
         `student-mistake-device-${row}`,
-        mistake.itemName ?? configuredItem?.name ?? "Device"
+        mistake.itemName ?? "Device"
       );
       this.setText(
         `student-mistake-wrong-${row}`,

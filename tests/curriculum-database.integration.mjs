@@ -41,12 +41,12 @@ try {
     for (const dayNumber of dayNumbers) {
       const sourceDay = await value(db.from('days').select('id').eq('week_id', sourceWeek.id).eq('day_number', dayNumber).single());
       const day = await value(db.from('days').insert({ week_id: week.id, day_number: dayNumber, title: 'Test day' }).select().single()); dayIds.push(day.id);
-      const sourceActivities = await value(db.from('activities').select('*').eq('day_id', sourceDay.id).eq('activity_type', 'challenge').order('activity_order'));
-      assert.equal(sourceActivities.length, 3);
+      const sourceActivities = await value(db.from('activities').select('*').eq('day_id', sourceDay.id).eq('activity_type', 'challenge').neq('activity_key', 'drag_drop').order('activity_order'));
+      assert.equal(sourceActivities.length, sourceCode === 'CSDP-99' && dayNumber === 2 ? 2 : 3);
       const activities = [];
       for (const [index, source] of sourceActivities.entries()) {
         const activity = await value(db.from('activities').insert({ week_id: week.id, day_id: day.id, activity_key: source.activity_key, activity_type: 'challenge', title: `Database title ${source.activity_key}`, activity_order: index + 1 }).select().single()); activityIds.push(activity.id);
-        const sourceQuestions = await value(db.from('challenge_questions').select('*').eq('activity_id', source.id).order('question_order'));
+        const sourceQuestions = (await value(db.from('challenge_questions').select('*').eq('activity_id', source.id).order('question_order'))).filter(question => !question.options?.extra_credit && !question.options?.archived);
         const loaded = await loadDatabaseChallengeQuestions(source, true);
         for (const question of sourceQuestions) {
           if (!question.options?.presentation) {
@@ -80,7 +80,7 @@ try {
     const teacher = await connect(teacherUser, session), pupil = await connect(studentUser, session, join);
     const before = await value(db.from('challenge_questions').select('*').in('activity_id', group.activities.map(a => a.id)).order('id'));
     const content = await (await fetch(base + '/api/instructor-content?sessionId=' + session.room_id)).json();
-    assert.equal(content.activities.length, 3);
+    assert.equal(content.activities.length, group.activities.length);
     assert.deepEqual(await value(db.from('challenge_questions').select('*').in('activity_id', group.activities.map(a => a.id)).order('id')), before, 'Reading the dashboard must never rewrite questions');
     for (const activity of group.activities) {
       const studentStarted = event(pupil, 'quickChallengeStarted'), teacherStarted = event(teacher, 'quickChallengeStartedForInstructor');
@@ -163,8 +163,8 @@ try {
     await new Promise((resolve, reject) => teacher.emit('endClass', {}, reply => reply.success ? resolve() : reject(Error(reply.message))));
     teacher.disconnect(); pupil.disconnect();
   }
-  assert.equal(checkedChallenges, 9); assert.equal(checkedResponses, 51);
-  console.log('PASS all 9 challenges / 51 responses, exact multi-select, wrong answers, three attempts, duplicate submissions and read-only dashboard');
+  assert.equal(checkedChallenges, 8); assert.equal(checkedResponses, 43);
+  console.log('PASS all 8 question challenges / 43 main responses, exact multi-select, wrong answers, three attempts, duplicate submissions and read-only dashboard');
 } catch (error) { console.error(log.slice(-5000)); throw error; }
 finally {
   for (const socket of sockets) socket.disconnect();

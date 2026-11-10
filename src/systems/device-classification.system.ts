@@ -24,10 +24,9 @@ import {
   type Challenge2DropBox
 } from "../challenges/device-classification/drop-boxes";
 import {
-  CHALLENGE_2_ITEMS,
   type Challenge2Category,
   type Challenge2Item
-} from "../challenges/device-classification/device-catalog";
+} from "../challenges/device-classification/device-types";
 import { socket } from "../network/socket-client";
 
 // ============================================================
@@ -103,7 +102,8 @@ export class DeviceClassificationSystem extends createSystem({
   private challengeStartedAt = 0;
   private challengeDurationSeconds = 180;
   private lastCountdownSecond = -1;
-  private items = [...CHALLENGE_2_ITEMS];
+  private items: Challenge2Item[] = [];
+  private returnAfterCompleteMs?: number;
   // Index of the current item in this.items.
   private currentIndex = 0;
   private entryPending = false;
@@ -136,6 +136,7 @@ export class DeviceClassificationSystem extends createSystem({
   private desktopPointer = new THREE.Vector2();
   private desktopDragPlane = new THREE.Plane();
   private desktopDragOffset = new THREE.Vector3();
+  private returnTimer?: number;
 
   /** Connect release events, browser events, and temporary test commands. */
   init(): void {
@@ -201,6 +202,7 @@ export class DeviceClassificationSystem extends createSystem({
       );
       delete (window as any).startChallenge2;
       delete (window as any).stopChallenge2;
+      this.clearReturnTimer();
       this.disposeScene();
     });
   }
@@ -252,9 +254,12 @@ export class DeviceClassificationSystem extends createSystem({
     id?: string;
     durationSeconds?: number;
     startedAt?: number;
-    items?: Array<(typeof CHALLENGE_2_ITEMS)[number]>;
+    items?: Challenge2Item[];
+    returnAfterCompleteSeconds?: number;
   }): void => {
-    if(payload.items?.length)this.items=payload.items;
+    if (!payload.items?.length) return;
+    this.items = payload.items;
+    this.returnAfterCompleteMs = payload.returnAfterCompleteSeconds ? payload.returnAfterCompleteSeconds * 1000 : undefined;
     this.challengeId = payload?.id;
     this.challengeDurationSeconds = Number(payload?.durationSeconds) || 180;
     this.challengeStartedAt = Number(payload?.startedAt) || Date.now();
@@ -288,24 +293,14 @@ export class DeviceClassificationSystem extends createSystem({
   private handleServerEnd = (payload: {
     challengeId?: string;
     finalResults?: unknown;
+    returnAfterCompleteSeconds?: number;
   }): void => {
     if (payload?.challengeId && this.challengeId && payload.challengeId !== this.challengeId) {
       return;
     }
     this.stopChallenge2();
-    if (payload.finalResults) {
-      const finalResults = payload.finalResults as {
-        rankings?: Array<{ studentId?: string; mistakes?: unknown[] }>;
-      };
-      const personal = finalResults.rankings?.find(
-        result => result.studentId === socket.id
-      );
-      if (personal && (!Array.isArray(personal.mistakes) || personal.mistakes.length === 0)) {
-        personal.mistakes = [...this.personalMistakes.values()];
-      }
-      window.dispatchEvent(new CustomEvent("challenge2FinalResult", {
-        detail: finalResults
-      }));
+    if (payload.finalResults && !payload.returnAfterCompleteSeconds) {
+      window.dispatchEvent(new CustomEvent('challenge2FinalResult', { detail: payload.finalResults }));
     }
   };
 
@@ -411,6 +406,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   private startChallenge2Immediately = (): void => {
     if (this.active) return;
+    this.clearReturnTimer();
     this.active = true;
     this.advancing = false;
     this.currentIndex = 0;
@@ -427,6 +423,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   /** Close Challenge 2 and restore the normal classroom/UI state. */
   private stopChallenge2 = (): void => {
+    this.clearReturnTimer();
     this.entryVersion += 1;
     this.entryPending = false;
     if (!this.active && !this.root?.visible) return;
@@ -952,15 +949,36 @@ export class DeviceClassificationSystem extends createSystem({
     this.device.object3D.updateMatrixWorld(true);
   }
 
-  /** Keep the completed scene visible and notify future instructor logic. */
+  /** Keep the completed scene visible, then return this student to class. */
   private finishChallenge(): void {
     this.advancing = false;
     this.updateStatus(
       "Challenge complete!",
-      `${this.items.length} devices classified.`,
+      this.returnAfterCompleteMs ? `Returning to class in ${this.returnAfterCompleteMs / 1000} seconds.` : `${this.items.length} devices classified.`,
       "#86efac"
     );
     window.dispatchEvent(new CustomEvent("challenge2:complete"));
+    this.clearReturnTimer();
+    if (!this.returnAfterCompleteMs) return;
+    this.returnTimer = window.setTimeout(() => {
+      this.returnToClassroomAfterComplete();
+    }, this.returnAfterCompleteMs);
+  }
+
+  private clearReturnTimer(): void {
+    if (this.returnTimer === undefined) return;
+    window.clearTimeout(this.returnTimer);
+    this.returnTimer = undefined;
+  }
+
+  private returnToClassroomAfterComplete(): void {
+    this.returnTimer = undefined;
+    if (!this.active) return;
+    socket.emit('challenge2ReturnToClass', { challengeId: this.challengeId });
+    const transition = (window as any).performActivityEntrance as
+      ((action: () => void) => Promise<void>) | undefined;
+    const leave = () => this.stopChallenge2();
+    void (transition ? transition(leave) : Promise.resolve().then(leave));
   }
 
   /** Notify shared classroom UI when the challenge opens or closes. */

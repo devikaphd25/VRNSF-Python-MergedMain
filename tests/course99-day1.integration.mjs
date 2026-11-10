@@ -56,7 +56,7 @@ function uiHarness(teacher) {
   const studentSource = parsed('src/systems/curriculum-challenge.system.ts');
   compile(`class Student { ${methods(studentSource, ['startChallenge'])} }; globalThis.Student=Student;`);
   const student = new context.Student();
-  Object.assign(student, { layoutStudentShell() {}, paintLeftPanel() {}, renderCurrentView() {}, setVisible: visible => student.visible = visible, startTimer() {}, sync() {} });
+  Object.assign(student, { hasRocket: () => false, layoutStudentShell() {}, paintLeftPanel() {}, renderCurrentView() {}, setVisible: visible => student.visible = visible, startTimer() {}, sync() {} });
   return { instructor, student };
 }
 
