@@ -12,7 +12,7 @@ import {
 import * as THREE from "three";
 import {ProjectorScreenComponent} from "../components/projector-screen.component";
 import { CLASSROOM_BOARD_CONTENT } from "../classroom/board-content";
-import { CHALLENGE_2_ITEMS } from "../challenges/device-classification/device-catalog";
+import { CHALLENGE_2_ITEMS } from "../challenges/csdp99-w1d2-challenge2-dnd/catalog";
 import { socket } from "../network/socket-client";
 
 type BoardChallengeResults = {

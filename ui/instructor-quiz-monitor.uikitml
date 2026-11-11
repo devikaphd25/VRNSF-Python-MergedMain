@@ -562,6 +562,16 @@
                 <Text id="fp-card-counts-7" class="fp-card-counts">0 correct / 0 wrong</Text>
               </Panel>
             </Panel>
+            <Panel id="fp-card-8" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-8" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-8" class="fp-card-body">
+                <Text id="fp-card-label-8" class="fp-card-label">Q4</Text>
+                <Text id="fp-card-q-8" class="fp-card-q">Question 4</Text>
+                <Panel id="fp-bar-track-8" class="fp-bar-track"><Panel id="fp-bar-fill-8" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-8" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-8" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
           </Panel>
         </Panel>
         <Panel id="quiz-five-parts-status" class="fp-status quiz-row-hidden">

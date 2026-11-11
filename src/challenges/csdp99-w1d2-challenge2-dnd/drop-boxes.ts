@@ -1,16 +1,14 @@
 /**
  * Lesson 2 - Challenge 2 reusable drop boxes.
  *
- * These four open-top boxes classify devices as INPUT, OUTPUT, BOTH, or
- * STORAGE. They are designed to be placed inside the existing 360-degree
- * Quick Challenge environment; this file does not create a new classroom or
- * panorama. Drop detection uses each box's bounds, while decorative box
- * meshes are excluded from controller raycasts so they cannot block grabbing
- * or interfere with the student's controller ray.
+ * These open-top boxes keep the existing Challenge 2 drop-box mesh. Labels
+ * change with the current activity. Drop detection uses each box's bounds,
+ * while decorative box meshes are excluded from controller raycasts so they
+ * cannot block grabbing or interfere with the student's controller ray.
  */
 import * as THREE from "three";
 
-import type { Challenge2Category } from "./device-catalog";
+import type { Challenge2Category } from "./catalog";
 
 export type Challenge2DropBox = {
   category: Challenge2Category;
@@ -29,15 +27,30 @@ const DROP_BOX_THEMES: Record<Challenge2Category, DropBoxTheme> = {
   input: { label: "INPUT", color: 0x16b8d4 },
   output: { label: "OUTPUT", color: 0x2563d9 },
   both: { label: "BOTH", color: 0x8b43c6 },
-  storage: { label: "STORAGE", color: 0xd99a20 }
+  storage: { label: "STORAGE", color: 0xd99a20 },
+  initialization: { label: "Missing Initialization", color: 0x16b8d4 },
+  comparison: { label: "Missing Comparison", color: 0x2563d9 },
+  update: { label: "Missing Update", color: 0x8b43c6 },
+  print1: { label: "1st Print", color: 0x16b8d4 },
+  print2: { label: "2nd Print", color: 0x2563d9 },
+  print3: { label: "3rd Print", color: 0x8b43c6 },
+  finalN: { label: "Final Value of n", color: 0xd99a20 }
 };
 
-export const CHALLENGE_2_DROP_BOX_ORDER: readonly Challenge2Category[] = [
-  "input",
-  "output",
-  "both",
-  "storage"
+export const CHALLENGE_2_PART1_BOX_ORDER: readonly Challenge2Category[] = [
+  "initialization",
+  "comparison",
+  "update"
 ];
+
+export const CHALLENGE_2_PART2_BOX_ORDER: readonly Challenge2Category[] = [
+  "print1",
+  "print2",
+  "print3",
+  "finalN"
+];
+
+export const CHALLENGE_2_DROP_BOX_ORDER = CHALLENGE_2_PART1_BOX_ORDER;
 
 // Local positions inside the Challenge 2 root. The root can later be placed
 // in the existing 360-degree Quick Challenge environment as one world-space
@@ -48,7 +61,14 @@ export const CHALLENGE_2_DROP_BOX_POSITIONS: Readonly<
   input: [-0.78, 0, 0],
   output: [-0.26, 0, 0],
   both: [0.26, 0, 0],
-  storage: [0.78, 0, 0]
+  storage: [0.78, 0, 0],
+  initialization: [-0.62, -0.22, 0],
+  comparison: [0, -0.22, 0],
+  update: [0.62, -0.22, 0],
+  print1: [-0.78, -0.34, 0],
+  print2: [-0.26, -0.34, 0],
+  print3: [0.26, -0.34, 0],
+  finalN: [0.78, -0.34, 0]
 };
 
 const BOX_WIDTH = 0.42;
@@ -87,10 +107,18 @@ function createLabelTexture(label: string): THREE.CanvasTexture {
   context.lineWidth = 5;
   context.stroke();
   context.fillStyle = "#ffffff";
-  context.font = "700 64px Arial, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
+  const words = label.trim().split(/\s+/);
+  if (words.length >= 2) {
+    const mid = Math.ceil(words.length / 2);
+    context.font = "700 44px Arial, sans-serif";
+    context.fillText(words.slice(0, mid).join(" "), canvas.width / 2, canvas.height / 2 - 28);
+    context.fillText(words.slice(mid).join(" "), canvas.width / 2, canvas.height / 2 + 28);
+  } else {
+    context.font = "700 64px Arial, sans-serif";
+    context.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -170,7 +198,7 @@ export function createChallenge2DropBox(
     toneMapped: false
   });
   const label = new THREE.Mesh(
-    new THREE.PlaneGeometry(BOX_WIDTH * 0.82, 0.105),
+    new THREE.PlaneGeometry(BOX_WIDTH * 0.9, 0.13),
     labelMaterial
   );
   label.name = "Label";
@@ -220,6 +248,8 @@ export function createChallenge2DropBox(
   };
 }
 
-export function createChallenge2DropBoxes(): Challenge2DropBox[] {
-  return CHALLENGE_2_DROP_BOX_ORDER.map(createChallenge2DropBox);
+export function createChallenge2DropBoxes(
+  order: readonly Challenge2Category[] = CHALLENGE_2_DROP_BOX_ORDER
+): Challenge2DropBox[] {
+  return order.map(createChallenge2DropBox);
 }

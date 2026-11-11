@@ -89,7 +89,7 @@ import { CSDP99_W1D1_CHALLENGE3_QUESTIONS } from "./shared/csdp99-w1d1-challenge
 import { CSDP99_W1D2_CHALLENGE1_QUESTIONS } from "./shared/csdp99-w1d2-challenge1.js";
 import { getCurriculumExtraCredit } from "./shared/curriculum-extra-credit.js";
 import { CSDP99_W1D2_CHALLENGE2_QUESTIONS } from "./shared/csdp99-w1d2-challenge2.js";
-import { CHALLENGE_2_ITEMS } from "./shared/device-classification.js";
+import { CHALLENGE_2_ITEMS, CHALLENGE_2_PROMPT, isChallenge2Category } from "./shared/csdp99-w1d2-challenge2-dnd.js";
 import { CSDP99_W1D2_CHALLENGE3_QUESTIONS } from "./shared/csdp99-w1d2-challenge3.js";
 import { CSDP120_W13D2_CHALLENGE1_QUESTIONS } from "./shared/csdp120-w13d2-challenge1.js";
 import { CSDP120_W13D2_CHALLENGE2_QUESTIONS } from "./shared/csdp120-w13d2-challenge2.js";
@@ -139,7 +139,7 @@ function getChallenge2QuestionStats(session: Challenge2Session) {
     return {
       questionIndex,
       label: `Q${questionIndex + 1}`,
-      prompt: itemName,
+      prompt: String(question.options?.item?.instructor_label ?? itemName),
       correctCount,
       wrongCount,
       accuracy: answered === 0 ? 0 : Math.round((correctCount / answered) * 100),
@@ -904,6 +904,8 @@ io.on("connection", (socket: ClassroomSocket) => {
       if(previous.timeout)clearTimeout(previous.timeout);
       emitQuickChallengeEnded(previous,{stoppedByInstructor:true});
     }
+    const previousChallenge2 = activeChallenge2Sessions.get(roomId);
+    if (previousChallenge2) endChallenge2Session(previousChallenge2, "instructor_stop");
 
     const requestedKey = data.challengeType === TRUE_FALSE_CHALLENGE_TYPE
       ? "true_false"
@@ -986,7 +988,18 @@ io.on("connection", (socket: ClassroomSocket) => {
           q.correct_answer.choice_index >= 0 &&
           q.correct_answer.choice_index < q.options.length
         );
-    if (!questionsValid) throw Error('Challenge questions are missing or invalid');
+    if (curriculumCatalog && !questionsValid) {
+      rows = curriculumCatalog.map((catalog, index) => ({
+        id: index + 1,
+        question_text: catalog.prompt,
+        options: catalog.options,
+        correct_answer: catalog.correctIndices
+          ? { choice_indices: catalog.correctIndices }
+          : { choice_index: catalog.correctIndex },
+      }));
+    } else if (!questionsValid) {
+      throw Error('Challenge questions are missing or invalid');
+    }
     const isFiveParts=true, isDatabaseSeries=activity.activity_key!=='true_false' && !curriculumCatalog;
     const durationSeconds=Math.min(600,Math.max(15,Number(data.durationSeconds)||DEFAULT_CHALLENGE_DURATION_SECONDS));
     const cycleLabel=activity.title;
@@ -1450,11 +1463,13 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
     const {data:loadedQuestions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).order('question_order');
     if(error)throw error;
-    const dbValid = Boolean(loadedQuestions?.length) && loadedQuestions.every(q =>
-      q.question_type === "drag_drop" &&
-      q.options?.item?.id &&
-      ["input", "output", "both", "storage"].includes(q.correct_answer?.category)
-    );
+    const dbValid = Boolean(loadedQuestions?.length) &&
+      loadedQuestions.length === CHALLENGE_2_ITEMS.length &&
+      loadedQuestions.every(q =>
+        q.question_type === "drag_drop" &&
+        q.options?.item?.id &&
+        isChallenge2Category(String(q.correct_answer?.category ?? ""))
+      );
     const questions = dbValid
       ? loadedQuestions
       : CHALLENGE_2_ITEMS.map((item, index) => ({
@@ -1463,6 +1478,10 @@ io.on("connection", (socket: ClassroomSocket) => {
             item: {
               id: item.id,
               name: item.name,
+              part: item.part ?? 1,
+              instructor_label: item.instructorLabel,
+              display_text: item.displayText,
+              code_lines: item.codeLines,
               model_path: item.modelPath,
               image_path: item.imagePath,
               model_rotation_y: item.modelRotationY,
@@ -1471,9 +1490,13 @@ io.on("connection", (socket: ClassroomSocket) => {
           },
           correct_answer: { category: item.category },
         }));
-    const items = questions.map(q => ({
+    const items = questions.map((q, index) => ({
       id: q.options.item.id,
       name: q.options.item.name,
+      part: Number(q.options.item.part) === 2 ? 2 : index < 3 ? 1 : 2,
+      instructorLabel: q.options.item.instructor_label,
+      displayText: q.options.item.display_text,
+      codeLines: q.options.item.code_lines,
       modelPath: q.options.item.model_path,
       imagePath: q.options.item.image_path,
       modelRotationY: q.options.item.model_rotation_y,
@@ -1544,8 +1567,8 @@ io.on("connection", (socket: ClassroomSocket) => {
 
     socket.emit("challenge2StartedForInstructor", {
       id: session.id,
-      question: "Challenge 2: Predict - Devices In & Out",
-      options: ["Input", "Output", "Both", "Storage"],
+      question: `Challenge 2: ${CHALLENGE_2_PROMPT}`,
+      options: ["Missing Initialization", "Missing Comparison", "Missing Update"],
       durationSeconds,
       startedAt: session.startedAt,
       totalItems: session.questions.length,
@@ -1578,7 +1601,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     const expectedCategory = session.questions.find(q=>q.options.item.id===itemId)?.correct_answer.category;
     const progress = session.progress.get(socket.id);
     if (!expectedCategory || !progress || progress.completedItemIds.has(itemId)) return;
-    if (!["input", "output", "both", "storage"].includes(selectedCategory)) return;
+    if (!isChallenge2Category(selectedCategory)) return;
 
     progress.attempts += 1;
     const correct = selectedCategory === expectedCategory;

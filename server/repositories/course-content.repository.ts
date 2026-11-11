@@ -19,7 +19,7 @@ import {
   CSDP99_W1D2_CHALLENGE1_TITLE,
 } from "../../shared/csdp99-w1d2-challenge1.js";
 import { CSDP99_W1D2_CHALLENGE2_TITLE } from "../../shared/csdp99-w1d2-challenge2.js";
-import { CHALLENGE_2_ITEMS } from "../../shared/device-classification.js";
+import { CHALLENGE_2_ITEMS } from "../../shared/csdp99-w1d2-challenge2-dnd.js";
 import {
   CSDP99_W1D2_CHALLENGE3_QUESTIONS,
   CSDP99_W1D2_CHALLENGE3_TITLE,
@@ -132,14 +132,14 @@ async function ensureCsdp99Challenge(
 ) {
     if (courseCodeKey(week.course.course_code) !== courseCode) return;
     if (week.week_number !== weekNumber || week.day.day_number !== dayNumber) return;
-    const { data: existing, error: existingError } = await db
+    const { data: existingRows, error: existingError } = await db
         .from("activities")
         .select("id")
         .eq("day_id", week.day.id)
         .eq("activity_key", activityKey)
-        .maybeSingle();
+        .limit(1);
     if (existingError) throw existingError;
-    let activityId = existing?.id as number | undefined;
+    let activityId = existingRows?.[0]?.id as number | undefined;
     if (!activityId) {
         const { data: last } = await db
             .from("activities")
@@ -184,7 +184,7 @@ async function ensureCsdp99Challenge(
         .gt("question_order", questions.length);
 }
 
-async function ensureDeviceClassificationChallenge(
+async function ensureCsdp99W1d2Challenge2Dnd(
     week: Awaited<ReturnType<typeof weekForSession>>,
 ) {
     if (courseCodeKey(week.course.course_code) !== "CSDP99") return;
@@ -258,6 +258,10 @@ async function ensureDeviceClassificationChallenge(
             item: {
                 id: item.id,
                 name: item.name,
+                part: item.part ?? 1,
+                instructor_label: item.instructorLabel,
+                display_text: item.displayText,
+                code_lines: item.codeLines,
                 model_path: item.modelPath,
                 image_path: item.imagePath,
                 model_rotation_y: item.modelRotationY,
@@ -301,7 +305,11 @@ export async function instructorContent(roomId: string) {
             CSDP99_W1D2_CHALLENGE1_TITLE,
             CSDP99_W1D2_CHALLENGE1_QUESTIONS,
         );
-        await ensureDeviceClassificationChallenge(week);
+        try {
+            await ensureCsdp99W1d2Challenge2Dnd(week);
+        } catch (error) {
+            console.error("[Course content] Could not add Challenge 2 drag-and-drop", error);
+        }
         await ensureCsdp99Challenge(
             week,
             2,

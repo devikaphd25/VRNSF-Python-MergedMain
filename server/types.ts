@@ -146,7 +146,18 @@ export interface QuickChallengeReview {
   elapsedSeconds: number;
 }
 
-export type Challenge2Category = "input" | "output" | "both" | "storage";
+export type Challenge2Category =
+  | "input"
+  | "output"
+  | "both"
+  | "storage"
+  | "initialization"
+  | "comparison"
+  | "update"
+  | "print1"
+  | "print2"
+  | "print3"
+  | "finalN";
 
 export interface Challenge2StudentProgress {
   completedItemIds: Set<string>;

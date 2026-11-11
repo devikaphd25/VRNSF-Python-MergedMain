@@ -826,7 +826,15 @@ export class InstructorDashboardSystem extends createSystem({
           Array.from({ length: this.quizSeriesTotal }, (_, index) => ({
             questionIndex: index,
             label: `Q${index + 1}`,
-            prompt: ["Webcam", "Projector", "Computer", "USB Flash Drive", "Microphone"][index] ?? `Device ${index + 1}`,
+            prompt: [
+              "A missing initialization",
+              "B missing update",
+              "C missing comparison",
+              "1st Print",
+              "2nd Print",
+              "3rd Print",
+              "Final value of n",
+            ][index] ?? `Item ${index + 1}`,
             correctCount: 0,
             wrongCount: 0,
             accuracy: 0
@@ -1582,6 +1590,7 @@ export class InstructorDashboardSystem extends createSystem({
     ];
     const extraCatalog = getCurriculumExtraCredit(this.activeQuiz?.challengeType);
     const extraRow = extraCatalog.length > 0;
+    const isChallenge2Board = this.activeQuizKind === "challenge-2";
     const incoming = this.fivePartsQuestionStats;
     const fallbackMain = Array.from({ length: this.quizSeriesTotal }, (_, index) => ({
       questionIndex: index,
@@ -1608,21 +1617,29 @@ export class InstructorDashboardSystem extends createSystem({
           ? this.extraCreditQuestionStats
           : extraFromMain.length > 0 ? extraFromMain : fallbackExtra)
       : [];
-    const stats = [...mainStats, ...extraStats];
+    let stats = [...mainStats, ...extraStats];
+    if (isChallenge2Board) {
+      const source = incoming.length > 0 ? incoming : fallbackMain;
+      stats = Array.from({ length: 9 }, (_, index) => {
+        if (index < 3) return source[index];
+        if (index >= 5 && index <= 8) return source[index - 2];
+        return undefined;
+      }) as typeof stats;
+    }
 
     for (let row = 1; row <= 10; row += 1) {
       this.addClass(document.getElementById(`quiz-monitor-row-${row}`), "quiz-row-hidden");
     }
 
-    const compact = this.quizSeriesTotal > 5 || extraRow;
+    const compact = this.quizSeriesTotal > 5 || extraRow || isChallenge2Board;
     const board = document.getElementById("quiz-five-parts-board");
     const row2 = document.getElementById("fp-row-2");
     if (compact) this.addClass(board, "fp-board-compact");
     else this.removeClass(board, "fp-board-compact");
-    if (stats[5]) this.removeClass(row2, "quiz-row-hidden");
+    if (stats[5] || isChallenge2Board) this.removeClass(row2, "quiz-row-hidden");
     else this.addClass(row2, "quiz-row-hidden");
 
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 9; index += 1) {
       const stat = stats[index];
       const card = document.getElementById(`fp-card-${index}`);
       const art = document.getElementById(`fp-card-art-${index}`) as any;
@@ -1657,7 +1674,7 @@ export class InstructorDashboardSystem extends createSystem({
           ? PLAYTEST_INSTRUCTOR.question
           : C1I.question
       });
-      const extraCard = extraRow && index >= 5;
+      const extraCard = (extraRow || isChallenge2Board) && index >= 5;
       label?.setProperties({ text: extraCard ? `Q${index - 4}` : `Q${index + 1}` });
       prompt?.setProperties({
         text: this.activeQuiz?.challengeType === FLOWCHART_SHAPE_CHALLENGE_TYPE

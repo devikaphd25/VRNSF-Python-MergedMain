@@ -1,0 +1,12 @@
+export {
+  CHALLENGE_2_CATEGORIES,
+  CHALLENGE_2_ITEMS,
+  CHALLENGE_2_PART1_ITEMS,
+  CHALLENGE_2_PART2_CODE_LINES,
+  CHALLENGE_2_PART2_ITEMS,
+  CHALLENGE_2_PART2_PROMPT,
+  CHALLENGE_2_PROMPT,
+  CHALLENGE_2_TITLE,
+  type Challenge2Category,
+  type Challenge2Item,
+} from "../../../shared/csdp99-w1d2-challenge2-dnd";

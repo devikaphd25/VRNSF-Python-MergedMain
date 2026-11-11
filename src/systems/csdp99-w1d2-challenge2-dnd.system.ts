@@ -1,10 +1,8 @@
 /**
- * Student-side Lesson 2 Challenge 2 prototype.
+ * Student-side CSDP-99 Week 1 Day 2 Challenge 2 drag-and-drop.
  *
- * Uses the dedicated 360-degree Challenge 2 environment, places all
- * gameplay objects once in classroom world space, rotates the current device
- * while idle, and validates controller grab-and-drop releases against the four
- * non-ray-interactive destination boxes.
+ * Uses the dedicated 360-degree Challenge 2 environment and validates
+ * grab-and-drop releases against the destination boxes.
  */
 import {
   createSystem,
@@ -18,16 +16,21 @@ import {
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-import { ClassificationDevice } from "../components/classification-device.component";
+import { Challenge2GrabItem } from "../components/challenge-2-item.component";
 import {
+  CHALLENGE_2_PART1_BOX_ORDER,
+  CHALLENGE_2_PART2_BOX_ORDER,
   createChallenge2DropBoxes,
   type Challenge2DropBox
-} from "../challenges/device-classification/drop-boxes";
+} from "../challenges/csdp99-w1d2-challenge2-dnd/drop-boxes";
 import {
   CHALLENGE_2_ITEMS,
+  CHALLENGE_2_PART2_CODE_LINES,
+  CHALLENGE_2_PART2_PROMPT,
+  CHALLENGE_2_PROMPT,
   type Challenge2Category,
   type Challenge2Item
-} from "../challenges/device-classification/device-catalog";
+} from "../challenges/csdp99-w1d2-challenge2-dnd/catalog";
 import { socket } from "../network/socket-client";
 
 // ============================================================
@@ -50,6 +53,11 @@ const DESKTOP_ROOT_BELOW_CAMERA = 0.75;
 // Positive local Z moves it toward the student, making controller reach and
 // mouse selection easier without moving the fixed panel or destination boxes.
 const DEVICE_LOCAL_POSITION = new THREE.Vector3(0, 0.70, 0.22);
+const SNIPPET_SPACING_X = 0.62;
+const SNIPPET_CARD_WIDTH = 0.52;
+const SNIPPET_CARD_HEIGHT = 0.68;
+const NUMBER_CARD_SIZE = 0.30;
+const PART2_START_DELAY_MS = 10_000;
 // Width and height of the square card that displays the device PNG.
 const DEVICE_CARD_SIZE = 0.42;
 // Slow idle rotation in radians per second. Rotation stops while grabbed.
@@ -70,12 +78,11 @@ type DisabledUi = {
   hadRayInteractable: boolean;
 };
 
-export class DeviceClassificationSystem extends createSystem({
-  // Every ClassificationDevice is updated for idle rotation.
-  devices: { required: [ClassificationDevice] },
-  // This second query only contains a device while a controller is holding it.
+export class Challenge2DndSystem extends createSystem({
+  devices: { required: [Challenge2GrabItem] },
+  // This second query only contains an item while a controller is holding it.
   // Its "disqualify" event fires when Grabbed is removed on release.
-  heldDevices: { required: [ClassificationDevice, Grabbed] }
+  heldDevices: { required: [Challenge2GrabItem, Grabbed] }
 }) {
   // ==========================================================
   // CURRENT CHALLENGE STATE
@@ -87,10 +94,12 @@ export class DeviceClassificationSystem extends createSystem({
   // parent or IWSDK reparents them to the scene and their local X/Z coordinates
   // no longer line up with the question panel in a rotated headset view.
   private rootEntity?: Entity;
-  // The four reusable INPUT, OUTPUT, BOTH, and STORAGE boxes.
+  // The reusable destination boxes for the current Challenge 2 activity.
   private boxes: Challenge2DropBox[] = [];
-  // Only one device question is visible/grabbable at a time.
-  private device?: Entity;
+  // All currently grabbable snippets or devices.
+  private activeDevices: Entity[] = [];
+  // Desktop mouse currently holding this entity.
+  private desktopHeld?: Entity;
   // Correctly classified devices remain visible inside their boxes while the
   // student answers later questions. They are no longer ray-interactive.
   private completedDevices: Entity[] = [];
@@ -105,6 +114,9 @@ export class DeviceClassificationSystem extends createSystem({
   private challengeDurationSeconds = 180;
   private lastCountdownSecond = -1;
   private items = [...CHALLENGE_2_ITEMS];
+  private part: 1 | 2 = 1;
+  private part2Timer?: number;
+  private loopCodeBoard?: THREE.Mesh;
   // Index of the current item in this.items.
   private currentIndex = 0;
   private entryPending = false;
@@ -150,6 +162,7 @@ export class DeviceClassificationSystem extends createSystem({
     socket.on("challenge2Started", this.handleServerStart);
     socket.on("challenge2ItemResult", this.handleServerItemResult);
     socket.on("challenge2Ended", this.handleServerEnd);
+    socket.on("quickChallengeStarted", this.stopFromEvent);
     this.renderer.domElement.addEventListener(
       "pointerdown",
       this.handleDesktopPointerDown,
@@ -181,6 +194,7 @@ export class DeviceClassificationSystem extends createSystem({
       socket.off("challenge2Started", this.handleServerStart);
       socket.off("challenge2ItemResult", this.handleServerItemResult);
       socket.off("challenge2Ended", this.handleServerEnd);
+      socket.off("quickChallengeStarted", this.stopFromEvent);
       this.renderer.domElement.removeEventListener(
         "pointerdown",
         this.handleDesktopPointerDown,
@@ -204,6 +218,7 @@ export class DeviceClassificationSystem extends createSystem({
       delete (window as any).startChallenge2;
       delete (window as any).stopChallenge2;
       this.clearReturnTimer();
+      this.clearPart2Timer();
       this.disposeScene();
     });
   }
@@ -215,23 +230,21 @@ export class DeviceClassificationSystem extends createSystem({
   update(delta: number): void {
     if (!this.active) return;
     this.updateStudentCountdown();
-    if (!this.device?.object3D) return;
-
-    // DistanceGrabbable automatically adds/removes Grabbed during interaction.
-    const isGrabbed =
-      this.device.hasComponent(Grabbed) || this.desktopDragging;
-    if (!isGrabbed && !this.advancing) {
-      this.device.object3D.rotation.y += delta * IDLE_ROTATION_SPEED;
-    }
-
-    if (!isGrabbed) {
+    const held = this.heldDevice();
+    if (!held?.object3D) {
       this.boxes.forEach(box => box.setHighlighted(false));
       return;
     }
 
+    if (!this.isCodeSnippetItem(this.itemForDevice(held))) {
+      if (!this.advancing) {
+        held.object3D.rotation.y += delta * IDLE_ROTATION_SPEED;
+      }
+    }
+
     // Compare world positions because the controller can move the device out
     // of the Challenge 2 root's local coordinate system while it is grabbed.
-    this.device.object3D.getWorldPosition(this.worldPoint);
+    held.object3D.getWorldPosition(this.worldPoint);
     let nearest: Challenge2DropBox | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
 
@@ -308,27 +321,26 @@ export class DeviceClassificationSystem extends createSystem({
     this.desktopRaycaster.setFromCamera(this.desktopPointer, this.camera);
   }
 
-  /** Begin desktop dragging only when the left mouse button hits the device. */
+  /** Begin desktop dragging only when the left mouse button hits a snippet. */
   private handleDesktopPointerDown = (event: PointerEvent): void => {
     if (
       this.renderer.xr.isPresenting ||
       !this.active ||
       this.advancing ||
-      !this.device?.object3D ||
       event.button !== 0
     ) return;
 
     this.updateDesktopRay(event);
-    this.device.object3D.updateMatrixWorld(true);
-    const hit = this.desktopRaycaster.intersectObject(
-      this.device.object3D,
-      true
-    )[0];
-    if (!hit) return;
+    const target = this.activeDevices.find(device => {
+      if (!device.object3D) return false;
+      device.object3D.updateMatrixWorld(true);
+      return this.desktopRaycaster.intersectObject(device.object3D, true).length > 0;
+    });
+    if (!target?.object3D) return;
 
     const deviceWorldPosition = new THREE.Vector3();
     const cameraForward = new THREE.Vector3();
-    this.device.object3D.getWorldPosition(deviceWorldPosition);
+    target.object3D.getWorldPosition(deviceWorldPosition);
     this.camera.getWorldDirection(cameraForward);
     this.desktopDragPlane.setFromNormalAndCoplanarPoint(
       cameraForward,
@@ -343,6 +355,7 @@ export class DeviceClassificationSystem extends createSystem({
     // Preserve the exact point where the user clicked instead of snapping the
     // device's center directly under the cursor.
     this.desktopDragOffset.copy(deviceWorldPosition).sub(planeHit);
+    this.desktopHeld = target;
     this.desktopDragging = true;
     this.renderer.domElement.setPointerCapture?.(event.pointerId);
     event.preventDefault();
@@ -351,7 +364,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   /** Move the held device along a plane parallel to the student's view. */
   private handleDesktopPointerMove = (event: PointerEvent): void => {
-    if (!this.desktopDragging || !this.device?.object3D) return;
+    if (!this.desktopDragging || !this.desktopHeld?.object3D) return;
 
     this.updateDesktopRay(event);
     const planeHit = new THREE.Vector3();
@@ -360,10 +373,10 @@ export class DeviceClassificationSystem extends createSystem({
     }
 
     const targetWorld = planeHit.add(this.desktopDragOffset);
-    const parent = this.device.object3D.parent;
+    const parent = this.desktopHeld.object3D.parent;
     if (parent) parent.worldToLocal(targetWorld);
-    this.device.object3D.position.copy(targetWorld);
-    this.device.object3D.updateMatrixWorld(true);
+    this.desktopHeld.object3D.position.copy(targetWorld);
+    this.desktopHeld.object3D.updateMatrixWorld(true);
     event.preventDefault();
     event.stopPropagation();
   };
@@ -372,10 +385,12 @@ export class DeviceClassificationSystem extends createSystem({
   private handleDesktopPointerUp = (event: PointerEvent): void => {
     if (!this.desktopDragging) return;
     this.desktopDragging = false;
+    const held = this.desktopHeld;
+    this.desktopHeld = undefined;
     if (this.renderer.domElement.hasPointerCapture?.(event.pointerId)) {
       this.renderer.domElement.releasePointerCapture?.(event.pointerId);
     }
-    if (this.device) this.handleRelease(this.device);
+    if (held) this.handleRelease(held);
     event.preventDefault();
     event.stopPropagation();
   };
@@ -404,9 +419,11 @@ export class DeviceClassificationSystem extends createSystem({
     this.active = true;
     this.advancing = false;
     this.currentIndex = 0;
+    this.part = 1;
     if (!this.challengeStartedAt) this.challengeStartedAt = Date.now();
 
     this.createSceneIfNeeded();
+    this.rebuildBoxes();
     this.positionRootInFrontOfCamera();
     if (this.root) this.root.visible = true;
     this.disableOtherStudentUi();
@@ -418,6 +435,7 @@ export class DeviceClassificationSystem extends createSystem({
   /** Close Challenge 2 and restore the normal classroom/UI state. */
   private stopChallenge2 = (): void => {
     this.clearReturnTimer();
+    this.clearPart2Timer();
     this.entryVersion += 1;
     this.entryPending = false;
     if (!this.active && !this.root?.visible) return;
@@ -425,8 +443,10 @@ export class DeviceClassificationSystem extends createSystem({
     this.advancing = false;
     this.desktopDragging = false;
     this.challengeId = undefined;
-    this.disposeDevice();
+    this.desktopHeld = undefined;
+    this.disposeActiveDevices();
     this.disposeCompletedDevices();
+    this.disposeLoopCodeBoard();
     this.boxes.forEach(box => box.setHighlighted(false));
     if (this.root) this.root.visible = false;
     this.restoreOtherStudentUi();
@@ -444,9 +464,16 @@ export class DeviceClassificationSystem extends createSystem({
     this.rootEntity = this.world.createTransformEntity(root);
     this.root = root;
 
-    this.boxes = createChallenge2DropBoxes();
-    this.boxes.forEach(box => root.add(box.group));
     this.createStatusSprite();
+  }
+
+  private rebuildBoxes(): void {
+    if (!this.root) return;
+    this.boxes.forEach(box => box.dispose());
+    this.boxes = createChallenge2DropBoxes(
+      this.part === 2 ? CHALLENGE_2_PART2_BOX_ORDER : CHALLENGE_2_PART1_BOX_ORDER
+    );
+    this.boxes.forEach(box => this.root?.add(box.group));
   }
 
   /**
@@ -493,7 +520,7 @@ export class DeviceClassificationSystem extends createSystem({
 
     const canvas = document.createElement("canvas");
     canvas.width = 1024;
-    canvas.height = 256;
+    canvas.height = 320;
     this.statusTexture = new THREE.CanvasTexture(canvas);
     this.statusTexture.colorSpace = THREE.SRGBColorSpace;
 
@@ -506,13 +533,13 @@ export class DeviceClassificationSystem extends createSystem({
       side: THREE.DoubleSide
     });
     const sprite = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.72, 0.43),
+      new THREE.PlaneGeometry(2.05, 0.52),
       material
     );
     sprite.name = "Challenge2Status";
     // Leave a dedicated middle band for the device: the container's bottom
     // stays above the model, and the model's bottom stays above the box rims.
-    sprite.position.set(0, 1.34, -0.03);
+    sprite.position.set(0, 1.50, -0.03);
     sprite.renderOrder = 20000;
     (sprite as any).pointerEvents = "none";
     sprite.raycast = () => undefined;
@@ -544,11 +571,17 @@ export class DeviceClassificationSystem extends createSystem({
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillStyle = this.statusColor;
-    context.font = "700 58px Arial, sans-serif";
-    context.fillText(this.statusTitle, canvas.width / 2, 91);
+    context.font = "700 36px Arial, sans-serif";
+    const titleLines = wrapStatusLines(context, this.statusTitle, canvas.width - 80);
+    titleLines.forEach((line, index) => {
+      context.fillText(line, canvas.width / 2, 78 + index * 42);
+    });
     context.fillStyle = "#dbeafe";
-    context.font = "400 35px Arial, sans-serif";
-    context.fillText(this.statusDetail, canvas.width / 2, 169);
+    context.font = "400 30px Arial, sans-serif";
+    const detailY = 78 + titleLines.length * 42 + 28;
+    wrapStatusLines(context, this.statusDetail, canvas.width - 80).forEach((line, index) => {
+      context.fillText(line, canvas.width / 2, detailY + index * 36);
+    });
     const remaining = Math.max(
       0,
       this.challengeDurationSeconds -
@@ -577,46 +610,90 @@ export class DeviceClassificationSystem extends createSystem({
     this.redrawStatus();
   }
 
-  /** Remove the previous device and spawn the next question item. */
+  /** Spawn every snippet or number for the current part at once. */
   private showCurrentItem(): void {
-    const item = this.items[this.currentIndex];
-    if (!item) {
-      this.finishChallenge();
+    this.disposeActiveDevices();
+    this.disposeCompletedDevices();
+    this.advancing = false;
+    const round = this.currentPartItems().slice().sort((left, right) => {
+      if (this.part !== 2) return 0;
+      return Number(left.displayText ?? left.name) - Number(right.displayText ?? right.name);
+    });
+    if (round.length === 0) {
+      if (this.part === 1) this.beginPart2AfterDelay();
+      else this.finishChallenge();
       return;
     }
-
-    this.disposeDevice();
-    this.advancing = false;
+    this.syncLoopCodeBoard();
     this.updateStatus(
-      `${item.name}  -  ${this.currentIndex + 1} / ${this.items.length}`,
-      "Grab the device and drop it into the correct box."
+      this.partPrompt(),
+      this.part === 2
+        ? "Drag each number into the matching execution-order box."
+        : "Drag each snippet into the box that names what it is missing."
     );
-    this.device = this.createDevice(item, this.currentIndex);
+    const span = this.part === 2 ? 0.78 : SNIPPET_SPACING_X;
+    this.activeDevices = round.map((item, index) => {
+      const globalIndex = Math.max(0, this.items.findIndex(entry => entry.id === item.id));
+      return this.createDevice(item, globalIndex, this.snippetRestPosition(index, round.length, span));
+    });
+  }
+
+  private currentPartItems(): Challenge2Item[] {
+    return this.items.filter(item => (item.part ?? 1) === this.part);
+  }
+
+  private partPrompt(): string {
+    return this.part === 2 ? CHALLENGE_2_PART2_PROMPT : CHALLENGE_2_PROMPT;
+  }
+
+  private snippetRestPosition(
+    index: number,
+    count = Math.max(1, this.currentPartItems().length),
+    span = SNIPPET_SPACING_X
+  ): THREE.Vector3 {
+    const x = count === 1 ? 0 : -span + (index * (span * 2)) / (count - 1);
+    const y = this.part === 2 ? 0.38 : DEVICE_LOCAL_POSITION.y;
+    return new THREE.Vector3(x, y, DEVICE_LOCAL_POSITION.z);
   }
 
   /**
    * Create the current device as a thin 3D card with its transparent PNG on
    * the front, then add IWSDK grabbing components for controller interaction.
    */
-  private createDevice(item: Challenge2Item, itemIndex: number): Entity {
+  private createDevice(
+    item: Challenge2Item,
+    itemIndex: number,
+    restPosition = DEVICE_LOCAL_POSITION.clone()
+  ): Entity {
     if (!this.root || !this.rootEntity) {
       throw new Error("Challenge 2 root must exist before creating a device.");
     }
 
     const group = new THREE.Group();
     group.name = `Challenge2Device_${item.id}`;
-    group.position.copy(DEVICE_LOCAL_POSITION);
+    group.position.copy(restPosition);
     group.userData.challenge2Disposed = false;
+    group.userData.restPosition = restPosition.clone();
 
     // Register a centered grab surface before any asynchronous PNG/GLB load.
     // Without this mesh, the webcam entity is initially empty, so IWSDK can
     // miss it when building the controller interaction target. This surface
     // is invisible but belongs only to the visible device (not to a hidden UI
     // panel), and its center matches the model's visual center exactly.
+    const cardWidth = item.codeLines
+      ? SNIPPET_CARD_WIDTH
+      : item.displayText
+        ? NUMBER_CARD_SIZE
+        : DEVICE_CARD_SIZE;
+    const cardHeight = item.codeLines
+      ? SNIPPET_CARD_HEIGHT
+      : item.displayText
+        ? NUMBER_CARD_SIZE
+        : DEVICE_CARD_SIZE;
     const grabTarget = new THREE.Mesh(
       new THREE.BoxGeometry(
-        DEVICE_CARD_SIZE * 1.08,
-        DEVICE_CARD_SIZE * 1.08,
+        cardWidth * 1.08,
+        cardHeight * 1.08,
         DEVICE_CARD_SIZE * 0.48
       ),
       new THREE.MeshBasicMaterial({
@@ -629,12 +706,18 @@ export class DeviceClassificationSystem extends createSystem({
     grabTarget.name = "DeviceGrabTarget";
     group.add(grabTarget);
 
+    if (item.codeLines) {
+      group.add(createCodeSnippetCard(item, cardWidth, cardHeight));
+    } else if (item.displayText) {
+      group.add(createNumberCard(item, cardWidth, cardHeight));
+    }
+
     // Show a PNG immediately while the browser downloads and decodes the GLB.
     // The fallback also remains usable if WebGL cannot render the model.
     let modelReady = false;
     const fallbackGroup = new THREE.Group();
     fallbackGroup.name = "DeviceFallback";
-    if (item.imagePath) {
+    if (!item.codeLines && !item.displayText && item.imagePath) {
       // Use a blue loading card rather than an unlabelled black block. The
       // card is replaced by the PNG or GLB as soon as either asset is ready.
       const backing = new THREE.Mesh(
@@ -700,7 +783,7 @@ export class DeviceClassificationSystem extends createSystem({
       fallbackGroup.removeFromParent();
     };
 
-    if (item.modelPath) {
+    if (!item.codeLines && !item.displayText && item.modelPath) {
       // The webcam uses the supplied GLB. Normalize its unknown authoring
       // scale and center so it occupies the same reachable area as PNG items.
       new GLTFLoader().load(
@@ -770,7 +853,7 @@ export class DeviceClassificationSystem extends createSystem({
     const entity = this.world.createTransformEntity(group, {
       parent: this.rootEntity
     });
-    entity.addComponent(ClassificationDevice, {
+    entity.addComponent(Challenge2GrabItem, {
       itemIndex,
       expectedCategory: item.category
     });
@@ -779,7 +862,7 @@ export class DeviceClassificationSystem extends createSystem({
     // ray pointers and only supports direct hand/controller contact.
     entity.addComponent(Interactable);
     entity.addComponent(DistanceGrabbable, {
-      rotate: true,
+      rotate: !item.codeLines && !item.displayText,
       translate: true,
       scale: false,
       // Follow the ray endpoint instead of copying the controller's small
@@ -797,7 +880,7 @@ export class DeviceClassificationSystem extends createSystem({
    * validate its category, then reset, retry, or advance to the next item.
    */
   private handleRelease(device: Entity): void {
-    if (!this.active || this.advancing || device !== this.device) return;
+    if (!this.active || this.advancing || !this.activeDevices.includes(device)) return;
 
     device.object3D?.getWorldPosition(this.worldPoint);
     // The boxes themselves never receive ray hits. Choose the closest box
@@ -815,28 +898,25 @@ export class DeviceClassificationSystem extends createSystem({
     if (closestDistance > DROP_SNAP_DISTANCE) droppedIn = undefined;
 
     if (!droppedIn) {
-      this.resetDevicePosition();
+      this.resetDevicePosition(device);
       this.updateStatus(
-        "Try again",
-        "Move the device fully inside one of the four boxes.",
+        this.partPrompt(),
+        this.part === 2
+          ? "Drop the number fully inside one of the four boxes."
+          : "Drop the snippet fully inside one of the three boxes.",
         "#fbbf24"
       );
       return;
     }
 
-    // Put the released device visibly inside the selected open-top box before
-    // showing feedback. Incorrect answers remain there briefly, then reset;
-    // correct answers remain there until the next item appears.
-    this.snapDeviceIntoBox(droppedIn);
+    this.snapDeviceIntoBox(device, droppedIn);
 
     const expected = device.getValue(
-      ClassificationDevice,
+      Challenge2GrabItem,
       "expectedCategory"
     ) as Challenge2Category | undefined;
-
-    // Report every valid box drop to the server. The server independently
-    // validates the item/category pair and forwards progress to the instructor.
-    const currentItem = this.items[this.currentIndex];
+    const itemIndex = Number(device.getValue(Challenge2GrabItem, "itemIndex") ?? -1);
+    const currentItem = this.items[itemIndex];
     if (this.challengeId && currentItem) {
       socket.emit("challenge2ItemAnswer", {
         challengeId: this.challengeId,
@@ -848,30 +928,38 @@ export class DeviceClassificationSystem extends createSystem({
     if (droppedIn.category !== expected) {
       droppedIn.setHighlighted(true);
       this.updateStatus(
-        "Incorrect - try again",
-        this.items[this.currentIndex]?.feedback ?? "Choose another box.",
+        "Not quite",
+        currentItem?.feedback ?? "Try a different box.",
         "#fca5a5"
       );
       window.setTimeout(() => {
         droppedIn.setHighlighted(false);
-        this.resetDevicePosition();
+        this.resetDevicePosition(device);
       }, WRONG_FEEDBACK_DELAY_MS);
       return;
     }
 
-    this.advancing = true;
     droppedIn.setHighlighted(true);
-    this.keepCurrentDeviceInBox();
+    this.keepDeviceInBox(device);
     this.updateStatus(
       "Correct!",
-      this.items[this.currentIndex]?.feedback ?? "Correct category.",
+      currentItem?.feedback ?? "That snippet is in the right box.",
       "#86efac"
     );
     window.setTimeout(() => {
       droppedIn.setHighlighted(false);
       if (!this.active) return;
-      this.currentIndex += 1;
-      this.showCurrentItem();
+      if (this.activeDevices.length === 0) {
+        if (this.part === 1) this.beginPart2AfterDelay();
+        else this.finishChallenge();
+      } else {
+        this.updateStatus(
+          this.partPrompt(),
+          this.part === 2
+            ? "Keep going — place the remaining numbers."
+            : "Keep going — match the remaining snippets."
+        );
+      }
     }, CORRECT_FEEDBACK_DELAY_MS);
   }
 
@@ -885,62 +973,126 @@ export class DeviceClassificationSystem extends createSystem({
   }
 
   /** Center the released device inside an open-top destination box. */
-  private snapDeviceIntoBox(box: Challenge2DropBox): void {
-    if (!this.device?.object3D) return;
-    const category = this.device.getValue(
-      ClassificationDevice,
+  private snapDeviceIntoBox(device: Entity, box: Challenge2DropBox): void {
+    if (!device.object3D) return;
+    const category = device.getValue(
+      Challenge2GrabItem,
       "expectedCategory"
     ) as Challenge2Category;
     const totalForBox = this.items.filter(
       item => item.category === category
     ).length;
     const placedInBox = this.completedDevices.filter(entity =>
-      entity.getValue(ClassificationDevice, "expectedCategory") === category
+      entity.getValue(Challenge2GrabItem, "expectedCategory") === category
     ).length;
 
-    // A box may contain several answers. Use compact side-by-side slots for
-    // two items and a small grid if more items are added to this category.
     const columns = Math.min(totalForBox, 2);
     const row = Math.floor(placedInBox / columns);
     const column = placedInBox % columns;
     const x = columns === 1 ? 0 : (column - (columns - 1) / 2) * 0.20;
     const z = row * 0.10 - (totalForBox > 2 ? 0.05 : 0);
     const target = box.group.localToWorld(new THREE.Vector3(x, 0.18, z));
-    const parent = this.device.object3D.parent;
+    const parent = device.object3D.parent;
     if (parent) parent.worldToLocal(target);
-    this.device.object3D.position.copy(target);
-    this.device.object3D.rotation.set(0, 0, 0);
-    this.device.object3D.scale.setScalar(totalForBox > 1 ? 0.58 : 0.82);
-    this.device.object3D.updateMatrixWorld(true);
+    device.object3D.position.copy(target);
+    device.object3D.rotation.set(0, 0, 0);
+    device.object3D.scale.setScalar(totalForBox > 1 ? 0.48 : 0.62);
+    device.object3D.updateMatrixWorld(true);
   }
 
   /** Preserve a correct answer in its box without letting it block the ray. */
-  private keepCurrentDeviceInBox(): void {
-    if (!this.device) return;
-    const completed = this.device;
-    if (completed.hasComponent(DistanceGrabbable)) {
-      completed.removeComponent(DistanceGrabbable);
+  private keepDeviceInBox(device: Entity): void {
+    if (device.hasComponent(DistanceGrabbable)) {
+      device.removeComponent(DistanceGrabbable);
     }
-    if (completed.hasComponent(RayInteractable)) {
-      completed.removeComponent(RayInteractable);
+    if (device.hasComponent(RayInteractable)) {
+      device.removeComponent(RayInteractable);
     }
-    if (completed.object3D) {
-      completed.object3D.pointerEvents = "none";
-      completed.object3D.traverse((child: any) => {
+    if (device.object3D) {
+      device.object3D.pointerEvents = "none";
+      device.object3D.traverse((child: any) => {
         child.pointerEvents = "none";
       });
     }
-    this.completedDevices.push(completed);
-    this.device = undefined;
+    this.activeDevices = this.activeDevices.filter(entry => entry !== device);
+    if (this.desktopHeld === device) this.desktopHeld = undefined;
+    this.completedDevices.push(device);
   }
 
   /** Return a missed or incorrect device to its original floating position. */
-  private resetDevicePosition(): void {
-    if (!this.device?.object3D) return;
-    this.device.object3D.position.copy(DEVICE_LOCAL_POSITION);
-    this.device.object3D.rotation.set(0, 0, 0);
-    this.device.object3D.scale.setScalar(1);
-    this.device.object3D.updateMatrixWorld(true);
+  private resetDevicePosition(device: Entity): void {
+    if (!device.object3D) return;
+    const rest = device.object3D.userData.restPosition as THREE.Vector3 | undefined;
+    device.object3D.position.copy(rest ?? DEVICE_LOCAL_POSITION);
+    device.object3D.rotation.set(0, 0, 0);
+    device.object3D.scale.setScalar(1);
+    device.object3D.updateMatrixWorld(true);
+  }
+
+  private heldDevice(): Entity | undefined {
+    if (this.desktopHeld) return this.desktopHeld;
+    for (const entity of this.queries.heldDevices.entities) return entity;
+    return undefined;
+  }
+
+  private itemForDevice(device: Entity): Challenge2Item | undefined {
+    const index = Number(device.getValue(Challenge2GrabItem, "itemIndex") ?? -1);
+    return this.items[index];
+  }
+
+  private isCodeSnippetItem(item?: Challenge2Item): boolean {
+    return Boolean(item?.codeLines?.length || item?.displayText);
+  }
+
+  private beginPart2AfterDelay(): void {
+    this.clearPart2Timer();
+    this.updateStatus(
+      "Part 1 complete!",
+      "Part 2 starts in 10 seconds.",
+      "#86efac"
+    );
+    this.part2Timer = window.setTimeout(() => {
+      this.part2Timer = undefined;
+      if (!this.active) return;
+      this.startPart2();
+    }, PART2_START_DELAY_MS);
+  }
+
+  private startPart2(): void {
+    this.part = 2;
+    this.rebuildBoxes();
+    this.showCurrentItem();
+  }
+
+  private clearPart2Timer(): void {
+    if (this.part2Timer === undefined) return;
+    window.clearTimeout(this.part2Timer);
+    this.part2Timer = undefined;
+  }
+
+  private syncLoopCodeBoard(): void {
+    if (!this.root) return;
+    this.disposeLoopCodeBoard();
+    if (this.part !== 2) return;
+    const board = createLoopCodeBoard(CHALLENGE_2_PART2_CODE_LINES);
+    board.position.set(0, 0.94, -0.03);
+    this.root.add(board);
+    this.loopCodeBoard = board;
+  }
+
+  private disposeLoopCodeBoard(): void {
+    if (!this.loopCodeBoard) return;
+    this.loopCodeBoard.geometry.dispose();
+    const materials = Array.isArray(this.loopCodeBoard.material)
+      ? this.loopCodeBoard.material
+      : [this.loopCodeBoard.material];
+    materials.forEach(material => {
+      const texture = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      texture?.dispose();
+      material.dispose();
+    });
+    this.loopCodeBoard.removeFromParent();
+    this.loopCodeBoard = undefined;
   }
 
   /** Keep the completed scene visible, then return this student to class. */
@@ -1031,10 +1183,8 @@ export class DeviceClassificationSystem extends createSystem({
   }
 
   /** Dispose one question device and its texture/material/geometry resources. */
-  private disposeDevice(): void {
-    if (!this.device) return;
-    this.desktopDragging = false;
-    const object = this.device.object3D;
+  private disposeOneDevice(device: Entity): void {
+    const object = device.object3D;
     if (object) object.userData.challenge2Disposed = true;
     object?.traverse(child => {
       if (!(child instanceof THREE.Mesh)) return;
@@ -1050,8 +1200,14 @@ export class DeviceClassificationSystem extends createSystem({
         material.dispose();
       });
     });
-    this.device.dispose();
-    this.device = undefined;
+    device.dispose();
+  }
+
+  private disposeActiveDevices(): void {
+    this.desktopDragging = false;
+    this.desktopHeld = undefined;
+    this.activeDevices.forEach(device => this.disposeOneDevice(device));
+    this.activeDevices = [];
   }
 
   /** Remove the devices retained in boxes when Challenge 2 is closed. */
@@ -1079,8 +1235,9 @@ export class DeviceClassificationSystem extends createSystem({
 
   /** Dispose all reusable Challenge 2 scene resources when the system ends. */
   private disposeScene(): void {
-    this.disposeDevice();
+    this.disposeActiveDevices();
     this.disposeCompletedDevices();
+    this.disposeLoopCodeBoard();
     this.boxes.forEach(box => box.dispose());
     this.boxes = [];
     if (this.statusSprite) {
@@ -1097,4 +1254,157 @@ export class DeviceClassificationSystem extends createSystem({
     this.statusSprite = undefined;
     this.statusTexture = undefined;
   }
+}
+
+function wrapStatusLines(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  const words = text.trim().split(/\s+/);
+  if (words.length === 0) return [""];
+  const lines: string[] = [];
+  let current = words[0];
+  for (let index = 1; index < words.length; index += 1) {
+    const next = `${current} ${words[index]}`;
+    if (context.measureText(next).width <= maxWidth) {
+      current = next;
+    } else {
+      lines.push(current);
+      current = words[index];
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+function createNumberCard(
+  item: Challenge2Item,
+  width: number,
+  height: number
+): THREE.Group {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  const group = new THREE.Group();
+  group.name = `NumberCard_${item.id}`;
+  if (!context) return group;
+
+  context.fillStyle = "rgba(7, 17, 34, 0.94)";
+  context.roundRect(10, 10, canvas.width - 20, canvas.height - 20, 36);
+  context.fill();
+  context.strokeStyle = "rgba(103, 232, 249, 0.9)";
+  context.lineWidth = 8;
+  context.stroke();
+  context.fillStyle = "#e2f6ff";
+  context.font = "700 140px Arial, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(item.displayText ?? item.name, canvas.width / 2, canvas.height / 2 + 8);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      toneMapped: false,
+      side: THREE.DoubleSide
+    })
+  );
+  mesh.name = "NumberFace";
+  mesh.position.z = 0.012;
+  group.add(mesh);
+  return group;
+}
+
+function createLoopCodeBoard(lines: readonly string[]): THREE.Mesh {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 420;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "rgba(7, 17, 34, 0.92)";
+    context.roundRect(12, 12, canvas.width - 24, canvas.height - 24, 28);
+    context.fill();
+    context.strokeStyle = "rgba(103, 232, 249, 0.85)";
+    context.lineWidth = 6;
+    context.stroke();
+    context.fillStyle = "#e2f6ff";
+    context.font = "600 42px Consolas, 'Courier New', monospace";
+    context.textAlign = "left";
+    context.textBaseline = "top";
+    lines.forEach((line, index) => {
+      context.fillText(line, 48, 36 + index * 70);
+    });
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.55, 0.58),
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      toneMapped: false,
+      depthTest: false,
+      depthWrite: false
+    })
+  );
+  mesh.name = "Challenge2LoopCode";
+  mesh.renderOrder = 20000;
+  (mesh as any).pointerEvents = "none";
+  mesh.raycast = () => undefined;
+  return mesh;
+}
+
+function createCodeSnippetCard(
+  item: Challenge2Item,
+  width: number,
+  height: number
+): THREE.Group {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 672;
+  const context = canvas.getContext("2d");
+  const group = new THREE.Group();
+  group.name = `SnippetCard_${item.id}`;
+  if (!context) return group;
+
+  context.fillStyle = "rgba(7, 17, 34, 0.94)";
+  context.roundRect(12, 12, canvas.width - 24, canvas.height - 24, 28);
+  context.fill();
+  context.strokeStyle = "rgba(103, 232, 249, 0.9)";
+  context.lineWidth = 8;
+  context.stroke();
+  context.fillStyle = "#67e8f9";
+  context.font = "700 72px Arial, sans-serif";
+  context.textAlign = "left";
+  context.textBaseline = "top";
+  context.fillText(`${item.name}:`, 40, 36);
+  context.fillStyle = "#e2f6ff";
+  context.font = "600 44px Consolas, 'Courier New', monospace";
+  (item.codeLines ?? []).forEach((line, index) => {
+    context.fillText(line, 40, 138 + index * 56);
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      toneMapped: false,
+      side: THREE.DoubleSide
+    })
+  );
+  mesh.name = "SnippetFace";
+  mesh.position.z = 0.012;
+  group.add(mesh);
+  return group;
 }

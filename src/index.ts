@@ -73,10 +73,10 @@ import { TrueFalseChallengeSystem }
 from "./systems/true-false-challenge.system";
 import { CodePatternChallengeSystem }
 from "./systems/code-pattern-challenge.system";
-import { DeviceClassificationSystem }
-from "./systems/device-classification.system";
-import { ClassificationDevice }
-from "./components/classification-device.component";
+import { Challenge2DndSystem }
+from "./systems/csdp99-w1d2-challenge2-dnd.system";
+import { Challenge2GrabItem }
+from "./components/challenge-2-item.component";
 import { PythonTypesEnvironment } from "./games/python-types/python-types-environment";
 
 // ============================================================
@@ -1371,7 +1371,7 @@ World.create(
     world
       .registerComponent(SeatComponent)
       .registerComponent(ProjectorScreenComponent)
-      .registerComponent(ClassificationDevice);
+      .registerComponent(Challenge2GrabItem);
 
     // ========================================================
     // REGISTER SYSTEMS
@@ -1394,7 +1394,7 @@ World.create(
         .registerSystem(TrueFalseChallengeSystem, { priority: 11 })
         .registerSystem(CodePatternChallengeSystem, { priority: 11 })
         .registerSystem(MultipleChoiceChallengeSystem, { priority: 11 })
-        .registerSystem(DeviceClassificationSystem, { priority: 12 });
+        .registerSystem(Challenge2DndSystem, { priority: 12 });
 
       if (studentRaiseHandEnabled) {
         world.registerSystem(RaiseHandSystem, { priority: 7 });
