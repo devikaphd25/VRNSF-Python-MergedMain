@@ -1,4 +1,7 @@
 import { isPackagedQuestApp, startPackagedQuestSession } from "./presentation/packaged-quest-session";
+import { LoopDragDropSystem } from './systems/loop-drag-drop.system';
+import { LoopDragItemComponent } from './components/loop-drag-item.component';
+import { bindDesktopCameraRestore } from "./presentation/restore-desktop-camera";
 import { setInstructorPanelRayInteraction } from "./instructor/panel-ray-interaction";
 import { DisplayRoomSystem } from './systems/display-room.system';
 import "./audio/student-welcome";
@@ -397,6 +400,7 @@ World.create(
 )
   .then(async (world) => {
     const { renderer, scene, camera, player } = world;
+    bindDesktopCameraRestore(camera, renderer.xr);
     void startPackagedQuestSession(world);
     // Real headset triggers do not necessarily produce DOM pointer events.
     // Forward the trusted XR gesture synchronously so pending welcome audio can start.
@@ -1377,7 +1381,8 @@ World.create(
     world
       .registerComponent(SeatComponent)
       .registerComponent(ProjectorScreenComponent)
-      .registerComponent(ClassificationDevice);
+      .registerComponent(ClassificationDevice)
+      .registerComponent(LoopDragItemComponent);
 
     // ========================================================
     // REGISTER SYSTEMS
@@ -1400,7 +1405,8 @@ World.create(
         .registerSystem(TrueFalseChallengeSystem, { priority: 11 })
         .registerSystem(CurriculumChallengeSystem, { priority: 11 })
         .registerSystem(MultipleChoiceChallengeSystem, { priority: 11 })
-        .registerSystem(DeviceClassificationSystem, { priority: 12 });
+        .registerSystem(DeviceClassificationSystem, { priority: 12 })
+        .registerSystem(LoopDragDropSystem, { priority: 12 });
 
       if (studentRaiseHandEnabled) {
         world.registerSystem(RaiseHandSystem, { priority: 7 });
@@ -2600,6 +2606,7 @@ World.create(
       instructorDashboardObject.updateMatrixWorld(true);
       (window as any).refreshInstructorHandNotification?.();
       console.log("[Instructor Dashboard]", open ? "Opened" : "Closed");
+      if (open) window.dispatchEvent(new CustomEvent('instructor-dashboard-opened'));
     }
 
     function toggleInstructorDashboard(): void {

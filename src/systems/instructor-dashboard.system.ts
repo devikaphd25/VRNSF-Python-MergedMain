@@ -20,7 +20,7 @@ import {
   STRING_CLEAN_ACTIVITY_KEY,
   isCurriculumChallenge,
 } from "../../shared/challenge-types";
-import { loadClassroomContent } from '../content/classroom-content-loader';
+import { loadClassroomContent, ClassroomContentError } from '../content/classroom-content-loader';
 import { ActivitySequence } from "../instructor/activity-sequence";
 import { DashboardControllerRays } from "../instructor/dashboard-controller-rays";
 import { InstructorControllerVisuals } from "../instructor/controller-overlay-visuals";
@@ -233,6 +233,13 @@ export class InstructorDashboardSystem extends createSystem({
   }
 }) {
   private dashboardDocument?: UIKitDocument;
+  private contentState: 'loading' | 'ready' | 'error' = 'loading';
+  private contentError = '';
+  private contentNeedsLogin = false;
+  private contentLoadPending?: Promise<boolean>;
+  private onDashboardOpened = (): void => {
+    if (this.contentState === 'error' || !this.databaseActivities.length) void this.loadInstructorMenuContent(true);
+  };
   private dashboardRays?: DashboardControllerRays;
   private readonly controllerOverlayVisuals = new InstructorControllerVisuals();
   private raySession: XRSession | null = null;
@@ -980,6 +987,16 @@ export class InstructorDashboardSystem extends createSystem({
     this.dashboardDocument =
       document;
 
+    window.removeEventListener('instructor-dashboard-opened', this.onDashboardOpened);
+    window.addEventListener('instructor-dashboard-opened', this.onDashboardOpened);
+    this.connectButton('activities-retry', () => {
+      if (this.contentNeedsLogin) {
+        localStorage.removeItem('vrUser'); sessionStorage.removeItem('vrClassroomSession');
+        window.location.replace('./'); return;
+      }
+      void this.loadInstructorMenuContent(true);
+    });
+
     void this.loadInstructorMenuContent();
     window.addEventListener("debrief-image-load-failed", () => {
       this.showStatusMessage("Debrief image failed to load. Reopen the dashboard and try again.");
@@ -1022,22 +1039,36 @@ export class InstructorDashboardSystem extends createSystem({
     );
   }
 
-  private async loadInstructorMenuContent(fresh = false): Promise<void> {
-    try {
+  private loadInstructorMenuContent(fresh = false): Promise<boolean> {
+    if (this.contentLoadPending) return this.contentLoadPending;
+    this.contentState = 'loading'; this.contentError = '';
+    this.contentNeedsLogin = false;
+    this.renderLessonPage();
+    const pending = (async () => { try {
       const content = await loadClassroomContent(fresh);
       if (!Array.isArray(content.videos)) throw new Error("Video list missing from server response");
       this.databaseVideos = content.videos;
       this.databaseActivities = content.activities ?? [];
+      this.contentState = 'ready';
       this.renderLessonPage();
       console.log(
         `[InstructorDashboard] Loaded ${this.databaseVideos?.length ?? 0} videos from Supabase`
       );
+      return true;
     } catch (error) {
+      this.contentState = 'error';
+      this.contentNeedsLogin = error instanceof ClassroomContentError && error.needsLogin;
+      this.contentError = error instanceof Error ? error.message : 'Could not load activities.';
+      this.renderLessonPage();
       console.error(
         "[InstructorDashboard] Supabase content unavailable",
         error
       );
-    }
+      return false;
+    } })();
+    this.contentLoadPending = pending;
+    void pending.finally(() => { if (this.contentLoadPending === pending) this.contentLoadPending = undefined; });
+    return pending;
   }
 
   // ======================================================
@@ -2328,6 +2359,12 @@ export class InstructorDashboardSystem extends createSystem({
       element.setProperties({ text: value });
       (element as any).textContent = value;
     };
+    const noActivities = queue.length === 0 && !this.rosterOpen;
+    toggle('activities-load-panel', 'is-hidden', !noActivities);
+    toggle('activities-retry', 'is-hidden', this.contentState === 'loading');
+    setText('activities-retry', this.contentNeedsLogin ? 'Return to login' : 'Retry');
+    setText('activities-load-message', this.contentState === 'loading' ? 'Loading activities…'
+      : this.contentState === 'error' ? this.contentError : 'No activities have been added to this day yet.');
     setText("option2-home", this.taskView === "current" ? "All Tasks" : "Current Task");
     setText("task-count", String(queue.length));
     setText("option2-progress", compact
@@ -2399,7 +2436,7 @@ export class InstructorDashboardSystem extends createSystem({
     const advanceSequence = this.taskView === "current";
     try {
     // Refresh expiring Storage links while preserving the selected database ID.
-    await this.loadInstructorMenuContent(true);
+    if (await this.loadInstructorMenuContent(true) === false) return;
     const item=this.getTaskQueue().find(a=>a.activityId===selected.activityId);
     if(!item)return;
     this.selectedActivityId=item.activityId;
@@ -2609,7 +2646,9 @@ export class InstructorDashboardSystem extends createSystem({
 
     (window as any)
       .presentationSystem
-      ?.enterVideoPresentation?.(assetPath);
+      ?.enterVideoPresentation?.(assetPath,
+        this.databaseActivities.find(activity => activity.activityId === this.selectedActivityId)?.activityKey === 'video_black_theater'
+          ? 'black_theater' : 'classroom');
 
     this.setCurrentMode(
       "Presentation Mode"

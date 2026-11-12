@@ -28,20 +28,21 @@ import {
   type Challenge2Item
 } from "../challenges/device-classification/device-types";
 import { socket } from "../network/socket-client";
+import { createDeviceBackdrop } from '../challenges/device-classification/device-backdrop';
 
 // ============================================================
 // WORLD LAYOUT AND ANIMATION SETTINGS
 // ============================================================
 
 // Place the complete activity this many meters in front of the student.
-const ROOT_DISTANCE = 1.55;
+const ROOT_DISTANCE = 1.2;
 // Lower the root from eye height so the boxes sit near floor/table height.
-const ROOT_BELOW_CAMERA = 1.18;
+const ROOT_BELOW_CAMERA = 0.9;
 // Desktop cameras have a narrower vertical viewport than a headset. Moving
 // the activity farther away and centering its full height keeps the question,
 // device, and all four boxes inside the browser window at the same time.
-const DESKTOP_ROOT_DISTANCE = 2.40;
-const DESKTOP_ROOT_BELOW_CAMERA = 0.75;
+const DESKTOP_ROOT_DISTANCE = 1.9;
+const DESKTOP_ROOT_BELOW_CAMERA = 0.8;
 // Starting position of the current device relative to the Challenge 2 root.
 // Keep the device completely below the instruction container with a visible
 // gap, while still leaving enough height above the destination boxes.
@@ -81,6 +82,7 @@ export class DeviceClassificationSystem extends createSystem({
 
   // World-space parent containing the boxes, device, and instruction panel.
   private root?: THREE.Group;
+  private deviceBackdrop?: ReturnType<typeof createDeviceBackdrop>;
   // ECS entity for the same root. Grabbable children must explicitly use this
   // parent or IWSDK reparents them to the scene and their local X/Z coordinates
   // no longer line up with the question panel in a rotated headset view.
@@ -255,9 +257,10 @@ export class DeviceClassificationSystem extends createSystem({
     durationSeconds?: number;
     startedAt?: number;
     items?: Challenge2Item[];
+    format?: string;
     returnAfterCompleteSeconds?: number;
   }): void => {
-    if (!payload.items?.length) return;
+    if (payload.format === 'loop_parts' || !payload.items?.length) return;
     this.items = payload.items;
     this.returnAfterCompleteMs = payload.returnAfterCompleteSeconds ? payload.returnAfterCompleteSeconds * 1000 : undefined;
     this.challengeId = payload?.id;
@@ -452,6 +455,8 @@ export class DeviceClassificationSystem extends createSystem({
 
     this.boxes = createChallenge2DropBoxes();
     this.boxes.forEach(box => root.add(box.group));
+    this.deviceBackdrop = createDeviceBackdrop();
+    root.add(this.deviceBackdrop);
     this.createStatusSprite();
   }
 
@@ -465,14 +470,19 @@ export class DeviceClassificationSystem extends createSystem({
 
     const cameraPosition = new THREE.Vector3();
     const forward = new THREE.Vector3();
-    this.camera.getWorldPosition(cameraPosition);
-    this.camera.getWorldDirection(forward);
+    const viewer = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    viewer.getWorldPosition(cameraPosition);
+    viewer.getWorldDirection(forward);
     forward.y = 0;
     if (forward.lengthSq() < 0.0001) forward.set(0, 0, -1);
     forward.normalize();
 
     const desktopMode = !this.renderer.xr.isPresenting;
-    const distance = desktopMode ? DESKTOP_ROOT_DISTANCE : ROOT_DISTANCE;
+    let distance = desktopMode ? DESKTOP_ROOT_DISTANCE : ROOT_DISTANCE;
+    if (desktopMode && this.camera instanceof THREE.PerspectiveCamera) {
+      const tanHalfFov = Math.tan(this.camera.getEffectiveFOV() * Math.PI / 360);
+      distance = Math.max(distance, 1.2 / (tanHalfFov * this.camera.aspect * 0.94), 0.82 / (tanHalfFov * 0.94));
+    }
     const belowCamera = desktopMode
       ? DESKTOP_ROOT_BELOW_CAMERA
       : ROOT_BELOW_CAMERA;
@@ -1087,6 +1097,9 @@ export class DeviceClassificationSystem extends createSystem({
 
   /** Dispose all reusable Challenge 2 scene resources when the system ends. */
   private disposeScene(): void {
+    this.deviceBackdrop?.geometry.dispose();
+    this.deviceBackdrop?.material.dispose();
+    this.deviceBackdrop = undefined;
     this.disposeDevice();
     this.disposeCompletedDevices();
     this.boxes.forEach(box => box.dispose());

@@ -32,6 +32,9 @@ router.get('/instructor-content', async (req, res) => { try {
 }
 catch (e) {
     console.error('[Content]', e);
+    if (e instanceof Error && e.message === 'This classroom is no longer active.') {
+        return res.status(409).json({ message: 'This classroom has ended. Refresh and sign in again.' });
+    }
     res.status(503).json({ message: 'Course content is unavailable. Check server database configuration.' });
 } });
 export default router;

@@ -1,7 +1,8 @@
 import { Box3, Matrix4, Object3D, PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { objectLocalBounds } from './object-local-bounds';
 
 /** UIKit bounds in the panel's coordinate system, including artwork outside the root box. */
-export function getPanelLayoutBounds(panel: Object3D, document: any): Box3 | undefined {
+export function getPanelLayoutBounds(panel: Object3D, document: any, includeRocket = true): Box3 | undefined {
   if (!document?.rootElement || !document.isObject3D) return;
   panel.updateWorldMatrix(true, true);
   const toPanel = new Matrix4().copy(panel.matrixWorld).invert().multiply(document.matrixWorld);
@@ -18,15 +19,17 @@ export function getPanelLayoutBounds(panel: Object3D, document: any): Box3 | und
     }
   });
   const rocket = panel.getObjectByName('StudentRocketRig');
-  if (rocket?.visible) {
-    const rocketBounds = new Box3().setFromObject(rocket).applyMatrix4(panel.matrixWorld.clone().invert());
+  if (includeRocket && rocket?.visible) {
+    const local = rocket.userData.panelFrameBounds as Box3 | undefined;
+    const rocketBounds = (local?.clone() ?? objectLocalBounds(rocket)).applyMatrix4(
+      new Matrix4().copy(panel.matrixWorld).invert().multiply(rocket.matrixWorld));
     bounds.union(rocketBounds);
   }
   return bounds.isEmpty() ? undefined : bounds;
 }
 
 /** Browser mode follows the full camera pose and fits both boards with screen margins. */
-export function frameDesktopPanel(panel: Object3D, camera: PerspectiveCamera, bounds: Box3): void {
+export function frameDesktopPanel(panel: Object3D, camera: PerspectiveCamera, bounds: Box3, safeArea = 0.88): void {
   camera.updateWorldMatrix(true, false);
   const eye = camera.getWorldPosition(new Vector3());
   const orientation = camera.getWorldQuaternion(new Quaternion());
@@ -34,7 +37,6 @@ export function frameDesktopPanel(panel: Object3D, camera: PerspectiveCamera, bo
   const size = bounds.getSize(new Vector3()).multiply(scale);
   const center = bounds.getCenter(new Vector3()).multiply(scale);
   const tanHalfFov = Math.tan(camera.getEffectiveFOV() * Math.PI / 360);
-  const safeArea = 0.88;
   const distance = Math.max(1,
     Math.abs(size.y) / (2 * tanHalfFov * safeArea),
     Math.abs(size.x) / (2 * tanHalfFov * camera.aspect * safeArea)) + Math.abs(size.z) / 2;

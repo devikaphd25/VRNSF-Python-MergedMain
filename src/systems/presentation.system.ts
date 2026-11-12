@@ -1,4 +1,6 @@
 import { loadClassroomContent } from '../content/classroom-content-loader';
+import type { VideoView } from '../../shared/video-view';
+import { centerTheaterViewer } from '../presentation/center-theater-viewer';
 import { setClassroomBoardCourse } from "../classroom/board-content";
 import { createClassroomBoardFrame } from "../classroom/classroom-board-frame";
 /**
@@ -99,6 +101,7 @@ export class PresentationSystem extends createSystem({
   // Classroom is the safe fallback. Entering the 360 environment must always
   // be an explicit instructor selection carried by the synchronized event.
   private debriefView: DebriefView = "classroom";
+  private videoView: VideoView = 'classroom';
   private controlsDocument?: UIKitDocument;
   private lastVideoTimerText = "";
   private briefingImage?: HTMLImageElement;
@@ -126,6 +129,7 @@ export class PresentationSystem extends createSystem({
   private debriefRightTexture?: CanvasTexture;
   private debriefReview?: DebriefReviewData;
   private debriefMistakes?: DebriefMistakes | null;
+  private lastMistakesVisible = false;
   private debriefMistakePageTick = 0;
   private debriefMistakeReceivedAt = 0;
   private savedClassroomLightIntensities = new Map<any, number>();
@@ -137,6 +141,8 @@ export class PresentationSystem extends createSystem({
   init(): void {
     console.log("[PresentationSystem] Initializing");
     this.debriefDoorTransition = new DebriefDoorTransition(this.world.scene);
+    this.renderer.xr.addEventListener('sessionstart', this.refitTheaterAfterXrChange);
+    this.renderer.xr.addEventListener('sessionend', this.refitTheaterAfterXrChange);
 
     // ✅ Listen for mode changes from instructor (direct to this student)
     socket.on("modeChanged", this.onModeChanged);
@@ -197,7 +203,13 @@ export class PresentationSystem extends createSystem({
     if (this.sideScreensInitialized && !this.sideHandModel && !(window as any).isInstructor) {
       this.createSideHandModel();
     }
+    this.alignSideHandWithButton();
     this.updateClassroomSideScreenVisibility();
+    const mistakesVisible = this.isPresentationMode && this.presentationMediaType === 'image';
+    if (mistakesVisible !== this.lastMistakesVisible) {
+      this.lastMistakesVisible = mistakesVisible;
+      this.redrawDebriefScreens();
+    }
     if (this.isPresentationMode && this.presentationMediaType === 'image' && this.debriefMistakes) {
       const tick = Math.floor((Date.now() - this.debriefMistakeReceivedAt) / 10000);
       if (tick !== this.debriefMistakePageTick) {
@@ -236,6 +248,7 @@ export class PresentationSystem extends createSystem({
     assetPath?: string;
     mediaType?: "video" | "image";
     debriefView?: DebriefView;
+    videoView?: VideoView;
   }): void => {
     console.log(`[PresentationSystem] Mode change received: ${data.mode}`);
 
@@ -250,7 +263,7 @@ export class PresentationSystem extends createSystem({
       if (data.mediaType === "image") {
         this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : data.debriefView ?? "classroom";
         this.setImageSource(data.assetPath);
-      } else this.setVideoSource(data.assetPath);
+      } else { this.prepareVideoView(data.videoView ?? 'classroom'); this.setVideoSource(data.assetPath); }
       if (!this.isPresentationMode) {
         console.log("[PresentationSystem] Entering presentation mode with content metadata");
         this.togglePresentationMode();
@@ -267,13 +280,14 @@ export class PresentationSystem extends createSystem({
     assetPath?: string;
     mediaType?: "video" | "image";
     debriefView?: DebriefView;
+    videoView?: VideoView;
   }): void => {
     if (!data.assetPath) return;
     console.log("[PresentationSystem] Shared content received", data);
     if (data.mediaType === "image") {
       this.debriefView = DEBRIEF_IN_CLASSROOM_ONLY ? "classroom" : data.debriefView ?? "classroom";
       this.setImageSource(data.assetPath);
-    } else this.setVideoSource(data.assetPath);
+    } else { this.prepareVideoView(data.videoView ?? 'classroom'); this.setVideoSource(data.assetPath); }
     this.enterPresentationMode();
   };
 
@@ -307,7 +321,8 @@ export class PresentationSystem extends createSystem({
     }
   }
 
-  public enterVideoPresentation(assetPath?: string): void {
+  public enterVideoPresentation(assetPath?: string, videoView: VideoView = 'classroom'): void {
+    this.prepareVideoView(videoView);
     if (assetPath) this.setVideoSource(assetPath);
     this.enterPresentationMode();
   }
@@ -477,7 +492,7 @@ export class PresentationSystem extends createSystem({
     object.visible = visible;
     // Classroom media controls sit in front of the first row.
     const isBriefing = this.presentationMediaType === "image";
-    const isClassroomPresentation = !isBriefing || this.debriefView === "classroom";
+    const isClassroomPresentation = isBriefing ? this.debriefView === "classroom" : this.videoView !== 'black_theater';
     // Debrief images extend down to the board's bottom edge. Lower their
     // controls while keeping the scaled panel clear of the classroom floor.
     const classroomControlsHeight = isBriefing ? 0.42 : 0.68;
@@ -652,6 +667,7 @@ export class PresentationSystem extends createSystem({
   }
 
   private setImageSource(assetPath: string): void {
+    if (this.isPresentationMode && this.isBlackTheaterVideo()) this.applyPresentationMode();
     if (
       !assetPath ||
       (this.pendingImagePath === assetPath && this.presentationMediaType === "image")
@@ -1176,12 +1192,14 @@ export class PresentationSystem extends createSystem({
     hand.updateMatrixWorld(true);
     const bounds = new Box3().setFromObject(hand);
     const size = bounds.getSize(new Vector3());
-    hand.scale.setScalar(0.65 / Math.max(size.x, size.y, size.z, 0.001));
+    hand.scale.setScalar(0.38 / Math.max(size.x, size.y, size.z, 0.001));
     hand.updateMatrixWorld(true);
     bounds.setFromObject(hand);
     const center = bounds.getCenter(new Vector3());
-    // Align the original hand model with the small transparent touch target.
-    hand.position.set(-center.x, 0.95 - center.y, 0.08 - bounds.min.z);
+    hand.userData.controlCenter = center.clone();
+    hand.userData.controlMinZ = bounds.min.z;
+    // Initial placement until UIKit finishes measuring the actual control row.
+    hand.position.set(-1.23 - center.x, 1.5 - center.y, 0.08 - bounds.min.z);
     hand.traverse(child => {
       child.pointerEvents = "none";
       if (!(child instanceof Mesh)) return;
@@ -1203,7 +1221,22 @@ export class PresentationSystem extends createSystem({
     });
     this.debriefRightScreen.add(hand);
     this.sideHandModel = hand;
+    this.alignSideHandWithButton();
     this.updateStudentHandControl();
+  }
+
+  private alignSideHandWithButton(): void {
+    if (!this.sideHandModel || !this.debriefRightScreen || !this.studentControlsDocument) return;
+    const button = this.studentControlsDocument.getElementById('side-raise-hand') as any;
+    const matrix = button?.globalPanelMatrix?.value;
+    if (!matrix || !button.size?.value?.[0]) return;
+    const document = this.studentControlsDocument as any;
+    document.updateWorldMatrix(true, false);
+    const center = new Vector3().setFromMatrixPosition(matrix).applyMatrix4(document.matrixWorld);
+    this.debriefRightScreen.worldToLocal(center);
+    const offset = this.sideHandModel.userData.controlCenter as Vector3;
+    this.sideHandModel.position.set(center.x - offset.x, center.y - offset.y,
+      0.08 - this.sideHandModel.userData.controlMinZ);
   }
 
   private updateStudentHandControl(): void {
@@ -1342,7 +1375,9 @@ export class PresentationSystem extends createSystem({
     context.fillRect(0, 0, canvas.width, canvas.height);
     // Physical trim supplies the border; a second canvas outline looks doubled.
     if (kind === "errors") {
-      drawDebriefMistakes(context, this.debriefMistakes, Boolean((window as any).isInstructor), this.debriefMistakePageTick);
+      if (this.isPresentationMode && this.presentationMediaType === 'image') {
+        drawDebriefMistakes(context, this.debriefMistakes, Boolean((window as any).isInstructor), this.debriefMistakePageTick);
+      }
       return;
     }
     context.textAlign = "left";
@@ -1628,9 +1663,8 @@ export class PresentationSystem extends createSystem({
     this.createCinemaObjects();
 
     if (!this.isPresentationMode) {
-      const useImmersiveRoom =
-        this.presentationMediaType === "image" &&
-        this.debriefView === "immersive360";
+      const soloVideo = this.isBlackTheaterVideo();
+      const useImmersiveRoom = soloVideo || (this.presentationMediaType === "image" && this.debriefView === "immersive360");
       // Set the destination state first so closing a student result does not
       // briefly restore the classroom-board overlay during the transition.
       (window as any).isPresentationOpen = true;
@@ -1638,6 +1672,7 @@ export class PresentationSystem extends createSystem({
       this.savedSeatPosition.copy(this.player.position);
       this.savedSeatQuaternion.copy(this.player.quaternion);
       (window as any).isPresentationActive = true;
+      (window as any).isSoloVideoActive = soloVideo;
       // The normal course/status/results canvas must not sit over either the
       // classroom debrief image or the 360-degree debrief presentation.
       this.setClassroomBoardStatusVisible(false);
@@ -1650,7 +1685,9 @@ export class PresentationSystem extends createSystem({
         // throughout either debrief destination.
         instructorMesh.visible = false;
       }
-      if (useImmersiveRoom) {
+      if (soloVideo) {
+        setSeatMarkersSuppressed(true);
+      } else if (useImmersiveRoom) {
         // Keep lightweight named 2D astronaut avatars visible after the
         // physical classroom and seats are hidden for presentation mode.
         setSeatMarkerTheme("astronaut");
@@ -1672,7 +1709,9 @@ export class PresentationSystem extends createSystem({
 
       // Students keep their assigned seat and viewing direction. Only the
       // instructor moves to the presentation viewing point.
-      if ((window as any).isInstructor) {
+      if (soloVideo) {
+        this.centerTheaterViewer();
+      } else if ((window as any).isInstructor) {
         if (useImmersiveRoom) {
           this.player.position.set(0, 1.0, -1.8);
           this.player.quaternion.set(0, 1, 0, 0);
@@ -1706,6 +1745,7 @@ export class PresentationSystem extends createSystem({
       // overwrite that orientation on an active XR rig.
       (window as any).isPresentationOpen = false;
       (window as any).isPresentationActive = false;
+      (window as any).isSoloVideoActive = false;
       this.setClassroomBoardStatusVisible(
         !Boolean((window as any).isStudentResultOpen)
       );
@@ -1746,6 +1786,29 @@ export class PresentationSystem extends createSystem({
       socket.emit("modeChanged", "Classroom Mode");
     }
   }
+
+  private isBlackTheaterVideo(): boolean {
+    return this.presentationMediaType === 'video' && this.videoView === 'black_theater';
+  }
+
+  private prepareVideoView(view: VideoView): void {
+    if (this.isPresentationMode && (this.presentationMediaType !== 'video' || this.videoView !== view)) this.applyPresentationMode();
+    this.videoView = view;
+  }
+
+  private centerTheaterViewer(): void {
+    if (this.renderer.xr.isPresenting) this.renderer.xr.updateCamera(this.camera);
+    const viewer = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    centerTheaterViewer(this.player, viewer, new Vector3(0, 2.8, -1.8), new Vector3(0, 2.8, 6.2));
+  }
+
+  private refitTheaterAfterXrChange = (): void => {
+    const refit = () => {
+      if (this.isPresentationMode && this.isBlackTheaterVideo()) this.centerTheaterViewer();
+    };
+    if (this.renderer.xr.isPresenting) this.renderer.xr.getSession()?.requestAnimationFrame(refit);
+    else requestAnimationFrame(refit);
+  };
 
   private setClassroomDebriefDimmed(dimmed: boolean): void {
     const classroomMesh = (window as any).classroomMesh;
@@ -1865,7 +1928,7 @@ export class PresentationSystem extends createSystem({
         ? (window as any).raiseHandEntity?.object3D
         : null,
       // Hide the separate tier caps only when leaving the classroom.
-      this.presentationMediaType === "image" && this.debriefView === "immersive360"
+      ((this.presentationMediaType === "image" && this.debriefView === "immersive360") || this.isBlackTheaterVideo())
         ? this.world.scene.getObjectByName("NASA_Sealed_Tier_Ends")
         : null,
     ].filter(Boolean);
@@ -1918,6 +1981,9 @@ export class PresentationSystem extends createSystem({
   }
 
   destroy(): void {
+    (window as any).isSoloVideoActive = false;
+    this.renderer.xr.removeEventListener('sessionstart', this.refitTheaterAfterXrChange);
+    this.renderer.xr.removeEventListener('sessionend', this.refitTheaterAfterXrChange);
     setSeatMarkersSuppressed(false);
     socket.off("modeChanged", this.onModeChanged);
     socket.off("studentModeChanged", this.onStudentModeChanged);

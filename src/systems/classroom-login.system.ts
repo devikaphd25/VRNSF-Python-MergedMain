@@ -27,7 +27,7 @@ import {
   type Camera,
 } from "three";
 import { ClassroomSessionService, type CourseOptions } from "../services/classroom-session.service";
-import { loadClassroomContent } from '../content/classroom-content-loader';
+import { loadClassroomContent, loadClassroomContentForSession } from '../content/classroom-content-loader';
 import { getPersistentDeviceId } from "../services/device-identity.service";
 
 export type VRLoginUser = {
@@ -473,11 +473,15 @@ export class ClassroomLoginSystem extends createSystem({
           seat: null,
         });
         const session = await ClassroomSessionService.create(user.id, this.enteredPin, week.id, day.id);
+        setStatus('Loading classroom activities… Please wait.');
+        (confirmButton as UIKit.Text).setProperties({ text: 'Loading…' });
+        await loadClassroomContentForSession(session.room_id);
         this.finish({ user, roomId: session.room_id });
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Could not create classroom.", true);
       } finally {
         this.busy = false;
+        (confirmButton as UIKit.Text).setProperties({ text: options ? 'Start Class' : 'Continue' });
       }
     });
 

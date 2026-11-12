@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { io } from 'socket.io-client';
 import { loadDatabaseChallengeQuestions } from '../build/server/repositories/challenge-content.repository.js';
+import { loadSavedChallengeMistakes } from '../build/server/repositories/debrief-mistakes.repository.js';
 const db=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false},realtime:{transport:WebSocket}});
 const value=async q=>{const {data,error}=await q;if(error)throw Error(error.message);return data;};
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -23,13 +24,13 @@ try{
  course=await value(db.from('courses').insert({course_code:tag,title:'Temporary Day 2 integration verification',access_code:accessCode}).select().single());
  week=await value(db.from('weeks').insert({course_id:course.id,week_number:1,title:'Test week'}).select().single());
  day=await value(db.from('days').insert({week_id:week.id,day_number:2,title:'Test day'}).select().single());
- for(const [index,id]of [180,181,182].entries()){
+ for(const [index,id]of (process.env.CHALLENGE2_ONLY==='1'?[181]:[180,181,182]).entries()){
   const source=await value(db.from('activities').select('*').eq('id',id).single());
-  const row=await value(db.from('activities').insert({week_id:week.id,day_id:day.id,activity_type:'challenge',activity_key:source.activity_key,title:'Database '+source.title,activity_order:index+1}).select().single());activities.push(row);
+  const row=await value(db.from('activities').insert({week_id:week.id,day_id:day.id,activity_type:'challenge',activity_key:source.activity_key,title:'Database '+source.title,activity_order:index+1}).select().single());row.sourceId=id;activities.push(row);
   const rows=(await value(db.from('challenge_questions').select('*').eq('activity_id',id).order('question_order'))).filter(q=>!q.options?.archived);
   if(id!==181)assert.equal((await loadDatabaseChallengeQuestions(source,true)).length,8);
   row.questions=await value(db.from('challenge_questions').insert(rows.map(q=>({activity_id:row.id,question_order:q.question_order,question_type:q.question_type,question_text:q.question_text,options:q.options,correct_answer:q.correct_answer}))).select('*'));
-  if(id===181){const q=row.questions[0];q.options={...q.options,completion_return_seconds:0.1};q.correct_answer={category:'output'};await value(db.from('challenge_questions').update({options:q.options,correct_answer:q.correct_answer}).eq('id',q.id));}
+  if(id===181){const q=row.questions[0];q.options={...q.options,completion_return_seconds:0.1};q.correct_answer={category:q.options.format==='loop_parts'?'comparison':'output'};await value(db.from('challenge_questions').update({options:q.options,correct_answer:q.correct_answer}).eq('id',q.id));}
   else{const q=row.questions.find(q=>q.options.extra_credit);q.question_text='Database-only extra-credit prompt';q.options={...q.options,choices:['Database bonus A','Database bonus B','Database bonus C'],presentation:{...q.options.presentation,prompt:q.question_text}};q.correct_answer={choice_index:2};await value(db.from('challenge_questions').update({question_text:q.question_text,options:q.options,correct_answer:q.correct_answer}).eq('id',q.id));}
  }
  server=spawn(process.execPath,['server/start-production.mjs'],{env:{...process.env,PORT:String(port)},stdio:['ignore','pipe','pipe']});server.stdout.on('data',data=>log+=data);server.stderr.on('data',data=>log+=data);
@@ -39,7 +40,7 @@ try{
  session=await post('class-sessions',{instructorId:teacherUser.id,accessCode,weekId:week.id,dayId:day.id});
  const participant=await post('class-sessions/join',{deviceId:tag+'-student'});
  const teacher=await connect(teacherUser); let pupil=await connect(studentUser,participant);
- for(const [activity,type]of [[activities[0],'WhileTrace'],[activities[2],'WhileFactorial']]){
+ for(const [activity,type]of [[activities.find(a=>a.sourceId===180),'WhileTrace'],[activities.find(a=>a.sourceId===182),'WhileFactorial']].filter(([activity])=>activity)){
   const started=event(pupil,'quickChallengeStarted'),monitor=event(teacher,'quickChallengeStartedForInstructor');
   teacher.emit('instructorQuickChallenge',{activityId:activity.id,challengeType:type,durationSeconds:180});const launch=await started,teacherData=await monitor;
   assert.equal(launch.questions.length,5);assert.equal(launch.extraCreditQuestions.length,3);assert.equal(teacherData.extraCreditStats.length,3);
@@ -66,15 +67,36 @@ try{
   await poll(async()=>{const rows=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',activity.id));const stopped=rows.find(r=>r.status==='stopped');if(!stopped)return false;assert.equal(stopped.challenge_responses.filter(r=>r.student_answer!==null).length,6);return true;});
   console.log('PASS '+type+': database bonus content, server grading, duplicate/stale rejection, retries, main history, and stopped partial responses');
  }
- const activity=activities[1],started=event(pupil,'challenge2Started'),monitor=event(teacher,'challenge2StartedForInstructor');teacher.emit('instructorStartChallenge2',{activityId:activity.id,durationSeconds:60});const launch=await started,teacherData=await monitor;
- assert.equal(launch.items.length,5);assert.equal(teacherData.questionStats.length,5);assert.equal(launch.items[0].category,'output','Device classification follows fixture database answer');
+ const activity=activities.find(a=>a.sourceId===181),started=event(pupil,'challenge2Started'),monitor=event(teacher,'challenge2StartedForInstructor');teacher.emit('instructorStartChallenge2',{activityId:activity.id,durationSeconds:60});const launch=await started,teacherData=await monitor;
+ assert.equal(launch.format,'loop_parts');assert.equal(launch.items.length,7);assert.equal(teacherData.questionStats.length,7);
+ assert.equal(launch.rounds.length,2);assert.equal(launch.rounds[0].boxes.length,3);assert.equal(launch.rounds[1].boxes.length,4);
+ for(const item of launch.items){assert.equal(item.category,undefined);assert.equal(item.correct_answer,undefined);}
+ const part2=launch.items.find(item=>item.part===2);
+ assert.equal((await ack(pupil,'challenge2ItemAnswer',{challengeId:launch.id,itemId:part2.id,selectedCategory:'finalN'})).success,false,'Part 2 cannot be submitted before Part 1');
  for(const [index,item]of launch.items.entries()){
-  if(index===0){const wrong=event(pupil,'challenge2ItemResult');pupil.emit('challenge2ItemAnswer',{challengeId:launch.id,itemId:item.id,selectedCategory:'input'});assert.equal((await wrong).correct,false);}
-  const result=event(pupil,'challenge2ItemResult');pupil.emit('challenge2ItemAnswer',{challengeId:launch.id,itemId:item.id,selectedCategory:item.category});assert.equal((await result).correct,true);
+  const correct=activity.questions.find(q=>q.options.item.id===item.id).correct_answer.category;
+  if(index===0){
+   const wrong=await ack(pupil,'challenge2ItemAnswer',{challengeId:launch.id,itemId:item.id,selectedCategory:'initialization'});
+   assert.equal(wrong.success,true);assert.equal(wrong.correct,false,'Database answer edit overrides the original branch key');
+   const saved=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',activity.id));
+   assert.equal(saved[0].challenge_responses.length,7);assert.equal(saved[0].challenge_responses.filter(r=>r.student_answer!==null).length,1,'Each drop is persisted before acknowledgement');
+  }
+  const reply=await ack(pupil,'challenge2ItemAnswer',{challengeId:launch.id,itemId:item.id,selectedCategory:correct});assert.equal(reply.success,true);assert.equal(reply.correct,true);
+  if(index===1){
+   const duplicate=await ack(pupil,'challenge2ItemAnswer',{challengeId:launch.id,itemId:item.id,selectedCategory:correct});assert.equal(duplicate.alreadyCompleted,true);
+   pupil.disconnect();pupil=await connect(studentUser,participant);const replay=event(pupil,'challenge2Started');pupil.emit('classroomSceneReady');const restored=await replay;
+   assert.equal(restored.id,launch.id);assert.equal(restored.completedItemIds.length,2,'Reconnect retains completed items');
+  }
  }
- await poll(async()=>{const rows=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',activity.id));if(!rows[0] || rows[0].status!=='completed' || rows[0].challenge_responses.length!==5)return false;assert.equal(rows[0].challenge_responses.length,5);assert.ok(rows[0].challenge_responses.every(r=>r.is_correct));return true;});
+ const rows=await value(db.from('challenge_results').select('*,challenge_responses(*)').eq('activity_id',activity.id));
+ assert.equal(rows.length,1);assert.equal(rows[0].status,'completed');assert.equal(rows[0].challenge_responses.length,7);assert.ok(rows[0].challenge_responses.every(r=>r.is_correct));
+ assert.equal(rows[0].challenge_responses.filter(r=>r.student_answer?.wrong_attempts?.length).length,1);
+ const debrief=await loadSavedChallengeMistakes(Number(session.room_id),{id:activity.id,title:activity.title});
+ assert.equal(debrief.questions[0].incorrectStudentCount,1,'A wrong drop must remain visible in the debrief after correction');
+ assert.equal(debrief.questions[0].answeredStudentCount,1);
+ assert.ok(debrief.questions.slice(1).every(question=>question.incorrectStudentCount===0));
  await pause(200);const returned=event(pupil,'challenge2Ended');pupil.emit('challenge2ReturnToClass',{challengeId:launch.id});assert.equal((await returned).reason,'completed');
- console.log('PASS device classification: five database devices, wrong attempt and five saved responses, instructor statistics, completed return');
+ console.log('PASS loop drag/drop: seven database items, two rounds, authoritative grading and per-drop persistence, wrong-attempt history, reconnect, duplicate acknowledgements, instructor statistics and return');
  await ack(teacher,'endClass',{});
 } catch(error){console.error(log.slice(-5000));throw error;}
 finally{

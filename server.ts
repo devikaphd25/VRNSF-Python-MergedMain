@@ -1,4 +1,7 @@
 import { saveAppGameResult, getRecentAppGameResults } from "./server/services/game-results.service.js";
+import { videoViewForActivity } from './shared/video-view.js';
+import { classroomStudentName } from './shared/classroom-student-name.js';
+import { databaseDragDropLesson } from './server/services/database-drag-drop-lesson.js';
 import { loadDebriefMistakes } from "./server/repositories/debrief-mistakes.repository.js";
 import { pickRandomAvatar } from "./shared/vr-avatars.js";
 import {bindGameRun,recordGameResponse} from "./server/services/game-results.service.js";
@@ -306,7 +309,7 @@ function getChallenge2QuestionStats(session: Challenge2Session) {
     const progress = [...session.progress.values()];
     const correctCount = progress.filter(student => student.completedItemIds.has(question.options.item.id)).length;
     const wrongCount = progress.reduce((sum, student) => sum + [...(student.wrongSelections.get(question.options.item.id)?.values() ?? [])].reduce((a,b) => a+b, 0), 0);
-    return { questionIndex: index, label: `Q${index + 1}`, prompt: question.options.item.name, correctCount, wrongCount,
+    return { questionIndex: index, label: `Q${index + 1}`, prompt: question.options.item.instructor_label ?? question.options.item.name, correctCount, wrongCount,
       accuracy: correctCount + wrongCount ? Math.round(correctCount / (correctCount + wrongCount) * 100) : 0 };
   });
 }
@@ -773,7 +776,10 @@ io.on("connection", (socket: ClassroomSocket) => {
       const review = lastQuickChallengeReviews.get(roomId);
       if (review && activity.payload.mediaType === "image") socket.emit("debriefReviewData", review);
     }
-    socket.emit(activity.event, activity.payload);
+    socket.emit(activity.event, activity.event === 'challenge2Started' ? {
+      ...activity.payload,
+      completedItemIds: [...(activeChallenge2Sessions.get(roomId)?.progress.get(socket.id)?.completedItemIds ?? [])],
+    } : activity.payload);
     if (activity.event === 'quickChallengeStarted') {
       const challenge = activeQuickChallenges.get(roomId)!;
       const progress = challenge.studentProgress.get(socket.id);
@@ -1373,10 +1379,9 @@ io.on("connection", (socket: ClassroomSocket) => {
     }
 
     const activity=await activityForSession(roomId,'drag_drop',Number(data.activityId)||undefined);
-    const {data:questions,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).eq('question_type','drag_drop').order('question_order');
+    const {data:rows,error}=await supabaseAdmin.from('challenge_questions').select('*').eq('activity_id',activity.id).eq('question_type','drag_drop').order('question_order');
     if(error)throw error;
-    if(!questions?.length||questions.some(q=>q.question_type!=='drag_drop'||!q.options?.item?.id||!['input','output','both','storage'].includes(q.correct_answer?.category)))throw Error('Drag/drop questions are missing or invalid');
-    const items=questions.map(q=>({id:q.options.item.id,name:q.options.item.name,modelPath:q.options.item.model_path,imagePath:q.options.item.image_path,modelRotationY:q.options.item.model_rotation_y,feedback:q.options.item.feedback,category:q.correct_answer.category}));
+    const { questions, items, rounds, format } = databaseDragDropLesson(rows ?? []);
     const previous = activeChallenge2Sessions.get(roomId);
     if (previous) endChallenge2Session(previous, "instructor_stop");
     await selectSessionActivity(roomId,activity.id);
@@ -1402,7 +1407,7 @@ io.on("connection", (socket: ClassroomSocket) => {
     activeChallenge2Sessions.set(roomId, session);
     roomActivities.set(roomId, {
       event: "challenge2Started",
-      payload: { id: session.id, durationSeconds, startedAt: session.startedAt, totalItems: session.questions.length, items, returnAfterCompleteSeconds: session.returnAfterCompleteSeconds },
+      payload: { id: session.id, durationSeconds, startedAt: session.startedAt, totalItems: session.questions.length, items, rounds, format, returnAfterCompleteSeconds: session.returnAfterCompleteSeconds },
       expiresAt: session.startedAt + durationSeconds * 1000,
     });
 
@@ -1434,6 +1439,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       studentSocket.emit("challenge2Started", {
         returnAfterCompleteSeconds: session.returnAfterCompleteSeconds,
         items,
+        rounds, format,
         id: session.id,
         durationSeconds,
         startedAt: session.startedAt,
@@ -1445,8 +1451,8 @@ io.on("connection", (socket: ClassroomSocket) => {
       totalQuestions: session.questions.length,
       questionStats: getChallenge2QuestionStats(session),
       id: session.id,
-      question: "Challenge 2: Predict - Devices In & Out",
-      options: ["Input", "Output", "Both", "Storage"],
+      question: format === 'loop_parts' ? `${activity.title}: ${rounds[0].prompt}` : "Challenge 2: Predict - Devices In & Out",
+      options: format === 'loop_parts' ? rounds[0].boxes.map(box => box.label) : ["Input", "Output", "Both", "Storage"],
       durationSeconds,
       startedAt: session.startedAt,
       totalItems: session.questions.length,
@@ -1463,7 +1469,9 @@ io.on("connection", (socket: ClassroomSocket) => {
 
   });
 
-  socket.on("challenge2ItemAnswer", (data = {}) => {
+  socket.on("challenge2ItemAnswer", async (data = {}, acknowledge?: (reply: any) => void) => {
+    const reply = (payload: any) => { if (typeof acknowledge === 'function') acknowledge(payload); };
+    try {
     const roomId = String(socket.data.roomId ?? "").trim();
     const student = students[socket.id];
     const session = activeChallenge2Sessions.get(roomId);
@@ -1472,14 +1480,24 @@ io.on("connection", (socket: ClassroomSocket) => {
       socket.data.role === "instructor" ||
       !session ||
       data.challengeId !== session.id
-    ) return;
+    ) { reply({success:false,message:'This challenge is no longer active.'}); return; }
 
     const itemId = String(data.itemId ?? "").trim();
     const selectedCategory = String(data.selectedCategory ?? "").trim() as Challenge2Category;
-    const expectedCategory = session.questions.find(q=>q.options.item.id===itemId)?.correct_answer.category;
+    const question = session.questions.find(q=>q.options.item.id===itemId);
+    const expectedCategory = question?.correct_answer.category;
     const progress = session.progress.get(socket.id);
-    if (!expectedCategory || !progress || progress.completedItemIds.has(itemId)) return;
-    if (!["input", "output", "both", "storage"].includes(selectedCategory)) return;
+    const loop = question?.options?.format === 'loop_parts';
+    if (!expectedCategory || !progress) { reply({success:false,message:'Invalid question.'}); return; }
+    const allowed = loop ? question.options.round.boxes.map((box: any) => box.category) : ['input','output','both','storage'];
+    if (!allowed.includes(selectedCategory)) { reply({success:false,message:'Invalid destination.'}); return; }
+    if (loop && question.options.item.part === 2 && session.questions.some(q => q.options.item.part === 1 && !progress.completedItemIds.has(q.options.item.id))) {
+      reply({success:false,message:'Finish Part 1 first.'}); return;
+    }
+    if (progress.completedItemIds.has(itemId)) {
+      if (loop) await saveDragDropResponses(session, false, socket.id);
+      reply({success:true,correct:true,alreadyCompleted:true}); return;
+    }
 
     progress.attempts += 1;
     const correct = selectedCategory === expectedCategory;
@@ -1501,8 +1519,9 @@ io.on("connection", (socket: ClassroomSocket) => {
     const completed = completedCount === session.questions.length;
     if (completed && progress.completedAt === null) {
       progress.completedAt = Date.now();
-      void saveDragDropResponses(session,true).catch(error=>console.error('[Challenge 2] Result pending:',error));
+      if (!loop) void saveDragDropResponses(session,true).catch(error=>console.error('[Challenge 2] Result pending:',error));
     }
+    if (loop) await saveDragDropResponses(session, false, socket.id);
     const responseTimeSeconds = Math.max(
       0,
       ((progress.completedAt ?? Date.now()) - progress.startedAt) / 1000
@@ -1517,6 +1536,7 @@ io.on("connection", (socket: ClassroomSocket) => {
       completedCount,
       totalItems: session.questions.length,
     });
+    reply({success:true,correct,completedCount,totalItems:session.questions.length});
 
     for (const client of io.sockets.sockets.values()) {
       if (
@@ -1559,6 +1579,10 @@ io.on("connection", (socket: ClassroomSocket) => {
           endChallenge2Session(session, "completed");
         }
       }, CHALLENGE_2_ALL_COMPLETE_DELAY_MS);
+    }
+    } catch (error) {
+      console.error('[Challenge 2] Could not save answer:', error);
+      reply({success:false,message:'Could not save this answer. Please retry.'});
     }
   });
 
@@ -1643,9 +1667,11 @@ socket.on("registerClassroomClient", async data => {
     socket.emit('classroomRegistrationError',{message:'This session belongs to another instructor.'});return;
   }
   if(databaseUser.role==='student'){
-    const {data:participant,error}=await supabaseAdmin.from('participants').select('seat_name').eq('id',participantId).eq('session_id',roomId).eq('student_id',userId).maybeSingle();
+    const {data:sessionParticipants,error}=await supabaseAdmin.from('participants').select('id,student_id,seat_name').eq('session_id',roomId);
+    const participant = sessionParticipants?.find(row => String(row.id) === participantId && Number(row.student_id) === userId);
     if(error||!participant){socket.emit('classroomRegistrationError',{message:'Join this session before entering.'});return;}
     databaseUser.seat=participant.seat_name;
+    databaseUser.fullName=classroomStudentName(databaseUser.fullName, participant.id, sessionParticipants!);
   }
 
   // Confirm that the provided username belongs to this user ID.
@@ -3561,9 +3587,11 @@ socket.on(
 
     const activityRoomId = String(socket.data.roomId ?? "").trim();
     let debriefMistakes = null;
+    let videoView = videoViewForActivity({});
     if(destination==='Presentation'&&activityId){
       const activity=await activityForSession(activityRoomId,undefined,Number(activityId));
       if(!['video','debrief'].includes(activity.activity_type))throw Error('Invalid media activity');
+      videoView = videoViewForActivity(activity);
       if (activity.activity_type === 'debrief') debriefMistakes = await loadDebriefMistakes(Number(activityRoomId), activity);
       await selectSessionActivity(activityRoomId,activity.id);
     }else if(destination==='Game 1'){
@@ -3576,7 +3604,7 @@ socket.on(
     if (destination === "Presentation" && assetPath) {
       roomActivities.set(activityRoomId, {
         event: "presentationContentChanged",
-        payload: { assetPath, mediaType: mediaType === "image" ? "image" : "video", debriefView: "classroom", debriefMistakes },
+        payload: { assetPath, mediaType: mediaType === "image" ? "image" : "video", videoView, debriefView: "classroom", debriefMistakes },
         playback: { command: "pause", currentTime: 0, sentAt: Date.now() },
       });
     } else if (destination === "Game 1") {
@@ -3772,6 +3800,7 @@ socket.on(
             destination,
             assetPath: destination === "Presentation" ? assetPath : undefined,
             mediaType: destination === "Presentation" ? mediaType : undefined,
+            videoView,
             debriefView:
               destination === "Presentation" && mediaType === "image"
                 ? debriefView ?? "classroom"
@@ -3787,6 +3816,7 @@ socket.on(
             {
               assetPath,
               mediaType: mediaType === "image" ? "image" : "video",
+              videoView,
               debriefView:
                 mediaType === "image"
                   ? debriefView ?? "classroom"
@@ -3807,6 +3837,7 @@ socket.on(
         destination,
         assetPath: destination === "Presentation" ? assetPath : undefined,
         mediaType: destination === "Presentation" ? mediaType : undefined,
+        videoView,
         debriefView:
           destination === "Presentation" && mediaType === "image"
             ? debriefView ?? "classroom"

@@ -4,6 +4,7 @@ import { supabaseAdmin as db } from '../database/supabase-client.js';
 import { selectedCourseDay, courseByAccessCode } from '../repositories/course-content.repository.js';
 import { upsertDeviceAppUser, getAppUserById } from '../repositories/users.repository.js';
 import { firstAvailableClassroomSeat } from '../../shared/classroom-seats.js';
+import { classroomStudentName } from '../../shared/classroom-student-name.js';
 // One Node server coordinates seat assignment, including concurrent joins.
 let joinQueue: Promise<unknown> = Promise.resolve();
 const openedSessions = new Set<number>();
@@ -63,12 +64,12 @@ export function joinSession(deviceId: string, name?: string) {
             if (error)
                 throw error;
             participant = data;
-            if (user.fullName === 'Student') {
-                user.fullName = `Student ${(participants?.length ?? 0) + 1}`;
-                const { error } = await db.from('users').update({ full_name: user.fullName }).eq('id', user.id);
-                if (error)
-                    throw error;
-            }
+        }
+        const displayName = classroomStudentName(user.fullName, participant.id, [...(participants ?? []), participant]);
+        if (user.fullName !== displayName) {
+            const { error } = await db.from('users').update({ full_name: displayName }).eq('id', user.id);
+            if (error) throw error;
+            user.fullName = displayName;
         }
         user.seat = participant.seat_name;
         return { room_id: String(session.id), participant_id: String(participant.id), current_slide: 0, display_name: user.fullName, seat: participant.seat_name };

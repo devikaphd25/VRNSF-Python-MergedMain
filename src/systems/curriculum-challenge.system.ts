@@ -17,6 +17,7 @@ import {
 import { Matrix4, Object3D, PerspectiveCamera, Quaternion, Raycaster, Vector2, Vector3 } from "three";
 
 import { socket } from "../network/socket-client";
+import { StableControllerButton } from "../ui/stable-controller-button";
 import { setPanelRayInteraction } from "../ui/panel-ray-interaction";
 import { frameDesktopPanel, getPanelLayoutBounds } from "../ui/desktop-panel-framing";
 import { maintainChallengeSeatClearance } from '../ui/challenge-seat-clearance';
@@ -150,7 +151,13 @@ export class CurriculumChallengeSystem extends createSystem({
   private hudPlateCanvases = new Map<string, HTMLCanvasElement>();
   private readonly buttonArt = new StablePanelArt();
   private sounds = new TrueFalseSounds();
-  private studentRocket = new StudentRocketRig(() => this.sounds.launch(), () => this.sounds.stop());
+  private rocketLaunched = false;
+  private studentRocket = new StudentRocketRig(() => {
+    this.sounds.launch();
+    this.rocketLaunched = true;
+    this.updateScoreActionButton();
+    if (this.isRocketResultsStage()) this.paintScoreHero(this.correctCount, this.questions.length);
+  }, () => this.sounds.stop());
   private desktopRocketDragging = false;
   private xrRocketDragging = false;
   private hoveringRocketLaunch = false;
@@ -271,7 +278,7 @@ export class CurriculumChallengeSystem extends createSystem({
     raycaster.setFromCamera(pointer, this.camera);
 
     if (this.hasRocket()) {
-      const rocketHit = raycaster.intersectObject(this.studentRocket.root, true)[0];
+      const rocketHit = this.studentRocket.hitControls(raycaster);
       if (rocketHit) {
         if (this.studentRocket.beginDrag(raycaster)) {
           this.sounds.click();
@@ -300,7 +307,7 @@ export class CurriculumChallengeSystem extends createSystem({
   };
 
   // Share hit regions between desktop clicks and hover feedback.
-  private getPanelAction(raycaster: Raycaster): { action: () => void; actionName: string } | undefined {
+  private getPanelAction(raycaster: Raycaster, exactTargetsOnly = false): { action: () => void; actionName: string } | undefined {
     const panel = (window as any).codePatternChallengeEntity?.object3D;
     if (!panel?.visible) return;
     panel.updateMatrixWorld(true);
@@ -349,6 +356,7 @@ export class CurriculumChallengeSystem extends createSystem({
       }
     }
 
+    if (exactTargetsOnly) return;
     if (this.isFivePartsChallenge()) {
       const stepIndex = this.hitDiamondIndex(x, y);
       if (stepIndex !== null) {
@@ -390,7 +398,7 @@ export class CurriculumChallengeSystem extends createSystem({
 
   private hitUiElement(raycaster: Raycaster, elementId: string): boolean {
     const element = this.document?.getElementById(elementId) as any;
-    if (!element || element.classList?.contains("answer-hidden") || element.classList?.contains("quiz-content-hidden")) {
+    if (!element || element.isVisible?.value === false || element.classList?.contains("answer-hidden") || element.classList?.contains("quiz-content-hidden") || element.classList?.contains("quiz-result-hidden")) {
       return false;
     }
     const object = this.uiObject(element);
@@ -555,6 +563,7 @@ export class CurriculumChallengeSystem extends createSystem({
     const activate = (event?: any): void => {
       event?.stopPropagation?.();
       event?.stopImmediatePropagation?.();
+      if (this.usesPolledControllers()) return;
       const now = performance.now();
 
       if (now - lastActivation < 220) {
@@ -570,10 +579,12 @@ export class CurriculumChallengeSystem extends createSystem({
       element.addEventListener(eventName, activate);
     });
     element.addEventListener("pointerenter", () => {
+      if (this.usesPolledControllers()) return;
       if ((window as any).isCodePatternChallengeOpen) this.sounds.hover();
       this.setHoveredControl(elementId);
     });
     element.addEventListener("pointerleave", () => {
+      if (this.usesPolledControllers()) return;
       if (this.hoveredControlId === elementId) this.setHoveredControl("");
     });
   }
@@ -616,6 +627,7 @@ export class CurriculumChallengeSystem extends createSystem({
     this.challengeClosed = false;
     this.timeExpired = false;
     this.responseTimeSeconds = 0;
+    this.rocketLaunched = false;
     if (this.hasRocket()) this.studentRocket.resetAll();
     this.layoutStudentShell();
     this.paintLeftPanel();
@@ -669,10 +681,22 @@ export class CurriculumChallengeSystem extends createSystem({
     return (
       this.hasExtraCredit() &&
       this.hasPerfectMainScore() &&
+      (!this.usesRocketResultsFlow() || this.rocketLaunched) &&
       !this.extraCreditReview &&
       !this.extraCreditActive &&
       !this.challengeClosed
     );
+  }
+
+  /** Day 2's tracing and factorial lessons share quiz, rocket/results, then bonus. */
+  private usesRocketResultsFlow(): boolean {
+    return this.challenge?.challengeType === WHILE_TRACE_CHALLENGE_TYPE ||
+      this.challenge?.challengeType === WHILE_FACTORIAL_CHALLENGE_TYPE;
+  }
+
+  private isRocketResultsStage(): boolean {
+    return this.usesRocketResultsFlow() && this.isSummaryView() &&
+      !this.extraCreditActive && !this.extraCreditReview;
   }
 
   private canRetryExtraCredit(): boolean {
@@ -843,6 +867,7 @@ export class CurriculumChallengeSystem extends createSystem({
   private renderSummaryView(): void {
     const total = this.questions.length;
     this.setResultMode(true);
+    this.layoutStudentShell();
     this.updateProgressLabel();
     this.updateNavButtons();
     this.updateSubmitButton();
@@ -889,12 +914,12 @@ export class CurriculumChallengeSystem extends createSystem({
     const hovered = this.hoveredControlId === "quiz-result-reset";
     if (this.canStartExtraCredit()) {
       this.removeClass(reset, "quiz-result-hidden");
-      this.paintHudFace("quiz-reset-face", C1.light, "Extra Credit", undefined, 500, hovered);
+      this.paintHudFace("quiz-reset-face", C1.light, this.usesRocketResultsFlow() ? "Start Bonus Questions" : "Extra Credit", undefined, 500, hovered);
       return;
     }
     if (this.canRetryExtraCredit() || this.canRetryFiveParts()) {
       this.removeClass(reset, "quiz-result-hidden");
-      this.paintHudFace("quiz-reset-face", C1.light, "Retry", undefined, undefined, hovered);
+      this.paintHudFace("quiz-reset-face", C1.light, this.usesRocketResultsFlow() && !this.extraCreditActive ? "Retake Quiz" : "Retry", undefined, undefined, hovered);
       return;
     }
     this.addClass(reset, "quiz-result-hidden");
@@ -992,7 +1017,9 @@ export class CurriculumChallengeSystem extends createSystem({
     ctx.fillText(`Score: ${correct}/${total}`, canvas.width / 2, rocketHint ? 70 : canvas.height / 2);
     if (rocketHint) {
       const message =
-        correct === total
+        this.usesRocketResultsFlow() && this.rocketLaunched
+          ? "Rocket launched! Select Start Bonus Questions to continue."
+          : correct === total
           ? "All parts unlocked — drag them onto your rocket, then launch."
           : correct > 0
             ? "Correct answers unlocked parts. Drag them onto the rocket, or retry to unlock more."
@@ -1598,6 +1625,7 @@ export class CurriculumChallengeSystem extends createSystem({
       this.questionIndex = 0;
       this.selectedIndex = null;
       this.selections = this.questions.map(() => null);
+      this.rocketLaunched = false;
       if (this.hasRocket()) this.studentRocket.resetAll();
       this.setResultMode(false);
       this.addClass(this.document?.getElementById("quiz-result-reset"), "quiz-result-hidden");
@@ -2139,6 +2167,8 @@ export class CurriculumChallengeSystem extends createSystem({
     if (!visible) {
       window.clearTimeout(this.resultAutoCloseTimer);
       this.setHoveredControl("");
+      this.controllerButtons.left.reset();
+      this.controllerButtons.right.reset();
     }
     const entity = (window as any).codePatternChallengeEntity;
 
@@ -2166,9 +2196,7 @@ export class CurriculumChallengeSystem extends createSystem({
         const distance = 2.4;
         entity.object3D.position.copy(eye).addScaledVector(direction, distance);
         entity.object3D.quaternion.copy(orientation);
-        if (this.hasRocket()) {
-          entity.object3D.position.add(new Vector3(-0.55, 0, 0).applyQuaternion(entity.object3D.quaternion));
-        } else if (this.isFivePartsChallenge() && !this.isSingleBoardChallenge()) {
+        if (this.isFivePartsChallenge() && !this.isSingleBoardChallenge()) {
           const left = new Vector3(-0.35, 0, 0).applyQuaternion(entity.object3D.quaternion);
           entity.object3D.position.add(left);
         }
@@ -2408,12 +2436,17 @@ export class CurriculumChallengeSystem extends createSystem({
       this.removeClass(codeFace, "quiz-board-art-wide");
     }
     this.sizeLeftBoard(wideCode);
+    // Preserve the left column's space for the rocket while hiding its artwork.
+    // Retaking or reviewing a question restores the code automatically.
+    (codeColumn as any)?.setProperties?.({ visibility: this.isRocketResultsStage() ? "hidden" : "visible" });
     this.tiltLeftCodeBoard(this.usesTiltedCodeBoard());
     const entity = (window as any).codePatternChallengeEntity;
     if (entity?.index !== undefined) {
       PanelUI.data.maxWidth[entity.index] = this.studentPanelLayout().meters;
     }
+    entity?.object3D?.scale.setScalar(1);
     this.sync();
+    this.syncStudentRocket();
   }
 
   private sizeLeftBoard(wide: boolean): void {
@@ -2682,26 +2715,100 @@ export class CurriculumChallengeSystem extends createSystem({
     if ((window as any).isCodePatternChallengeOpen) {
       this.positionDesktopPanel();
       this.bringQuizPanelForward();
+      this.pollQuizControllerButtons();
       // Multi-select uses the option buttons; the old card board is unused.
     }
   }
 
+  private controllerButtons = { left: new StableControllerButton(), right: new StableControllerButton() };
+  private lastControllerActionAt = -Infinity;
+  private lastControllerHoverAt = -Infinity;
+
+  private usesPolledControllers(): boolean {
+    return this.renderer.xr.isPresenting && Boolean(
+      this.renderer.xr.getSession()?.inputSources &&
+      [...this.renderer.xr.getSession()!.inputSources].some(source => source.gamepad));
+  }
+
+  private pollQuizControllerButtons(): void {
+    if (!this.usesPolledControllers()) {
+      this.controllerButtons.left.reset();
+      this.controllerButtons.right.reset();
+      return;
+    }
+    const now = performance.now();
+    let highlighted = '';
+    for (const hand of ['right', 'left'] as const) {
+      const input = [...this.renderer.xr.getSession()!.inputSources].find(source => source.handedness === hand);
+      const ray = this.getXrRocketRaycaster(hand);
+      // Rocket assembly has its own drag/launch handling; do not click through it.
+      const rocketHit = ray && this.studentRocket.hitControls(ray);
+      const target = ray && !rocketHit ? this.getPanelAction(ray, true) : undefined;
+      const state = this.controllerButtons[hand].update(target?.actionName ?? '', Boolean(input?.gamepad?.buttons[0]?.pressed), now);
+      if (!highlighted) highlighted = this.hoverIdFromAction(state.hovered);
+      if (state.entered && now - this.lastControllerHoverAt > 500) {
+        this.lastControllerHoverAt = now;
+        this.sounds.hover();
+      }
+      if (state.activate && target && now - this.lastControllerActionAt > 220) {
+        this.lastControllerActionAt = now;
+        target.action();
+        this.sounds.click();
+      }
+    }
+    this.setHoveredControl(highlighted);
+  }
+
+  private desktopLayoutReport = "";
+
   private positionDesktopPanel(): void {
-    if (this.renderer.xr.isPresenting || !(this.camera instanceof PerspectiveCamera)) return;
+    if (this.renderer.xr.isPresenting) return;
     const panel = (window as any).codePatternChallengeEntity?.object3D;
     if (!panel?.visible) return;
-    const bounds = getPanelLayoutBounds(panel, this.document);
-    if (bounds) frameDesktopPanel(panel, this.camera, bounds);
+    // Three's capability flag also works when development dependencies load a
+    // separate copy of Three; instanceof can silently skip placement in that case.
+    const camera = this.camera as PerspectiveCamera;
+    if (!camera?.isPerspectiveCamera) {
+      this.reportDesktopLayout({ status: "unsupported-camera", camera: camera?.type });
+      return;
+    }
+    // Fit the reading boards exactly as in Day 1. The optional rocket must
+    // not push the lesson away from the student or move its visual center.
+    const bounds = getPanelLayoutBounds(panel, this.document, this.isRocketResultsStage());
+    if (!bounds) {
+      this.reportDesktopLayout({ status: "waiting-for-layout", documentReady: Boolean(this.document) });
+      return;
+    }
+    frameDesktopPanel(panel, camera, bounds);
+    this.reportDesktopLayout({
+      status: "framed",
+      bounds: { min: bounds.min.toArray(), max: bounds.max.toArray() },
+      panel: panel.getWorldPosition(new Vector3()).toArray(),
+      camera: camera.getWorldPosition(new Vector3()).toArray(),
+      aspect: camera.aspect,
+      fov: camera.getEffectiveFOV(),
+    });
+  }
+
+  private reportDesktopLayout(details: Record<string, unknown>): void {
+    const key = `${this.challenge?.id}:${details.status}`;
+    if (key === this.desktopLayoutReport) return;
+    this.desktopLayoutReport = key;
+    // One copyable report per state, rather than logging every animation frame.
+    console.info("[Challenge layout]", JSON.stringify({ challenge: this.challenge?.id, ...details }));
   }
 
   private syncStudentRocket(): void {
     const panel = (window as any).codePatternChallengeEntity?.object3D;
-    const show = Boolean(panel?.visible) && this.hasRocket();
+    const show = Boolean(panel?.visible) && this.hasRocket() &&
+      (!this.usesRocketResultsFlow() || this.isRocketResultsStage());
     if (!show || !panel) {
       this.studentRocket.setVisible(false);
       return;
     }
-    this.studentRocket.attach(panel, new Vector3(2.08, -0.58, 0.78), -0.62);
+    this.studentRocket.attach(panel,
+      this.usesRocketResultsFlow() ? new Vector3(-1.05, -0.58, 0.4) : new Vector3(2.08, -0.58, 0.78),
+      this.usesRocketResultsFlow() ? 0 : -0.62);
     this.studentRocket.setVisible(true);
     if (this.reviewResults) {
       this.studentRocket.setUnlocks(this.reviewResults.map(item => Boolean(item.correct)));
@@ -2728,7 +2835,10 @@ export class CurriculumChallengeSystem extends createSystem({
     const raycaster = this.getXrRocketRaycaster();
     if (!raycaster) return;
     const hoveringLaunch = this.studentRocket.hitLaunch(raycaster);
-    if (hoveringLaunch && !this.hoveringRocketLaunch) this.sounds.hover();
+    if (hoveringLaunch && !this.hoveringRocketLaunch && performance.now() - this.lastControllerHoverAt > 500) {
+      this.lastControllerHoverAt = performance.now();
+      this.sounds.hover();
+    }
     this.hoveringRocketLaunch = hoveringLaunch;
     if (triggerHeld && !this.lastXrTriggerDown) {
       this.xrRocketDragging = this.studentRocket.beginDrag(raycaster);
@@ -2742,8 +2852,8 @@ export class CurriculumChallengeSystem extends createSystem({
     this.lastXrTriggerDown = triggerHeld;
   }
 
-  private getXrRocketRaycaster(): Raycaster | null {
-    const raySpace = (this.world as any).player?.raySpaces?.right;
+  private getXrRocketRaycaster(hand: 'left' | 'right' = 'right'): Raycaster | null {
+    const raySpace = (this.world as any).player?.raySpaces?.[hand];
     if (!raySpace) return null;
     raySpace.updateWorldMatrix(true, true);
     const origin = new Vector3();

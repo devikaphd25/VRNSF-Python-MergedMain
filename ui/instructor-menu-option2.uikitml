@@ -108,6 +108,8 @@
  .current-task-navigation { flex-grow: 1; height: 54; flex-direction: row; gap: 12; }
  .current-task-nav-button { flex-grow: 1; height: 54; flex-direction: row; gap: 12; align-items: center; justify-content: center; background-color: #10253d; border-radius: 10; border-width: 1; border-color: #38bdf8; color: #ffffff; font-size: 19; cursor: pointer; pointer-events: auto; }
  .current-task-nav-button:hover { background-color: #0c5475; border-color: #a5f3fc; color: #ffffff; }
+ .activities-load-panel { width: 100%; padding: 16; gap: 12; flex-direction: column; align-items: center; }
+ .activities-load-message { width: 100%; font-family: inter; font-size: 20; color: #e0f2fe; text-align: center; }
 </style>
 <Panel id="instructor-dashboard-root" class="dashboard-root">
  <Panel class="dashboard-header">
@@ -116,6 +118,10 @@
  </Panel>
  <Panel id="dashboard-main-content" class="queue-shell">
   <Panel class="queue-header"><Text id="option2-progress" class="queue-title">Tasks</Text><Text id="option2-remaining" class="status-text">Select a task to open</Text></Panel>
+  <Panel id="activities-load-panel" class="activities-load-panel is-hidden">
+    <Text id="activities-load-message" class="activities-load-message">Loading activities…</Text>
+    <Button id="activities-retry" class="utility-button">Retry</Button>
+  </Panel>
   <Text id="sequence-finished" class="sequence-finished is-hidden">All activities have been run. Select All Tasks to revisit them.</Text>
   <Panel id="option2-task-list" class="task-scroll"><Panel id="queue-row-0" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-0" class="step-line"></Panel><Panel id="queue-step-0" class="step-circle"><Text id="queue-task-0-number" class="task-number">1</Text></Panel><Panel id="queue-line-bottom-0" class="step-line"></Panel></Panel><Button id="queue-task-0" class="menu-card"><Text id="queue-task-0-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-0-title" class="card-title">Task</Text><Text id="queue-task-0-description" class="card-description"></Text></Panel><Panel id="queue-task-0-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>
 <Panel id="queue-row-1" class="sequence-row"><Panel class="step-rail"><Panel id="queue-line-top-1" class="step-line"></Panel><Panel id="queue-step-1" class="step-circle"><Text id="queue-task-1-number" class="task-number">2</Text></Panel><Panel id="queue-line-bottom-1" class="step-line"></Panel></Panel><Button id="queue-task-1" class="menu-card"><Text id="queue-task-1-type" class="task-type">TASK</Text><Panel class="card-copy"><Text id="queue-task-1-title" class="card-title">Task</Text><Text id="queue-task-1-description" class="card-description"></Text></Panel><Panel id="queue-task-1-status" class="task-status-dot"></Panel><Image class="arrow-icon" src="/images/icons/chevron-right-option2.png"/></Button></Panel>

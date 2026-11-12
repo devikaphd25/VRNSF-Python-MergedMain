@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { setMaxListeners } from 'node:events';
-import { Box3, Euler, Group, PerspectiveCamera, Scene, Vector3 } from 'three';
+import { Box3, BoxGeometry, Euler, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector3 } from 'three';
 import { parse, interpret } from '@pmndrs/uikitml';
 // Import the document alone: the SDK entry point initializes browser-only XR canvas art.
 import { UIKitDocument } from '../node_modules/@iwsdk/core/dist/ui/document.js';
 import { frameDesktopPanel, getPanelLayoutBounds } from '../src/ui/desktop-panel-framing.ts';
+import { objectLocalBounds } from '../src/ui/object-local-bounds.ts';
 
 setMaxListeners(0);
 (globalThis as any).document = { body: { style: { cursor: '' } } };
@@ -72,5 +73,27 @@ test('actual curriculum layout, code board and timer fit after desktop resizing 
     assert.ok(measuredAgain.min.distanceTo(bounds.min) < 0.00001);
     assert.ok(measuredAgain.max.distanceTo(bounds.max) < 0.00001);
   }
+  const rocket = new Group(); rocket.name = 'StudentRocketRig';
+  const body = new Mesh(new BoxGeometry(0.3, 1.18, 0.3), new MeshBasicMaterial());
+  rocket.add(body); rocket.position.set(2.08, -0.58, 0.78); rocket.rotation.y = -0.62; panel.add(rocket);
+  rocket.userData.panelFrameBounds = objectLocalBounds(rocket);
+  const boardsOnly = getPanelLayoutBounds(panel, document, false)!;
+  rocket.visible = false;
+  const withoutRocket = getPanelLayoutBounds(panel, document)!;
+  rocket.visible = true;
+  assert.ok(boardsOnly.min.distanceTo(withoutRocket.min) < 1e-6);
+  assert.ok(boardsOnly.max.distanceTo(withoutRocket.max) < 1e-6,
+    'Day 2 must use the same reading-board framing as Day 1, regardless of its rocket');
+  frameDesktopPanel(panel, camera, boardsOnly);
+  assertFramed(panel, camera, boardsOnly);
+  const restingBounds = getPanelLayoutBounds(panel, document)!;
+  frameDesktopPanel(panel, camera, restingBounds);
+  const afterPlacement = getPanelLayoutBounds(panel, document)!;
+  assert.ok(afterPlacement.min.distanceTo(restingBounds.min) < 1e-6);
+  assert.ok(afterPlacement.max.distanceTo(restingBounds.max) < 1e-6, 'Rocket bounds must not drift when the panel moves');
+  body.position.y = 100;
+  const launchedBounds = getPanelLayoutBounds(panel, document)!;
+  assert.ok(launchedBounds.min.distanceTo(restingBounds.min) < 1e-6);
+  assert.ok(launchedBounds.max.distanceTo(restingBounds.max) < 1e-6, 'Launching the rocket must not shrink or recenter the questions');
   document.dispose();
 });

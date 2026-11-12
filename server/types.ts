@@ -151,7 +151,7 @@ export interface QuickChallengeReview {
   elapsedSeconds: number;
 }
 
-export type Challenge2Category = "input" | "output" | "both" | "storage";
+export type Challenge2Category = "input" | "output" | "both" | "storage" | import('../shared/loop-drag-drop.js').LoopDropCategory;
 
 export interface Challenge2StudentProgress {
   returnedAt?: number;

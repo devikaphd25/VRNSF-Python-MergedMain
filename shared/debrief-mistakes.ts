@@ -5,6 +5,9 @@ export interface DebriefMistakes {
   questions: Array<{
     questionNumber: number;
     question: string;
+    shortLabel: string;
+    answeredStudentCount: number;
+    incorrectStudentCount: number;
     answers: Array<{ answer: string; studentCount: number }>;
   }>;
 }

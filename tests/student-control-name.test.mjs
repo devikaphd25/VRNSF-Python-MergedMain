@@ -23,7 +23,11 @@ test('the right-board name has a real text child that updates when the database 
   assert.ok(glyph, 'An empty Text tag creates no glyph child, so setProperties alone cannot show the name');
   name.setProperties({ text: 'Student 5' });
   assert.equal(glyph.properties.value.text, 'Student 5');
-  const children = parsed.element.children;
+  const controlRow = parsed.element.children.find(element =>
+    element.children?.some(child => child.properties?.id === 'side-student-name'));
+  assert.ok(controlRow, 'Name and Raise Hand must share their compact control row');
+  const children = controlRow.children;
+  assert.ok(children.some(element => element.properties?.id === 'side-raise-hand'));
   assert.ok(children.findIndex(element => element.properties?.id === 'side-student-name') >
     children.findIndex(element => element.properties?.id === 'side-hand-label'));
   root.dispose();

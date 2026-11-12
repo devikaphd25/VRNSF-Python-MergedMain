@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 import { SCORE_SERIF } from "../../ui/serif-type";
+import { fitObjectHeight, objectLocalBounds } from '../../ui/object-local-bounds';
 
 const MODEL_CANDIDATES = [
   "/models/challenge-1/rocket-five-parts.glb",
@@ -86,6 +87,7 @@ export class StudentRocketRig {
     this.buildRackFromSlots();
     this.refreshLocks();
     this.refreshLaunchButton();
+    this.cacheFrameBounds();
     void this.tryLoadModel();
   }
 
@@ -96,6 +98,19 @@ export class StudentRocketRig {
     this.restPosition.copy(localPosition);
     this.applyOverlay();
     this.refreshPointerEvents();
+  }
+
+  private cacheFrameBounds(): void {
+    const y = this.body.position.y;
+    const buttonVisible = this.launchButton.visible, rackVisible = this.rack.visible;
+    this.body.position.y = 0;
+    this.launchButton.visible = true;
+    this.rack.visible = true;
+    this.root.userData.panelFrameBounds = objectLocalBounds(this.root);
+    this.body.position.y = y;
+    this.launchButton.visible = buttonVisible;
+    this.rack.visible = rackVisible;
+    this.root.updateMatrixWorld(true);
   }
 
   setVisible(visible: boolean): void {
@@ -160,6 +175,13 @@ export class StudentRocketRig {
     if (!this.canLaunch() || !this.launchButton.visible) return false;
     this.launchButton.updateMatrixWorld(true);
     return raycaster.intersectObject(this.launchButton, true).length > 0;
+  }
+
+  /** Only the five flat pickup targets and launch button are interactive.
+   * Never raycast the detailed rocket model/ghost meshes on every XR frame. */
+  hitControls(raycaster: THREE.Raycaster): boolean {
+    if (!this.root.visible || this.launching || this.hasLaunched) return false;
+    return this.hitLaunch(raycaster) || this.hitUnlockedPickup(raycaster) !== null;
   }
 
   beginDrag(raycaster: THREE.Raycaster): boolean {
@@ -354,6 +376,7 @@ export class StudentRocketRig {
     this.normalizeInner();
     this.slots.forEach((_, index) => this.styleSlot(index, this.assembled[index]));
     this.rebuildRack();
+    this.cacheFrameBounds();
     this.applyOverlay();
     this.refreshLocks();
     this.refreshPointerEvents();
@@ -470,14 +493,7 @@ export class StudentRocketRig {
   }
 
   private normalizeInner(): void {
-    this.inner.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(this.inner);
-    const size = bounds.getSize(new THREE.Vector3());
-    const center = bounds.getCenter(new THREE.Vector3());
-    if (size.y < 0.001) return;
-    this.inner.position.sub(center);
-    this.inner.position.y += size.y / 2;
-    this.inner.scale.setScalar(TARGET_HEIGHT / size.y);
+    fitObjectHeight(this.inner, TARGET_HEIGHT);
   }
 
   private meshesSortedByHeight(root: THREE.Object3D): THREE.Object3D[] {

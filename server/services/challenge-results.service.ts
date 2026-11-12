@@ -48,9 +48,10 @@ export function saveChallengeResponses(challenge: QuickChallenge, reason: string
     }
     return persist(challenge.id, attempts);
 }
-export function saveDragDropResponses(session: Challenge2Session, onlyCompleted = false) {
+export function saveDragDropResponses(session: Challenge2Session, onlyCompleted = false, onlySocketId?: string) {
     const attempts = [];
     for (const [socketId, participantId] of session.participants) {
+        if (onlySocketId && socketId !== onlySocketId) continue;
         const progress = session.progress.get(socketId);
         if (onlyCompleted && !progress?.completedAt)
             continue;

@@ -1,7 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
 import { ClassroomContentLoader } from '../src/content/classroom-content-loader.ts';
+import { ClassroomContentError } from '../src/content/classroom-content-loader.ts';
 import { batchMediaLinks } from '../server/services/batch-media-links.ts';
+
+test('the default loader calls browser fetch with its global receiver, not the loader instance', async () => {
+  const original = globalThis.fetch;
+  let receiver: unknown;
+  globalThis.fetch = (function(this: unknown) {
+    receiver = this;
+    if (this !== globalThis) throw TypeError('Illegal invocation');
+    return Promise.resolve({ ok: true, json: async () => ({ activities: [], videos: [] }) } as Response);
+  }) as typeof fetch;
+  try {
+    await new ClassroomContentLoader().load('/class');
+    assert.equal(receiver, globalThis);
+  } finally { globalThis.fetch = original; }
+});
 
 test('dashboard startup and side boards share one request; task launches refresh database content', async () => {
   let calls = 0, now = 0;
@@ -44,4 +62,32 @@ test('media links are batched per bucket and duplicates do not add requests', as
 test('missing signed media is reported instead of showing an unrelated or broken link', async () => {
   const storage = { from: () => ({ createSignedUrls: async () => ({ data: [], error: null }) }) };
   await assert.rejects(batchMediaLinks(['supabase://media/missing.png'], storage), /Missing course media link/);
+});
+
+test('a server session error reaches the shared loader instead of becoming an empty activity list', async () => {
+  const loader = new ClassroomContentLoader((async () => ({ ok: false, status: 409,
+    json: async () => ({ message: 'This classroom has ended. Refresh and sign in again.' }) })) as any);
+  await assert.rejects(loader.load('/ended-class'), error => error instanceof ClassroomContentError && error.needsLogin);
+});
+
+test('an empty dashboard shows a failed load and retries when opened again, without launching stale activities', async () => {
+  const source = ts.createSourceFile('dashboard.ts', readFileSync('src/systems/instructor-dashboard.system.ts', 'utf8'), ts.ScriptTarget.Latest, true);
+  const members = source.statements.find(ts.isClassDeclaration)!.members
+    .filter(node => ['loadInstructorMenuContent', 'onDashboardOpened'].includes(node.name?.getText(source) ?? ''))
+    .map(node => node.getText(source)).join('\n');
+  let calls = 0;
+  const context = vm.createContext({ Error, ClassroomContentError, console: { log() {}, error() {} },
+    loadClassroomContent: async () => {
+      if (++calls === 1) throw new ClassroomContentError('Offline');
+      return { activities: [{ activityId: 180, title: 'Database activity' }], videos: [] };
+    } });
+  vm.runInContext(ts.transpile(`class Dashboard { ${members} }; globalThis.Dashboard = Dashboard;`, { target: ts.ScriptTarget.ES2022 }), context);
+  const dashboard = new context.Dashboard();
+  let renders = 0;
+  Object.assign(dashboard, { databaseActivities: [], renderLessonPage: () => renders++ });
+  assert.equal(await dashboard.loadInstructorMenuContent(), false);
+  assert.equal(dashboard.contentState, 'error'); assert.equal(dashboard.contentError, 'Offline');
+  dashboard.onDashboardOpened(); await dashboard.contentLoadPending;
+  assert.equal(dashboard.contentState, 'ready'); assert.equal(dashboard.databaseActivities[0].activityId, 180);
+  assert.equal(calls, 2); assert.ok(renders >= 4);
 });
