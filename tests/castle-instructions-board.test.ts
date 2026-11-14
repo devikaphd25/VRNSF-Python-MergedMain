@@ -3,9 +3,9 @@
  * the environment root at the player's right, inside the 10 x 10 room, within
  * the player's forward view, and in front of the king that holds it — it used
  * to sit at x = -7.7, outside the walls and out of sight. The centre board's
- * code rows are part of the same layout: they used to be pitched wider than a
- * block, so every placed piece floated in its own slot instead of joining the
- * program above it. This guards both in src/castle/jigsaw/JigsawPuzzleSystem.ts.
+ * code rows are part of the same layout: they are pitched wider than a block so
+ * every row has its own drop zone, and the pieces still stack in order. This
+ * guards both in src/castle/jigsaw/JigsawPuzzleSystem.ts.
  */
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
@@ -266,7 +266,7 @@ function blockBody(system: any, origIndex: number): THREE.Mesh {
   return body as THREE.Mesh;
 }
 
-test("placed code blocks meet edge to edge on the centre board", () => {
+test("placed code rows keep a visible seam and clear the floor on the centre board", () => {
   const manager = new CastleEnvironmentManager(world, [classroom]);
   tick(); tick();
   receive("gameChanged", { gameId: "python-puzzle-1" });
@@ -309,12 +309,19 @@ test("placed code blocks meet edge to edge on the centre board", () => {
   assert.equal(upper.x, lower.x, "both blocks must sit in the board's column");
   assert.equal(upper.z, lower.z, "both blocks must sit on the board's plane");
 
-  // The upper piece's bottom edge lands on the lower piece's top edge, instead
-  // of the old slot gap leaving two planks floating apart.
+  // The rows keep one board pitch between them, which is wider than a block:
+  // the seam is visible, so each row has its own drop zone instead of the whole
+  // program reading as one flush column.
+  const visibleHeight = upperEdges.top - upperEdges.bottom;
   const faceGap = upper.y + upperEdges.bottom - (lower.y + lowerEdges.top);
+  const pitchGap = slots[0].y - slots[1].y - visibleHeight;
   assert.ok(
-    Math.abs(faceGap) < 1e-3,
-    `neighbouring placed pieces must stick together, gap=${faceGap}`,
+    Math.abs(faceGap - pitchGap) < 1e-6,
+    `neighbouring pieces must sit one row gap apart, gap=${faceGap} vs ${pitchGap}`,
+  );
+  assert.ok(
+    pitchGap > visibleHeight * 0.25,
+    `the seam between rows must stay visible, gap=${pitchGap} over ${visibleHeight}`,
   );
 
   // The stack is anchored to the board: the top piece's visible top edge sits on
@@ -330,15 +337,24 @@ test("placed code blocks meet edge to edge on the centre board", () => {
     `the top row must start at the board's top edge, got ${slots[0].y + upperEdges.top} vs ${boardTop}`,
   );
 
-  // Every row below pitches by exactly one visible block height, so the whole
-  // program stacks without a gap anywhere.
-  const visibleHeight = upperEdges.top - upperEdges.bottom;
+  // Every row below pitches by the same board pitch, wider than a block.
   for (let index = 0; index + 1 < slots.length; index++) {
     assert.ok(
-      Math.abs(slots[index].y - slots[index + 1].y - visibleHeight) < 1e-6,
-      `rows ${index}/${index + 1} must pitch one block height apart`,
+      slots[index].y - slots[index + 1].y > visibleHeight,
+      `rows ${index}/${index + 1} must leave a seam, pitch=${slots[index].y - slots[index + 1].y}`,
+    );
+    assert.ok(
+      Math.abs(slots[index].y - slots[index + 1].y - (slots[0].y - slots[1].y)) < 1e-6,
+      `rows ${index}/${index + 1} must use the board pitch`,
     );
   }
+
+  // The board and the last row of the program hang clear of the floor.
+  const lastSlot = slots[slots.length - 1];
+  assert.ok(
+    lastSlot.y + lowerEdges.bottom > 0,
+    `the last row must clear the floor, got ${lastSlot.y + lowerEdges.bottom}`,
+  );
 
   // The shelf keeps its wider pitch, so a shuffled block's knob still cannot
   // reach the piece stacked above it while blocks are reordered.
@@ -360,6 +376,50 @@ test("placed code blocks meet edge to edge on the centre board", () => {
   assert.ok(
     shelfPitch > reach(0) + reach(1),
     `the shelf pitch (${shelfPitch}) must clear two knobs (${reach(0) + reach(1)})`,
+  );
+});
+
+test("a drop just above the last empty row fills it without unlodging the piece above", () => {
+  const manager = new CastleEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  receive("gameChanged", { gameId: "python-puzzle-1" });
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+
+  const system: any = world.getSystem(JigsawPuzzleSystem);
+  const slots: THREE.Vector3[] = system.slotPositions;
+  const pieces = [...system.blockEntities.entries()].sort(
+    (a: [number, unknown], b: [number, unknown]) => a[0] - b[0],
+  );
+
+  // Fill the six upper rows, leaving the last line's row empty.
+  for (let row = 0; row < 6; row++) {
+    const entity = pieces[row][1];
+    entity.object3D.position.copy(slots[row]);
+    entity.object3D.updateMatrixWorld(true);
+    system.handleBlockRelease(entity);
+    assert.equal(entity.getValue(JigsawBlock, "slotIndex"), row);
+  }
+
+  // The player aims at the empty last row but lands a little high, inside the
+  // row above — what dropping onto a flush column does. That used to send the
+  // piece in row 5 back to the shelf, so the last line could never be placed.
+  const lastRow = 6;
+  const late = pieces[lastRow][1];
+  late.object3D.position.copy(slots[5]);
+  late.object3D.position.y -= (slots[5].y - slots[6].y) * 0.25;
+  late.object3D.updateMatrixWorld(true);
+  system.handleBlockRelease(late);
+
+  assert.equal(
+    late.getValue(JigsawBlock, "slotIndex"),
+    lastRow,
+    "the last line must land in the empty row",
+  );
+  assert.equal(
+    pieces[5][1].getValue(JigsawBlock, "slotIndex"),
+    5,
+    "the piece already placed in row 5 must stay on the board",
   );
 });
 

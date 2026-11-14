@@ -1536,6 +1536,7 @@ socket.emit(
             status: progress.status === "completed"
               ? "completed"
               : "instructor_return",
+            pythonPuzzle: session.pythonPuzzle,
           });
           session.resultSaved = true;
         } catch (saveError) {
@@ -2077,6 +2078,12 @@ socket.on(
         ? data.returnReason
         : null;
     session.currentExercise = completedCards;
+
+    const puzzleNumber = Number(data?.pythonPuzzle);
+    if (puzzleNumber === 1 || puzzleNumber === 2 || puzzleNumber === 3) {
+      session.pythonPuzzle = puzzleNumber;
+    }
+
     session.completedExercises = Array.from(
       { length: completedCards },
       (_, index) => index + 1
@@ -2150,6 +2157,7 @@ socket.on(
           totalExercises: Number(result?.total ?? session.totalCards) || 12,
           accuracy: Number(result?.accuracy ?? session.accuracy) || 0,
           status: "completed",
+          pythonPuzzle: Number(result?.pythonPuzzle) || session.pythonPuzzle,
         });
         session.resultSaved = true;
 
@@ -2372,6 +2380,7 @@ socket.on(
         status: data?.reason === "student_completed"
           ? "completed"
           : "instructor_return",
+        pythonPuzzle: Number(result?.pythonPuzzle) || session.pythonPuzzle,
       })
         .then(() => {
           io.emit("labResultPersisted", {
@@ -4263,6 +4272,7 @@ if (
         totalExercises: Number(progress?.total) || 12,
         accuracy: Number(progress?.accuracy ?? connectedUser.accuracy) || 0,
         status: "disconnected",
+        pythonPuzzle: disconnectedLabSession?.pythonPuzzle ?? null,
       });
       if (disconnectedLabSession) {
         disconnectedLabSession.durationSeconds = Math.max(

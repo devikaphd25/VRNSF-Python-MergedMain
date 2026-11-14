@@ -11,6 +11,12 @@
   the `app_users` table — it will crash if Supabase is unreachable.
 - **Database**: External Supabase. SQL migrations are in `supabase/` and must
   be applied in order before the app is fully functional.
+  `supabase/python-puzzle-migration.sql` adds `game_results.pythonpuzzle`
+  (1 castle, 2 forest, 3 ocean; NULL for the lab and quizzes). Until it is run
+  in the Supabase SQL Editor, results still save but the column stays unset —
+  `saveAppGameResult` drops the field when PostgREST reports it missing.
+  Note the in-app activity ids number the ocean as `python-puzzle-2` and the
+  forest as `python-puzzle-3`, while the stored number follows `PYTHON_PUZZLE_NUMBERS`.
 
 ## Running in the Base44 sandbox
 
