@@ -174,6 +174,44 @@ test("python-puzzle-3 waits for its forest and retains all puzzle entities on en
   assert.equal(visibleInScene(block.object3D), false);
 });
 
+test("Instructor Stop Game returns the student from an active castle", () => {
+  const manager = new CastleEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  receive("gameChanged", { gameId: "python-puzzle-1" });
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+  receive("returnToClassroom", { returnReason: "instructor_return" });
+  tick();
+  assert.equal(manager.isActive(), false);
+  assert.equal(classroom.visible, true);
+});
+
+test("Instructor Stop Game returns the student from an active ocean", async () => {
+  const manager = new OceanEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  receive("gameChanged", { gameId: "python-puzzle-2" });
+  await new Promise(resolve => setImmediate(resolve));
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+  receive("returnAllToClassroomNow", { returnReason: "instructor_return" });
+  tick();
+  assert.equal(manager.isActive(), false);
+  assert.equal(classroom.visible, true);
+});
+
+test("Instructor Stop Game returns the student from an active forest", async () => {
+  const manager = new ForestEnvironmentManager(world, [classroom]);
+  tick(); tick();
+  receive("gameChanged", { gameId: "python-puzzle-3" });
+  await new Promise(resolve => setImmediate(resolve));
+  tick(); tick();
+  assert.equal(manager.isActive(), true);
+  receive("modeChanged", { mode: "Classroom Mode" });
+  tick();
+  assert.equal(manager.isActive(), false);
+  assert.equal(classroom.visible, true);
+});
+
 for (const flag of ["isLabActive", "isCastleActive", "isForestActive"]) {
   test(`Seat restoration leaves the game origin alone while ${flag} is true`, () => {
     const system: any = Object.create(SeatSystem.prototype);

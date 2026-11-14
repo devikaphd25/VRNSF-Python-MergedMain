@@ -17,6 +17,7 @@ import type { Object3D } from "three";
 
 import { socket } from "../network/socket";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
+import { connectInstructorReturn } from "../utils/instructor-return";
 import { CastleVisibleInteractionSystem } from "./CastleVisibleInteractionSystem.js";
 import { setCastleRoot } from "./jigsaw/castleRoot.js";
 import { JigsawBlock, JigsawButton } from "./jigsaw/jigsawComponents.js";
@@ -399,8 +400,7 @@ export class CastleEnvironmentManager {
       }
     });
 
-    // The castle/jigsaw game should only end when the user clicks the Exit
-    // button.  Server-driven return events are ignored while the castle is
-    // active so the puzzle is not interrupted abruptly.
+    // Stop Game from the instructor dashboard must also end an active puzzle.
+    connectInstructorReturn(reason => this.returnToClassroom(reason));
   }
 }

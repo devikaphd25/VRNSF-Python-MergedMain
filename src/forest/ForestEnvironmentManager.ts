@@ -18,6 +18,7 @@ import { VisibleInteractionSystem } from "./VisibleInteractionSystem.js";
 
 import { socket } from "../network/socket";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
+import { connectInstructorReturn } from "../utils/instructor-return";
 import { setForestRoot } from "./forestRoot.js";
 import { ForestJigsawBlock, ForestJigsawButton } from "./jigsaw/forestJigsawComponents.js";
 import { ForestJigsawPuzzleSystem } from "./jigsaw/ForestJigsawPuzzleSystem.js";
@@ -275,5 +276,8 @@ export class ForestEnvironmentManager {
         this.enter();
       }
     });
+
+    // Stop Game from the instructor dashboard must also end an active puzzle.
+    connectInstructorReturn(reason => this.returnToClassroom(reason));
   }
 }
