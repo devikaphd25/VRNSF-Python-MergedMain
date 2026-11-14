@@ -16,6 +16,7 @@ import {
 import type { Object3D } from "three";
 
 import { socket } from "../network/socket";
+import { PYTHON_PUZZLE_NUMBERS } from "../config/python-puzzle-numbers";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
 import { CastleVisibleInteractionSystem } from "./CastleVisibleInteractionSystem.js";
 import { setCastleRoot } from "./jigsaw/castleRoot.js";
@@ -141,6 +142,7 @@ export class CastleEnvironmentManager {
       streak: 0,
       accuracy: 0,
       durationSeconds: 0,
+      pythonPuzzle: PYTHON_PUZZLE_NUMBERS.castle,
     });
 
     console.log("[Castle] Entered castle room.");
@@ -185,6 +187,7 @@ export class CastleEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 100,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.castle,
         }
       : {
           status: "incomplete" as const,
@@ -196,6 +199,7 @@ export class CastleEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 0,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.castle,
         };
 
     socket.emit("labReturnConfirmed", {

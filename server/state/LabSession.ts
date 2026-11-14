@@ -22,6 +22,8 @@ export class LabSession {
   durationSeconds = 0;
   status: LabStatus = "working";
   returnReason: string | null = null;
+  /** Python puzzle room the student is in (1 castle, 2 forest, 3 ocean). */
+  pythonPuzzle: number | null = null;
   resultSaved = false;
   mistakes: LabMistake[] = [];
   gameState: { lessonState: string } = { lessonState: "idle" };

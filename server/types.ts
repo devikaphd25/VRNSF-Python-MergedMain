@@ -197,6 +197,8 @@ export interface GameResultInput {
   totalExercises?: number;
   accuracy?: number;
   status: Exclude<LabStatus, "working">;
+  /** Python puzzle the result came from: 1 = castle, 2 = forest, 3 = ocean. */
+  pythonPuzzle?: number | null;
 }
 
 export interface DeviceUserInput {

@@ -17,6 +17,7 @@ import { buildProceduralForest } from "./proceduralForest.js";
 import { VisibleInteractionSystem } from "./VisibleInteractionSystem.js";
 
 import { socket } from "../network/socket";
+import { PYTHON_PUZZLE_NUMBERS } from "../config/python-puzzle-numbers";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
 import { setForestRoot } from "./forestRoot.js";
 import { ForestJigsawBlock, ForestJigsawButton } from "./jigsaw/forestJigsawComponents.js";
@@ -140,6 +141,7 @@ export class ForestEnvironmentManager {
       streak: 0,
       accuracy: 0,
       durationSeconds: 0,
+      pythonPuzzle: PYTHON_PUZZLE_NUMBERS.forest,
     });
 
     console.log("[Forest] Entered forest clearing.");
@@ -182,6 +184,7 @@ export class ForestEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 100,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.forest,
         }
       : {
           status: "incomplete" as const,
@@ -193,6 +196,7 @@ export class ForestEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 0,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.forest,
         };
 
     socket.emit("labReturnConfirmed", {

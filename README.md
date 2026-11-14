@@ -19,6 +19,8 @@ Open **Supabase → SQL Editor** and run:
 3. `supabase/app-data-migration.sql`
    - creates `app_users` and `game_results`;
    - links participants to persistent users.
+   - `supabase/python-puzzle-migration.sql` adds `game_results.pythonpuzzle`
+     (1 castle, 2 forest, 3 ocean) once the tables exist.
 4. `supabase/weekly-content-migration.sql`
    - creates `learning_weeks`, `week_lessons`, and `week_activities`;
    - creates the three Week 1 lesson shells and the week-level game.

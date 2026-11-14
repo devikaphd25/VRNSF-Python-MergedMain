@@ -115,9 +115,10 @@ export async function saveAppGameResult({
   totalExercises = 12,
   accuracy = 0,
   status,
+  pythonPuzzle = null,
 }: GameResultInput): Promise<void> {
   const user = getAppUserById(userId);
-  const { error } = await supabaseAdmin.from("game_results").insert({
+  const values: Record<string, unknown> = {
     user_id: Number(userId),
     student_name: user?.fullName ?? `Student ${userId}`,
     game_name: gameName,
@@ -129,7 +130,18 @@ export async function saveAppGameResult({
     total_exercises: Math.max(1, Number(totalExercises) || 12),
     accuracy: Math.max(0, Math.min(100, Number(accuracy) || 0)),
     status,
-  });
+  };
+  if (pythonPuzzle === 1 || pythonPuzzle === 2 || pythonPuzzle === 3) {
+    values.pythonpuzzle = pythonPuzzle;
+  }
+
+  let { error } = await supabaseAdmin.from("game_results").insert(values);
+  // Until supabase/python-puzzle-migration.sql is applied to the hosted
+  // database the column is missing; the score itself must still be saved.
+  if (error && "pythonpuzzle" in values && error.message.includes("pythonpuzzle")) {
+    delete values.pythonpuzzle;
+    ({ error } = await supabaseAdmin.from("game_results").insert(values));
+  }
   if (error) throw new Error(`Could not save game result: ${error.message}`);
 }
 

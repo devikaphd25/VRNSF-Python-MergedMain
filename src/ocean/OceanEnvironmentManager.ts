@@ -17,6 +17,7 @@ import { buildProceduralOcean } from "./proceduralOcean.js";
 import { OceanVisibleInteractionSystem } from "./OceanVisibleInteractionSystem.js";
 
 import { socket } from "../network/socket";
+import { PYTHON_PUZZLE_NUMBERS } from "../config/python-puzzle-numbers";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
 import { setOceanRoot } from "./oceanRoot.js";
 import { OceanJigsawBlock, OceanJigsawButton } from "./jigsaw/oceanJigsawComponents.js";
@@ -140,6 +141,7 @@ export class OceanEnvironmentManager {
       streak: 0,
       accuracy: 0,
       durationSeconds: 0,
+      pythonPuzzle: PYTHON_PUZZLE_NUMBERS.ocean,
     });
 
     console.log("[Ocean] Entered ocean scene.");
@@ -182,6 +184,7 @@ export class OceanEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 100,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.ocean,
         }
       : {
           status: "incomplete" as const,
@@ -193,6 +196,7 @@ export class OceanEnvironmentManager {
           wrongAnswers: 0,
           accuracy: 0,
           durationSeconds: 0,
+          pythonPuzzle: PYTHON_PUZZLE_NUMBERS.ocean,
         };
 
     socket.emit("labReturnConfirmed", {
