@@ -43,7 +43,10 @@ import { socket } from "../../network/socket";
 // ── Layout ────────────────────────────────────────────────────
 // Mounted on the front wall (inner face at z ≈ +4.8), rotated 180° to face the player at -z.
 const S = 2.2; // global scale factor for the entire puzzle assembly
-const BOARD_CENTER: [number, number, number] = [0, 1.4, 4.5];
+// Raised off the old 1.4: the board used to hang 0.36 m through the floor with
+// its last rows packed right above it. It now clears the floor, and the
+// feedback panel still fits under the room's 5 m ceiling.
+const BOARD_CENTER: [number, number, number] = [0, 1.7, 4.5];
 const BOARD_WIDTH = 1.6 * S;
 const BOARD_HEIGHT = 1.6 * S;
 const NUM_SLOTS = 7;
@@ -57,12 +60,12 @@ const BLOCK_BEVEL = 0.004 * S;
 // Row pitch on the shelf: wider than a block, so a shuffled block's knob never
 // reaches the piece stacked above it and blocks can be reordered freely.
 const SHELF_PITCH = 0.17 * S;
-// Row pitch on the board: one block height, so the flat edge lines of two
-// neighbouring pieces meet exactly and their visible faces sit edge to edge.
-// Placed pieces therefore read as one interlocking column instead of planks
-// floating apart; only the hidden mid-depth bevel bulge, which the opaque faces
-// cover, reaches past the seam.
-const BOARD_PITCH = BLOCK_HEIGHT;
+// Row pitch on the board: wider than a block, so neighbouring pieces leave a
+// visible seam and each row owns a wide drop zone of its own. Flush rows (the
+// old pitch of exactly one block height) read as one continuous column, so a
+// piece aimed at the last empty row landed in the filled row above it and sent
+// that piece back to the shelf instead of being placed.
+const BOARD_PITCH = 0.19 * S;
 
 // Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
 // and the knob stays shorter than the gap between two shelf rows so a shuffled
@@ -195,9 +198,9 @@ export class JigsawPuzzleSystem extends createSystem({
     this.tmpVec = new Vector3();
 
     // The board's top row sits with its visible upper edge on the board's top
-    // edge, and each row below it touches the one above, so the assembled
-    // program forms one joined stack.
-    const boardTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - BOARD_PITCH / 2;
+    // edge, and each row below it is one board pitch down, leaving a visible
+    // seam between neighbouring pieces.
+    const boardTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - BLOCK_HEIGHT / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(
         new Vector3(
@@ -755,12 +758,26 @@ export class JigsawPuzzleSystem extends createSystem({
       }
     }
 
+    // A piece already on the board only makes way for a direct hit on its own
+    // row. A drop that merely lands within one row of an empty row fills that
+    // row instead, so aiming at the last gaps cannot unlodge the piece the
+    // player just placed above it.
+    let targetSlot = nearestSlot;
     const occupyingBlock = this.findBlockInSlot(nearestSlot);
     if (occupyingBlock && occupyingBlock !== block) {
-      this.returnBlockHome(occupyingBlock);
+      const emptySlot = this.findNearestEmptySlot(this.tmpVec.y);
+      const emptyDist =
+        emptySlot === null
+          ? Infinity
+          : Math.abs(this.tmpVec.y - this.slotPositions[emptySlot].y);
+      if (emptySlot !== null && emptyDist <= BOARD_PITCH) {
+        targetSlot = emptySlot;
+      } else {
+        this.returnBlockHome(occupyingBlock);
+      }
     }
 
-    this.placeBlockInSlot(block, nearestSlot);
+    this.placeBlockInSlot(block, targetSlot);
     this.activeBlockOriginalIndex = block.getValue(
       JigsawBlock,
       "originalIndex",
@@ -1075,6 +1092,21 @@ export class JigsawPuzzleSystem extends createSystem({
       }
     }
     return null;
+  }
+
+  /** The empty board row closest to `y`, or null when every row is filled. */
+  private findNearestEmptySlot(y: number): number | null {
+    let nearest: number | null = null;
+    let nearestDist = Infinity;
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      if (this.findBlockInSlot(i)) continue;
+      const distance = Math.abs(y - this.slotPositions[i].y);
+      if (distance < nearestDist) {
+        nearestDist = distance;
+        nearest = i;
+      }
+    }
+    return nearest;
   }
 
   // ── Teardown ──────────────────────────────────────────────
