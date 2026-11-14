@@ -19,6 +19,7 @@ import { OceanVisibleInteractionSystem } from "./OceanVisibleInteractionSystem.j
 import { socket } from "../network/socket";
 import { PYTHON_PUZZLE_NUMBERS } from "../config/python-puzzle-numbers";
 import { hideAllMarkers } from "../components/instructor/seat-markers";
+import { connectInstructorReturn } from "../utils/instructor-return";
 import { setOceanRoot } from "./oceanRoot.js";
 import { OceanJigsawBlock, OceanJigsawButton } from "./jigsaw/oceanJigsawComponents.js";
 import { OceanJigsawPuzzleSystem } from "./jigsaw/OceanJigsawPuzzleSystem.js";
@@ -278,5 +279,8 @@ export class OceanEnvironmentManager {
         this.enter();
       }
     });
+
+    // Stop Game from the instructor dashboard must also end an active puzzle.
+    connectInstructorReturn(reason => this.returnToClassroom(reason));
   }
 }
