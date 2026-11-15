@@ -11,7 +11,7 @@ npm ci
 Create `.env.server` beside `package.json`. Get the private server key from the project owner:
 ```
 SUPABASE_URL=https://wxwfriaqxrhgxdgpnlti.supabase.co
-SUPABASE_SECRET_KEY=YOUR_PRIVATE_SERVER_KEY
+SUPABASE_SECRET_KEY=Y[REDACTED_SUPABASE_SECRET]
 PORT=3001
 ```
 
