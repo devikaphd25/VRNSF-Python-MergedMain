@@ -11,7 +11,7 @@ import {
 } from "@iwsdk/core";
 
 import * as THREE from "three";
-import { socket } from "../network/socket";
+import { socket } from "../network/socket-client";
 
 type UIKitElement = any;
 

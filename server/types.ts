@@ -4,9 +4,10 @@
  * Goal: describe users, rooms, sockets, challenges, lab progress, and saved
  * results so server modules exchange predictable objects. These declarations
  * do not execute logic or store records; Supabase and the in-memory store do.
- * Used by: server.ts, repositories, services, socket handlers, and LabSession.
+ * Used by: server.ts, repositories, services, socket handlers, and LabAttemptState.
  */
 import type { Socket } from "socket.io";
+import type { ChallengePresentation } from '../shared/challenge-presentation.js';
 
 export type UserRole = "instructor" | "student";
 export type UserLocation = "classroom" | "python_lab";
@@ -14,12 +15,8 @@ export type LabStatus = "working" | "completed" | "incomplete" | "instructor_ret
 
 export interface AppUserRow {
   id: number | string;
-  username: string;
-  password_hash: string | null;
   full_name: string;
   role: UserRole;
-  seat: string | null;
-  location: UserLocation;
   device_id: string | null;
 }
 
@@ -31,10 +28,10 @@ export interface AppUser {
   seat: string | null;
   location: UserLocation;
   deviceId: string | null;
-  passwordHash: string | null;
 }
 
 export interface ClassroomStudent {
+  avatarId?: string;
   id?: string;
   userId?: number;
   name: string;
@@ -80,24 +77,42 @@ export interface RoomRecord {
 }
 
 export interface QuickChallengeQuestion {
+  extraCredit?: boolean;
+  presentation?: ChallengePresentation;
+  id?: string;
   prompt: string;
   options: string[];
   correctIndex: number;
+  correctIndices?: number[];
+  instructorLabel?: string;
+  explanation?: string;
 }
 
 export interface QuickChallengeStudentProgress {
+  extraCredit?: {
+    answers: QuickChallengeStudentProgress['answers'];
+    attemptCount: number;
+    attemptStartedAt: number;
+    completed: boolean;
+    finishedAt?: number;
+  };
+  /** A deliberate retry gets its own persisted attempt; the class timer stays shared. */
+  attemptStartedAt?: number;
   answers: Array<{
     questionIndex: number;
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
+    placementCorrect?: number;
   }>;
   completed: boolean;
   finishedAt?: number;
   totalTimeSeconds?: number;
+  attemptCount?: number;
 }
 
 export interface QuickChallenge {
+  activityId?: number;
   id: string;
   roomId: string;
   question: string;
@@ -110,12 +125,14 @@ export interface QuickChallenge {
   questionIndex?: number;
   totalQuestions?: number;
   questions?: QuickChallengeQuestion[];
+  extraCreditQuestions?: QuickChallengeQuestion[];
   answers: Map<string, {
     selectedIndex: number;
     correct: boolean;
     answeredAt: number;
     responseTimeSeconds: number;
   }>;
+  responseParticipants?: Map<string, string>;
   studentProgress: Map<string, QuickChallengeStudentProgress>;
   timeout: NodeJS.Timeout | null;
 }
@@ -134,9 +151,10 @@ export interface QuickChallengeReview {
   elapsedSeconds: number;
 }
 
-export type Challenge2Category = "input" | "output" | "both" | "storage";
+export type Challenge2Category = "input" | "output" | "both" | "storage" | import('../shared/loop-drag-drop.js').LoopDropCategory;
 
 export interface Challenge2StudentProgress {
+  returnedAt?: number;
   completedItemIds: Set<string>;
   attempts: number;
   wrongAttempts: number;
@@ -146,6 +164,10 @@ export interface Challenge2StudentProgress {
 }
 
 export interface Challenge2Session {
+  returnAfterCompleteSeconds?: number;
+  activityId: number;
+  questions: Array<{ id: number; options: any; correct_answer: { category: Challenge2Category } }>;
+  participants: Map<string, string>;
   id: string;
   roomId: string;
   durationSeconds: number;
@@ -197,8 +219,6 @@ export interface GameResultInput {
   totalExercises?: number;
   accuracy?: number;
   status: Exclude<LabStatus, "working">;
-  /** Python puzzle the result came from: 1 = castle, 2 = forest, 3 = ocean. */
-  pythonPuzzle?: number | null;
 }
 
 export interface DeviceUserInput {

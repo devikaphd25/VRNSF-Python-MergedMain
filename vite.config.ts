@@ -8,14 +8,9 @@ import { compileUIKit } from "@iwsdk/vite-plugin-uikitml";
 import { defineConfig } from "vite";
 import mkcert from "vite-plugin-mkcert";
 
-// The Base44 preview proxy terminates HTTPS itself, so the self-signed
-// mkcert certificate is unnecessary and prevents the proxy from reaching
-// the dev server. Skip it only in the Base44 sandbox.
-const isBase44Preview = process.env.BASE44_PREVIEW_MODE === "1";
-
 export default defineConfig({
   plugins: [
-    ...(isBase44Preview ? [] : [mkcert()]),
+    mkcert(),
 
     iwsdkDev({
       emulator: {
@@ -36,7 +31,7 @@ export default defineConfig({
     host: "0.0.0.0",
   port: 8081,
   strictPort: true,
-  open: isBase44Preview ? false : "/",
+  open: "/",
 
   proxy: {
     "/api": {

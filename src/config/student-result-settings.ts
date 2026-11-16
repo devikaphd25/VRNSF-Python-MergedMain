@@ -1,0 +1,1 @@
+export const STUDENT_RESULT_AUTO_CLOSE_MS = 10_000;

@@ -1,117 +1,161 @@
 <style>
-  .quiz-monitor-root {
-    width: 940;
-    padding: 32;
-    flex-direction: column;
-    gap: 20;
-    background-color: rgba(5, 15, 35, 0.98);
-    border-width: 2;
-    border-color: rgba(34, 211, 238, 0.72);
-    border-radius: 30;
+  .quiz-monitor-shell {
+    width: 1328;
+    height: 692;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 16;
+    background-opacity: 0;
     pointer-events: auto;
     pointer-events-order: 13000;
   }
 
-  .quiz-monitor-header {
+  .quiz-monitor-column {
+    width: 1152;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .quiz-title-slot {
+    width: 700;
+    height: 40;
+    background-opacity: 0;
+  }
+
+  .quiz-monitor-title-banner {
+    width: 700;
+    height: 80;
+    margin-top: -664;
+    margin-bottom: 584;
+  }
+
+  .quiz-monitor-title { display: none; }
+
+  .quiz-monitor-board {
+    width: 1152;
+    height: 624;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    background-opacity: 0;
+  }
+
+  .quiz-monitor-board-art {
+    width: 1152;
+    height: 624;
+  }
+
+  .quiz-monitor-content {
+    width: 1152;
+    height: 624;
+    margin-top: -624;
+    padding: 28;
+    padding-top: 36;
+    padding-bottom: 22;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 14;
+    background-opacity: 0;
+  }
+
+  .quiz-monitor-top {
     width: 100%;
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 18;
-    border-bottom-width: 1;
-    border-bottom-color: rgba(148, 163, 184, 0.24);
+  }
+
+  .quiz-monitor-corner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 14;
   }
 
   .quiz-header-copy {
-    width: 520;
+    width: 720;
     flex-direction: column;
-    gap: 8;
-  }
-
-  .quiz-monitor-title {
-    color: #67e8f9;
-    font-size: 22;
-    font-weight: bold;
+    gap: 6;
   }
 
   .quiz-question-title {
-    color: white;
-    font-size: 31;
-    font-weight: bold;
+    color: #d9f7ff;
+    font-size: 30;
+    font-weight: 500;
+    font-family: inter;
   }
 
   .quiz-monitor-summary {
-    color: #c4b5fd;
-    font-size: 17;
+    color: #b9e7f2;
+    font-size: 16;
+    font-weight: 500;
+    font-family: inter;
   }
 
   .quiz-monitor-close {
-    width: 58;
-    min-width: 58;
-    height: 58;
+    width: 80;
+    height: 80;
+    padding: 0;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background-color: rgba(239, 68, 68, 0.18);
-    border-width: 1;
-    border-color: rgba(248, 113, 113, 0.65);
-    border-radius: 29;
-    color: white;
-    font-size: 22;
-    font-weight: bold;
+    background-opacity: 0;
+    border-width: 0;
     cursor: pointer;
     pointer-events: auto;
     pointer-events-order: 13001;
+  }
+
+  .quiz-close-face {
+    width: 80;
+    height: 80;
   }
 
   .quiz-monitor-stop {
-    width: 150;
-    height: 48;
-    padding-left: 18;
-    padding-right: 18;
+    width: 268;
+    height: 84;
+    padding: 0;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background-color: rgba(220, 38, 38, 0.34);
-    border-width: 1;
-    border-color: #f87171;
-    border-radius: 14;
-    color: white;
-    font-size: 16;
-    font-weight: bold;
+    background-opacity: 0;
+    border-width: 0;
     cursor: pointer;
     pointer-events: auto;
     pointer-events-order: 13001;
   }
 
-  .quiz-monitor-timer {
-    min-width: 92;
-    height: 48;
-    padding-left: 18;
-    padding-right: 18;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 21;
-    font-weight: bold;
-    background-color: rgba(8, 145, 178, 0.28);
-    border-width: 1;
-    border-color: #22d3ee;
-    border-radius: 16;
+  .quiz-stop-face {
+    width: 268;
+    height: 84;
   }
 
-  .quiz-monitor-controls {
-    width: 330;
-    flex-shrink: 0;
-    flex-direction: row;
+  .quiz-monitor-timer-dock {
+    width: 150;
+    height: 150;
+    margin-top: 40;
     align-items: center;
-    gap: 14;
+    justify-content: center;
+    background-opacity: 0;
   }
+
+  .quiz-monitor-timer-progress {
+    width: 150;
+    height: 150;
+  }
+
+  .quiz-monitor-timer { display: none; }
 
   .quiz-column-header {
     width: 100%;
     flex-direction: row;
     padding-left: 18;
     padding-right: 18;
-    color: #94a3b8;
+    color: #9ad8ea;
     font-size: 15;
     font-weight: bold;
   }
@@ -119,20 +163,21 @@
   .quiz-student-list {
     width: 100%;
     flex-direction: column;
-    gap: 11;
+    gap: 8;
   }
 
   .quiz-student-row {
     width: 100%;
-    height: 70;
+    height: 52;
     flex-direction: row;
     align-items: center;
     padding-left: 18;
     padding-right: 18;
-    background-color: rgba(30, 41, 59, 0.82);
+    background-color: rgba(12, 42, 72, 0.42);
+    background-opacity: 1;
     border-width: 1;
-    border-color: rgba(148, 163, 184, 0.22);
-    border-radius: 14;
+    border-color: rgba(120, 210, 235, 0.28);
+    border-radius: 12;
   }
 
   .quiz-row-hidden {
@@ -141,50 +186,50 @@
 
   .quiz-name-cell {
     width: 210;
-    color: white;
-    font-size: 19;
+    color: #f4fbff;
+    font-size: 18;
     font-weight: bold;
   }
 
   .quiz-answer-cell {
     width: 270;
-    color: #bfdbfe;
-    font-size: 18;
+    color: #c5eef8;
+    font-size: 17;
     font-weight: bold;
   }
 
   .quiz-result-cell {
     width: 150;
-    color: #fcd34d;
-    font-size: 18;
+    color: #dff8ff;
+    font-size: 17;
     font-weight: bold;
   }
 
   .quiz-time-cell {
     width: 105;
-    color: #67e8f9;
-    font-size: 18;
+    color: #9ad8ea;
+    font-size: 17;
     font-weight: bold;
   }
 
   .quiz-result-correct {
-    color: #86efac;
+    color: #86f0a8;
   }
 
   .quiz-result-wrong {
-    color: #fca5a5;
+    color: #ff9aa8;
   }
 
   .quiz-footer {
-    color: #94a3b8;
-    font-size: 15;
+    color: #9ad8ea;
+    font-size: 14;
     text-align: center;
   }
 
   .quiz-rank-cell {
     width: 75;
-    color: #fcd34d;
-    font-size: 18;
+    color: #dff8ff;
+    font-size: 17;
     font-weight: bold;
   }
 
@@ -202,19 +247,7 @@
     flex-direction: column;
     gap: 6;
     padding: 12;
-    background-color: rgba(15, 23, 42, 0.9);
-    border-radius: 12;
-  }
-
-  .quiz-review-heading {
-    color: #67e8f9;
-    font-size: 15;
-    font-weight: bold;
-  }
-
-  .quiz-review-copy {
-    color: white;
-    font-size: 14;
+    background-opacity: 0;
   }
 
   .quiz-wrong-answers-button {
@@ -223,11 +256,11 @@
     align-self: center;
     align-items: center;
     justify-content: center;
-    background-color: rgba(217, 119, 6, 0.32);
+    background-color: rgba(14, 116, 144, 0.45);
     border-width: 1;
-    border-color: #fbbf24;
+    border-color: #67e8f9;
     border-radius: 13;
-    color: white;
+    color: #f4fbff;
     font-size: 16;
     font-weight: bold;
     cursor: pointer;
@@ -240,11 +273,11 @@
     height: 42;
     align-items: center;
     justify-content: center;
-    background-color: rgba(8, 145, 178, 0.28);
+    background-color: rgba(14, 80, 120, 0.55);
     border-width: 1;
-    border-color: #22d3ee;
+    border-color: #67e8f9;
     border-radius: 12;
-    color: white;
+    color: #f4fbff;
     font-size: 15;
     font-weight: bold;
     cursor: pointer;
@@ -254,57 +287,305 @@
 
   .quiz-page-label {
     width: 130;
-    color: #c4b5fd;
+    color: #9ad8ea;
     font-size: 16;
     font-weight: bold;
     text-align: center;
   }
+
+  .fp-board {
+    width: 1096;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 10;
+  }
+
+  .fp-board-row {
+    width: 1096;
+    flex-direction: row;
+    justify-content: center;
+    gap: 10;
+  }
+
+  .fp-card {
+    width: 210;
+    height: 348;
+    padding: 0;
+    flex-direction: column;
+    gap: 0;
+    background-opacity: 0;
+    border-width: 0;
+  }
+
+  .fp-card-art {
+    width: 210;
+    height: 348;
+  }
+
+  .fp-card-body {
+    width: 210;
+    height: 348;
+    margin-top: -348;
+    padding: 20;
+    padding-top: 26;
+    padding-left: 24;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8;
+    background-opacity: 0;
+  }
+
+  .fp-card-label {
+    color: #c5eef8;
+    font-size: 22;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .fp-card-q {
+    width: 164;
+    height: 128;
+    color: #d9f7ff;
+    font-size: 20;
+    font-weight: 500;
+    font-family: inter;
+    text-align: left;
+  }
+
+  .fp-bar-track {
+    width: 168;
+    height: 14;
+    background-color: rgba(8, 30, 48, 0.55);
+    border-radius: 5;
+  }
+
+  .fp-bar-fill {
+    width: 8;
+    height: 14;
+    background-color: #67e8f9;
+    border-radius: 5;
+  }
+
+  .fp-card-pct {
+    color: #f4fbff;
+    font-size: 22;
+    font-weight: 600;
+    font-family: inter;
+  }
+
+  .fp-card-counts {
+    color: #9ad8ea;
+    font-size: 15;
+    font-weight: 500;
+    font-family: inter;
+  }
+
+  .fp-card-compact {
+    width: 160;
+    height: 230;
+  }
+
+  .fp-card-art-compact {
+    width: 160;
+    height: 230;
+  }
+
+  .fp-card-body-compact {
+    width: 160;
+    height: 230;
+    margin-top: -230;
+    padding: 12;
+    padding-top: 16;
+    padding-left: 16;
+  }
+
+  .fp-card-q-compact {
+    width: 132;
+    height: 72;
+    font-size: 18;
+  }
+
+  .fp-bar-track-compact {
+    width: 128;
+  }
+
+  .fp-status {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    margin-top: 6;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .fp-status-item {
+    color: #b9e7f2;
+    font-size: 16;
+    font-weight: 500;
+    font-family: inter;
+  }
+
+  .quiz-monitor-actions {
+    width: 100%;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
 </style>
 
-<Panel class="quiz-monitor-root">
-  <Panel class="quiz-monitor-header">
-    <Panel class="quiz-header-copy">
-      <Text id="quiz-monitor-title" class="quiz-monitor-title">QUICK CHALLENGE — LIVE MONITOR</Text>
-      <Text id="quiz-monitor-question" class="quiz-question-title">Waiting for question</Text>
-      <Text id="quiz-monitor-summary" class="quiz-monitor-summary">0 of 0 students answered</Text>
+<Panel class="quiz-monitor-shell">
+  <Panel class="quiz-monitor-column">
+    <Panel class="quiz-title-slot"></Panel>
+    <Text id="quiz-monitor-title" class="quiz-monitor-title">QUICK CHALLENGE — LIVE MONITOR</Text>
+
+    <Panel class="quiz-monitor-board">
+      <Image id="quiz-monitor-board-art" class="quiz-monitor-board-art" src="/textures/challenge1_instructor/UIBackground.png" />
+      <Panel class="quiz-monitor-content">
+        <Panel class="quiz-monitor-top">
+          <Panel class="quiz-header-copy">
+            <Text id="quiz-monitor-question" class="quiz-question-title">Waiting for question</Text>
+            <Text id="quiz-monitor-summary" class="quiz-monitor-summary">0 of 0 students answered</Text>
+          </Panel>
+          <Panel class="quiz-monitor-corner">
+            <Button id="quiz-monitor-stop" class="quiz-monitor-stop">
+              <Image id="quiz-stop-face" class="quiz-stop-face" src="/textures/challenge1_instructor/StopButton.png" />
+            </Button>
+            <Button id="quiz-monitor-close" class="quiz-monitor-close">
+              <Image id="quiz-close-face" class="quiz-close-face" src="/textures/challenge1_instructor/XCloseButton.png" />
+            </Button>
+          </Panel>
+        </Panel>
+
+        <Panel id="quiz-monitor-columns" class="quiz-column-header">
+          <Text id="quiz-monitor-rank-header" class="quiz-rank-cell">RANK</Text>
+          <Text id="quiz-monitor-name-header" class="quiz-name-cell">STUDENT</Text>
+          <Text id="quiz-monitor-answer-header" class="quiz-answer-cell">SELECTED ANSWER</Text>
+          <Text id="quiz-monitor-time-header" class="quiz-time-cell">TIME</Text>
+          <Text id="quiz-monitor-result-header" class="quiz-result-cell">RESULT</Text>
+        </Panel>
+
+        <Panel id="quiz-monitor-list" class="quiz-student-list">
+          <Panel id="quiz-monitor-row-1" class="quiz-student-row"><Text id="quiz-monitor-rank-1" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-1" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-1" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-1" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-1" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-2" class="quiz-student-row"><Text id="quiz-monitor-rank-2" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-2" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-2" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-2" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-2" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-3" class="quiz-student-row"><Text id="quiz-monitor-rank-3" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-3" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-3" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-3" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-3" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-4" class="quiz-student-row"><Text id="quiz-monitor-rank-4" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-4" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-4" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-4" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-4" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-5" class="quiz-student-row"><Text id="quiz-monitor-rank-5" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-5" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-5" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-5" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-5" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-6" class="quiz-student-row"><Text id="quiz-monitor-rank-6" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-6" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-6" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-6" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-6" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-7" class="quiz-student-row"><Text id="quiz-monitor-rank-7" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-7" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-7" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-7" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-7" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-8" class="quiz-student-row"><Text id="quiz-monitor-rank-8" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-8" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-8" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-8" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-8" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-9" class="quiz-student-row"><Text id="quiz-monitor-rank-9" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-9" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-9" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-9" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-9" class="quiz-result-cell">UNANSWERED</Text></Panel>
+          <Panel id="quiz-monitor-row-10" class="quiz-student-row"><Text id="quiz-monitor-rank-10" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-10" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-10" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-10" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-10" class="quiz-result-cell">UNANSWERED</Text></Panel>
+        </Panel>
+
+        <Panel id="quiz-five-parts-board" class="fp-board quiz-row-hidden">
+          <Panel id="fp-row-1" class="fp-board-row">
+            <Panel id="fp-card-0" class="fp-card">
+              <Image id="fp-card-art-0" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-0" class="fp-card-body">
+                <Text id="fp-card-label-0" class="fp-card-label">Q1</Text>
+                <Text id="fp-card-q-0" class="fp-card-q">Question 1</Text>
+                <Panel id="fp-bar-track-0" class="fp-bar-track"><Panel id="fp-bar-fill-0" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-0" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-0" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-1" class="fp-card">
+              <Image id="fp-card-art-1" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-1" class="fp-card-body">
+                <Text id="fp-card-label-1" class="fp-card-label">Q2</Text>
+                <Text id="fp-card-q-1" class="fp-card-q">Question 2</Text>
+                <Panel id="fp-bar-track-1" class="fp-bar-track"><Panel id="fp-bar-fill-1" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-1" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-1" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-2" class="fp-card">
+              <Image id="fp-card-art-2" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-2" class="fp-card-body">
+                <Text id="fp-card-label-2" class="fp-card-label">Q3</Text>
+                <Text id="fp-card-q-2" class="fp-card-q">Question 3</Text>
+                <Panel id="fp-bar-track-2" class="fp-bar-track"><Panel id="fp-bar-fill-2" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-2" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-2" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-3" class="fp-card">
+              <Image id="fp-card-art-3" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-3" class="fp-card-body">
+                <Text id="fp-card-label-3" class="fp-card-label">Q4</Text>
+                <Text id="fp-card-q-3" class="fp-card-q">Question 4</Text>
+                <Panel id="fp-bar-track-3" class="fp-bar-track"><Panel id="fp-bar-fill-3" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-3" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-3" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-4" class="fp-card">
+              <Image id="fp-card-art-4" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-4" class="fp-card-body">
+                <Text id="fp-card-label-4" class="fp-card-label">Q5</Text>
+                <Text id="fp-card-q-4" class="fp-card-q">Question 5</Text>
+                <Panel id="fp-bar-track-4" class="fp-bar-track"><Panel id="fp-bar-fill-4" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-4" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-4" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+          </Panel>
+          <Panel id="fp-row-2" class="fp-board-row quiz-row-hidden">
+            <Panel id="fp-card-5" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-5" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-5" class="fp-card-body">
+                <Text id="fp-card-label-5" class="fp-card-label">Q6</Text>
+                <Text id="fp-card-q-5" class="fp-card-q">Question 6</Text>
+                <Panel id="fp-bar-track-5" class="fp-bar-track"><Panel id="fp-bar-fill-5" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-5" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-5" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-6" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-6" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-6" class="fp-card-body">
+                <Text id="fp-card-label-6" class="fp-card-label">Q7</Text>
+                <Text id="fp-card-q-6" class="fp-card-q">Question 7</Text>
+                <Panel id="fp-bar-track-6" class="fp-bar-track"><Panel id="fp-bar-fill-6" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-6" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-6" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+            <Panel id="fp-card-7" class="fp-card quiz-row-hidden">
+              <Image id="fp-card-art-7" class="fp-card-art" src="/textures/challenge1_instructor/QuestionBackground.png" />
+              <Panel id="fp-card-body-7" class="fp-card-body">
+                <Text id="fp-card-label-7" class="fp-card-label">Q3</Text>
+                <Text id="fp-card-q-7" class="fp-card-q">Question 3</Text>
+                <Panel id="fp-bar-track-7" class="fp-bar-track"><Panel id="fp-bar-fill-7" class="fp-bar-fill"></Panel></Panel>
+                <Text id="fp-card-pct-7" class="fp-card-pct">0%</Text>
+                <Text id="fp-card-counts-7" class="fp-card-counts">0 correct / 0 wrong</Text>
+              </Panel>
+            </Panel>
+          </Panel>
+        </Panel>
+        <Panel id="quiz-five-parts-status" class="fp-status quiz-row-hidden">
+          <Text id="fp-status-connected" class="fp-status-item">0 STUDENTS CONNECTED</Text>
+          <Text id="fp-status-submitted" class="fp-status-item">0 SUBMITTED</Text>
+          <Text id="fp-status-answering" class="fp-status-item">0 STILL ANSWERING</Text>
+        </Panel>
+
+        <Panel id="quiz-monitor-paging" class="quiz-paging-row">
+          <Button id="quiz-monitor-up" class="quiz-page-button">UP</Button>
+          <Text id="quiz-monitor-page" class="quiz-page-label">PAGE 1 / 1</Text>
+          <Button id="quiz-monitor-down" class="quiz-page-button">DOWN</Button>
+        </Panel>
+        <Panel id="quiz-monitor-final-review" class="quiz-final-review">
+          <Button id="quiz-monitor-wrong-answers" class="quiz-wrong-answers-button">VIEW COMMON MISTAKES</Button>
+        </Panel>
+        <Text id="quiz-monitor-footer" class="quiz-footer">The list updates as students submit.</Text>
+      </Panel>
     </Panel>
-    <Panel class="quiz-monitor-controls">
-      <Text id="quiz-monitor-timer" class="quiz-monitor-timer">01:00</Text>
-      <Button id="quiz-monitor-stop" class="quiz-monitor-stop">STOP CHALLENGE</Button>
-      <!-- Use the basic X glyph because the UIKit font used by some Quest
-           runtimes renders the multiplication symbol as a square. -->
-      <Button id="quiz-monitor-close" class="quiz-monitor-close">X</Button>
-    </Panel>
+    <Image id="quiz-monitor-title-banner" class="quiz-monitor-title-banner" src="/textures/challenge1_instructor/Title_for_Dashboard.png" />
   </Panel>
 
-  <Panel class="quiz-column-header">
-    <Text class="quiz-rank-cell">RANK</Text>
-    <Text class="quiz-name-cell">STUDENT</Text>
-    <Text id="quiz-monitor-answer-header" class="quiz-answer-cell">SELECTED ANSWER</Text>
-    <Text class="quiz-time-cell">TIME</Text>
-    <Text id="quiz-monitor-result-header" class="quiz-result-cell">RESULT</Text>
+  <Panel id="quiz-monitor-timer-ring" class="quiz-monitor-timer-dock">
+    <Image id="quiz-monitor-timer-progress" class="quiz-monitor-timer-progress" src="/textures/challenge1_instructor/Clock_Background.png" />
+    <Text id="quiz-monitor-timer" class="quiz-monitor-timer">01:00</Text>
   </Panel>
-
-  <Panel class="quiz-student-list">
-    <Panel id="quiz-monitor-row-1" class="quiz-student-row"><Text id="quiz-monitor-rank-1" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-1" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-1" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-1" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-1" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-2" class="quiz-student-row"><Text id="quiz-monitor-rank-2" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-2" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-2" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-2" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-2" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-3" class="quiz-student-row"><Text id="quiz-monitor-rank-3" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-3" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-3" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-3" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-3" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-4" class="quiz-student-row"><Text id="quiz-monitor-rank-4" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-4" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-4" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-4" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-4" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-5" class="quiz-student-row"><Text id="quiz-monitor-rank-5" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-5" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-5" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-5" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-5" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-6" class="quiz-student-row"><Text id="quiz-monitor-rank-6" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-6" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-6" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-6" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-6" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-7" class="quiz-student-row"><Text id="quiz-monitor-rank-7" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-7" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-7" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-7" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-7" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-8" class="quiz-student-row"><Text id="quiz-monitor-rank-8" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-8" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-8" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-8" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-8" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-9" class="quiz-student-row"><Text id="quiz-monitor-rank-9" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-9" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-9" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-9" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-9" class="quiz-result-cell">UNANSWERED</Text></Panel>
-    <Panel id="quiz-monitor-row-10" class="quiz-student-row"><Text id="quiz-monitor-rank-10" class="quiz-rank-cell">—</Text><Text id="quiz-monitor-name-10" class="quiz-name-cell">—</Text><Text id="quiz-monitor-answer-10" class="quiz-answer-cell">Waiting for answer</Text><Text id="quiz-monitor-time-10" class="quiz-time-cell">—</Text><Text id="quiz-monitor-result-10" class="quiz-result-cell">UNANSWERED</Text></Panel>
-  </Panel>
-
-  <Panel id="quiz-monitor-paging" class="quiz-paging-row">
-    <Button id="quiz-monitor-up" class="quiz-page-button">UP</Button>
-    <Text id="quiz-monitor-page" class="quiz-page-label">PAGE 1 / 1</Text>
-    <Button id="quiz-monitor-down" class="quiz-page-button">DOWN</Button>
-  </Panel>
-  <Panel id="quiz-monitor-final-review" class="quiz-final-review">
-    <Button id="quiz-monitor-wrong-answers" class="quiz-wrong-answers-button">VIEW COMMON MISTAKES</Button>
-  </Panel>
-  <Text id="quiz-monitor-footer" class="quiz-footer">The list updates as students submit.</Text>
 </Panel>

@@ -31,15 +31,13 @@ mock.module("@iwsdk/core", {
   },
 });
 const emissions: Array<{ event: string; data: any }> = [];
-mock.module("../src/network/socket.ts", {
+mock.module("../src/network/socket-client.ts", {
   namedExports: { socket: { emit: (event: string, data: any) => emissions.push({ event, data }) } },
 });
-const { JigsawPuzzleSystem } = await import("../src/castle/jigsaw/JigsawPuzzleSystem.ts");
-const { JigsawBlock, JigsawButton } = await import("../src/castle/jigsaw/jigsawComponents.ts");
-const { CastleVisibleInteractionSystem } = await import("../src/castle/CastleVisibleInteractionSystem.ts");
-const { VisibleInteractionSystem } = await import("../src/forest/VisibleInteractionSystem.ts");
-const { OceanVisibleInteractionSystem } = await import("../src/ocean/OceanVisibleInteractionSystem.ts");
-const { setCastleRoot } = await import("../src/castle/jigsaw/castleRoot.ts");
+const { PythonPuzzleSystem } = await import("../src/games/python-puzzle/systems/python-puzzle.system.ts");
+const { JigsawBlock, JigsawButton } = await import("../src/games/python-puzzle/components/puzzle.components.ts");
+const { VisibleInteractionSystem } = await import("../src/systems/visible-interaction.system.ts");
+const { setCastleRoot } = await import("../src/games/python-puzzle/runtime/puzzle-root.ts");
 
 type Harness = {
   world: any;
@@ -54,9 +52,8 @@ let active: Harness | null = null;
 const originalWindow = globalThis.window;
 
 /** Builds the real castle puzzle on top of the real pointer/input stack. */
-function build({ guard, allEnvironments = false, initiallyHidden = false }: {
+function build({ guard, initiallyHidden = false }: {
   guard: boolean;
-  allEnvironments?: boolean;
   initiallyHidden?: boolean;
 }): Harness {
   const exits: string[] = [];
@@ -65,8 +62,12 @@ function build({ guard, allEnvironments = false, initiallyHidden = false }: {
 
   globalThis.window = {
     isCastleActive: true,
+    isPuzzleActive: true,
     jigsawPuzzleSolved: false,
+    puzzleProgress: null,
     dispatchEvent: (event: Event) => { exits.push(event.type); return true; },
+    addEventListener() {},
+    removeEventListener() {},
   } as any;
 
   world.scene = new THREE.Scene();
@@ -97,17 +98,12 @@ function build({ guard, allEnvironments = false, initiallyHidden = false }: {
   world.scene.add(castle);
   setCastleRoot(castle, world.createTransformEntity(castle));
 
-  if (guard) world.registerSystem(CastleVisibleInteractionSystem, { priority: -5 });
-  if (allEnvironments) {
-    for (const systemClass of [VisibleInteractionSystem, OceanVisibleInteractionSystem]) {
-      if (!world.hasSystem(systemClass)) {
-        world.registerSystem(systemClass, { priority: -5 });
-      }
-    }
-  }
+  // The branch's shared visibility guard owns the input settings of hidden
+  // targets; run it before IWSDK input (-4), as the environment does.
+  if (guard) world.registerSystem(VisibleInteractionSystem, { priority: -5 });
   world.registerSystem(InputSystem, { priority: -4 });
   world.registerSystem(GrabSystem, { priority: -3 });
-  world.registerSystem(JigsawPuzzleSystem, { priority: 1 });
+  world.registerSystem(PythonPuzzleSystem, { priority: 1 });
 
   // A controller ray travels down local -Z. Camera.lookAt aligns -Z, whereas
   // Object3D.lookAt aligns +Z and would aim this fixture away from the puzzle.
@@ -117,7 +113,7 @@ function build({ guard, allEnvironments = false, initiallyHidden = false }: {
 
   active = {
     world, castle, space, exits, pointer,
-    system: world.getSystem(JigsawPuzzleSystem),
+    system: world.getSystem(PythonPuzzleSystem),
   };
   tick();
   return active;
@@ -133,9 +129,8 @@ afterEach(() => {
   for (const entity of [...active.world.getSystem(GrabSystem).queries.distanceGrabbables.entities]) {
     entity.removeComponent(DistanceGrabbable);
   }
-  for (const systemClass of [JigsawPuzzleSystem, GrabSystem, InputSystem,
-    CastleVisibleInteractionSystem, VisibleInteractionSystem,
-    OceanVisibleInteractionSystem, TransformSystem]) {
+  for (const systemClass of [PythonPuzzleSystem, GrabSystem, InputSystem,
+    VisibleInteractionSystem, TransformSystem]) {
     active.world.unregisterSystem(systemClass);
   }
   active.world.scene.clear();
@@ -227,10 +222,21 @@ for (const type of ["indent", "dedent", "reset", "exit", "submit"]) {
     if (type === "submit") {
       assert.equal(active!.system.pendingFeedback.title, "Error");
       assert.match(active!.system.pendingFeedback.body, /Not all code blocks/);
-      assert.equal(emissions.length, 0);
     }
   });
 }
+
+test("An incomplete submission is recorded as a response and as live progress", () => {
+  build({ guard: true });
+  press("submit");
+  // The branch keeps the database response row and the live monitor in step.
+  assert.deepEqual(emissions.map(entry => entry.event), ["gameResponse", "labProgressUpdated"]);
+  assert.equal(emissions[0].data.itemKey, "python-code");
+  assert.equal(emissions[0].data.correct, false);
+  assert.equal(emissions[1].data.totalCards, 7);
+  assert.equal(emissions[1].data.wrongAnswers, 1);
+  assert.equal((globalThis.window as any).puzzleProgress.wrongAnswers, 1);
+});
 
 test("Without the castle interaction guard a hidden classroom control steals the ray", () => {
   build({ guard: false });
@@ -279,13 +285,11 @@ test("A real ray grabs a puzzle block behind a hidden classroom HUD control", ()
   assert.equal(block.hasComponent(Grabbed), false, "Block stayed grabbed");
 });
 
-test("All environment guards restore Castle input after its initially hidden scene opens", () => {
-  build({ guard: true, allEnvironments: true, initiallyHidden: true });
+test("The shared guard restores castle input after its initially hidden scene opens", () => {
+  build({ guard: true, initiallyHidden: true });
   assert.equal(active!.world.getSystems().filter((system: any) =>
-    system instanceof CastleVisibleInteractionSystem ||
-    system instanceof VisibleInteractionSystem ||
-    system instanceof OceanVisibleInteractionSystem,
-  ).length, 1, "All environments must share exactly one visibility guard");
+    system instanceof VisibleInteractionSystem,
+  ).length, 1, "The puzzle must install exactly one visibility guard");
   const reset = button("reset");
   assert.equal(reset.object3D.pointerEvents, "none");
   assert.equal(reset.object3D.intersectChildren, false);
@@ -299,7 +303,7 @@ test("All environment guards restore Castle input after its initially hidden sce
 });
 
 test("Returning to the classroom restores HUD hits, and entering Castle disables them again", () => {
-  build({ guard: true, allEnvironments: true });
+  build({ guard: true });
   const blocker = addHiddenClassroomBlocker(button("reset").object3D);
   const classroom = blocker.object3D.parent;
   assert.ok(classroom);

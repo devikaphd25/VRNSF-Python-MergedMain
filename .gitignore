@@ -4,6 +4,7 @@ node_modules/
 
 # Build outputs
 dist/
+/build/
 *.tsbuildinfo
 
 # Environment files
@@ -71,3 +72,22 @@ coverage/
 public/gltf/generated/
 public/glxf/
 public/ui/
+
+# Student result recovery snapshots (server-local only)
+data/pending-challenge-results/
+
+# Share examples, never credentials or temporary database exports.
+!.env.development.example
+tmp/
+data/pending-game-results/
+
+# Prevent another complete project copy from being uploaded inside this repository.
+/VR-learning-main/
+
+# Local APK toolchains, signing keys, and generated Android builds
+apk/tooling/
+apk/signing/
+apk/android/
+apk/*.apk
+apk/runtime.json
+apk/*.log

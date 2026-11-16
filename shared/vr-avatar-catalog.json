@@ -1,0 +1,62 @@
+[
+  {
+    "id": "Avatar01",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar01.glb"
+  },
+  {
+    "id": "Avatar01_green-graphite",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar01_green-graphite.glb"
+  },
+  {
+    "id": "Avatar01_orange-charcoal",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar01_orange-charcoal.glb"
+  },
+  {
+    "id": "Avatar01_purple-black",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar01_purple-black.glb"
+  },
+  {
+    "id": "Avatar01_skyblue-charcoal",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar01_skyblue-charcoal.glb"
+  },
+  {
+    "id": "Avatar02",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar02.glb"
+  },
+  {
+    "id": "Avatar02_crimson-charcoal",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar02_crimson-charcoal.glb"
+  },
+  {
+    "id": "Avatar02_mustard-navy",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar02_mustard-navy.glb"
+  },
+  {
+    "id": "Avatar02_purple-lavender",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar02_purple-lavender.glb"
+  },
+  {
+    "id": "Avatar02_teal-offwhite",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar02_teal-offwhite.glb"
+  },
+  {
+    "id": "Avatar03",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar03.glb"
+  },
+  {
+    "id": "Avatar03_gunmetal-orange",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar03_gunmetal-orange.glb"
+  },
+  {
+    "id": "Avatar03_gold-cyan",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar03_gold-cyan.glb"
+  },
+  {
+    "id": "Avatar03_black-red",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar03_black-red.glb"
+  },
+  {
+    "id": "Avatar03_white-green",
+    "url": "https://wxwfriaqxrhgxdgpnlti.supabase.co/storage/v1/object/public/vr-avatars/Avatar03_white-green.glb"
+  }
+]

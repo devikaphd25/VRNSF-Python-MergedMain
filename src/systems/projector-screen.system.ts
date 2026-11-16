@@ -11,9 +11,8 @@ import {
 } from "@iwsdk/core";
 import * as THREE from "three";
 import {ProjectorScreenComponent} from "../components/projector-screen.component";
-import { CLASSROOM_BOARD_CONTENT } from "../config/classroom-board-content";
-import { CHALLENGE_2_ITEMS } from "../config/challenge-2-content";
-import { socket } from "../network/socket";
+import { CLASSROOM_BOARD_CONTENT } from "../classroom/board-content";
+import { socket } from "../network/socket-client";
 
 type BoardChallengeResults = {
     rankings?: Array<{
@@ -22,13 +21,7 @@ type BoardChallengeResults = {
         wrongAnswers?: number;
         elapsedSeconds?: number;
     }>;
-    commonErrors?: Array<{
-        itemId?: string;
-        itemName?: string;
-        selectedCategory?: string;
-        correctCategory?: string;
-        count?: number;
-    }>;
+
 };
 
 export class ProjectorScreenSystem extends createSystem({
@@ -46,7 +39,6 @@ export class ProjectorScreenSystem extends createSystem({
     private onlineStudents = 0;
     private instructorOnline = false;
     private challengeResults?: BoardChallengeResults;
-    private mistakeImages = new Map<string, HTMLImageElement>();
 
     private handleStudentList = (students: unknown[]): void => {
         const liveParticipants = Array.isArray(students)
@@ -70,6 +62,10 @@ export class ProjectorScreenSystem extends createSystem({
         this.redrawBoardStatus();
     };
 
+    private handleCourseChanged = (): void => {
+        this.redrawBoardStatus();
+    };
+
     private handleChallengeEnd = (payload: { finalResults?: unknown }): void => {
         if (!payload?.finalResults) return;
         this.challengeResults = payload.finalResults as BoardChallengeResults;
@@ -84,11 +80,13 @@ export class ProjectorScreenSystem extends createSystem({
         console.log(`[ProjectorScreenSystem] isInstructor: ${this.isInstructor}`);
 
         socket.on("studentList", this.handleStudentList);
+        window.addEventListener("classroom-course-changed", this.handleCourseChanged);
         socket.on("challenge2Started", this.handleChallengeStart);
         socket.on("challenge2StartedForInstructor", this.handleChallengeStart);
         socket.on("challenge2Ended", this.handleChallengeEnd);
         socket.emit("requestStudentList");
         this.cleanupFuncs.push(() => {
+            window.removeEventListener("classroom-course-changed", this.handleCourseChanged);
             socket.off("studentList", this.handleStudentList);
             socket.off("challenge2Started", this.handleChallengeStart);
             socket.off("challenge2StartedForInstructor", this.handleChallengeStart);
@@ -231,7 +229,7 @@ export class ProjectorScreenSystem extends createSystem({
         );
     }
 
-    /** Draw final winners and general class mistakes on the projector board. */
+    /** Draw final winners on the projector board. */
     private drawChallengeResults(context: CanvasRenderingContext2D): void {
         const rankings = (this.challengeResults?.rankings ?? [])
             .filter(result => Number(result.placement) > 0)
@@ -239,7 +237,6 @@ export class ProjectorScreenSystem extends createSystem({
                 Number(left.placement) - Number(right.placement)
             )
             .slice(0, 3);
-        const errors = (this.challengeResults?.commonErrors ?? []).slice(0, 5);
 
         context.textBaseline = "middle";
         context.textAlign = "center";
@@ -251,14 +248,14 @@ export class ProjectorScreenSystem extends createSystem({
         context.font = "700 34px Arial, sans-serif";
         context.fillText("CHALLENGE 2 RESULTS", 512, 172);
 
-        context.textAlign = "left";
+        context.textAlign = "center";
         context.fillStyle = "#fcd34d";
         context.font = "700 25px Arial, sans-serif";
-        context.fillText("WINNERS", 62, 212);
+        context.fillText("WINNERS", 512, 212);
         context.fillStyle = "#ffffff";
         context.font = "600 22px Arial, sans-serif";
         if (rankings.length === 0) {
-            context.fillText("No ranking awarded", 62, 258);
+            context.fillText("No ranking awarded", 512, 258);
         } else {
             rankings.forEach((result, index) => {
                 const y = 258 + index * 67;
@@ -270,65 +267,13 @@ export class ProjectorScreenSystem extends createSystem({
                 context.fillStyle = index === 0 ? "#fde047" : "#ffffff";
                 context.fillText(
                     `${suffix}  ${result.name ?? "Student"}`,
-                    62,
+                    512,
                     y
                 );
                 context.font = "600 22px Arial, sans-serif";
             });
         }
 
-        context.fillStyle = "rgba(148, 163, 184, 0.35)";
-        context.fillRect(490, 202, 2, 270);
-        context.fillStyle = "#fca5a5";
-        context.font = "700 25px Arial, sans-serif";
-        context.fillText("COMMON MISTAKES", 530, 212);
-        if (errors.length === 0) {
-            context.fillStyle = "#86efac";
-            context.font = "600 21px Arial, sans-serif";
-            context.fillText("No common mistakes", 530, 258);
-            return;
-        }
-
-        errors.forEach((error, index) => {
-            const y = 236 + index * 49;
-            const image = this.getMistakeImage(error.itemId ?? "");
-            if (image?.complete && image.naturalWidth > 0) {
-                context.drawImage(image, 530, y, 40, 40);
-            } else {
-                context.fillStyle = "#334155";
-                context.fillRect(530, y, 40, 40);
-            }
-            context.fillStyle = "#ffffff";
-            context.font = "700 17px Arial, sans-serif";
-            context.fillText(error.itemName ?? "Device", 582, y + 5);
-            context.fillStyle = "#fca5a5";
-            context.font = "600 14px Arial, sans-serif";
-            context.fillText(
-                `Wrong: ${String(error.selectedCategory ?? "").toUpperCase()} (${Number(error.count) || 0})`,
-                582,
-                y + 20
-            );
-            context.fillStyle = "#86efac";
-            context.fillText(
-                `Correct: ${String(error.correctCategory ?? "").toUpperCase()}`,
-                582,
-                y + 35
-            );
-        });
-    }
-
-    /** Load and cache the existing 2D Challenge 2 device image. */
-    private getMistakeImage(itemId: string): HTMLImageElement | undefined {
-        if (!itemId) return undefined;
-        const cached = this.mistakeImages.get(itemId);
-        if (cached) return cached;
-        const item = CHALLENGE_2_ITEMS.find(entry => entry.id === itemId);
-        if (!item?.imagePath) return undefined;
-        const image = new Image();
-        image.onload = () => this.redrawBoardStatus();
-        image.src = item.imagePath;
-        this.mistakeImages.set(itemId, image);
-        return image;
     }
 
     private async loadSlide() {
