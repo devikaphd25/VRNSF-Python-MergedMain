@@ -62,12 +62,11 @@ const BLOCK_BEVEL = 0.004 * S;
 // Row pitch on the shelf: wider than a block, so a shuffled block's knob never
 // reaches the piece stacked above it and blocks can be reordered freely.
 const SHELF_PITCH = 0.17 * S;
-// Row pitch on the board: wider than a block, so neighbouring pieces leave a
-// visible seam and each row owns a wide drop zone of its own. Flush rows (the
-// old pitch of exactly one block height) read as one continuous column, so a
-// piece aimed at the last empty row landed in the filled row above it and sent
-// that piece back to the shelf instead of being placed.
-const BOARD_PITCH = 0.19 * S;
+// Row pitch on the board: exactly one block height, so placed pieces sit flush
+// and their knob / socket cuts interlock like a finished jigsaw. Aiming is not
+// ambiguous with flush rows because a drop on a filled row slides into the
+// nearest free gap below (see STACK_SNAP_ROWS) instead of landing one row off.
+const BOARD_PITCH = BLOCK_HEIGHT;
 // How many rows from the drop a free gap may sit and still count as the row the
 // player aimed at. A piece dropped onto an already filled row slides into the
 // nearest free gap in the stack instead of shoving that piece back to the
@@ -211,8 +210,8 @@ export class PythonPuzzleSystem extends createSystem({
     this.tmpVec = new Vector3();
 
     // The board's top row sits with its visible upper edge on the board's top
-    // edge, and each row below it is one board pitch down, leaving a visible
-    // seam between neighbouring pieces.
+    // edge, and each row below it is one block height down, so neighbouring
+    // pieces meet edge to edge and their cuts interlock.
     const boardTopY = BOARD_CENTER[1] + BOARD_HEIGHT / 2 - BLOCK_HEIGHT / 2;
     for (let i = 0; i < NUM_SLOTS; i++) {
       this.slotPositions.push(

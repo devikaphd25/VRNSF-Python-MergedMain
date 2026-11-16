@@ -359,8 +359,9 @@ test("Hidden castle puzzle entities are not hit, and work again when the castle 
 
 const BOARD_Z = 4.5;
 function slotY(slot: number): number {
-  // Mirrors the board layout: top row on the board's top edge, one pitch down.
-  return 1.7 + (1.6 * 2.2) / 2 - (0.14 * 2.2) / 2 - slot * 0.19 * 2.2;
+  // Mirrors the board layout: top row on the board's top edge, then one block
+  // height per row, so placed pieces sit flush.
+  return 1.7 + (1.6 * 2.2) / 2 - (0.14 * 2.2) / 2 - slot * 0.14 * 2.2;
 }
 
 function blockWithIndex(originalIndex: number): any {
@@ -427,6 +428,26 @@ test("A block dropped on a filled row slides into the gap beside it instead of p
   assert.notEqual(slotOf(newcomer), 1, "Two blocks ended up in one row");
   // It sticks to the stack, one row away, not somewhere across the board.
   assert.equal(Math.abs(slotOf(newcomer) - 1), 1);
+});
+
+test("Placed pieces sit flush, one block height apart, with no gap between rows", () => {
+  build({ guard: true });
+  const upper = blockWithIndex(6);
+  drop(upper, new THREE.Vector3(0, slotY(0), BOARD_Z));
+  const lower = blockWithIndex(3);
+  drop(lower, new THREE.Vector3(0, slotY(1), BOARD_Z));
+
+  assert.equal(slotOf(upper), 0);
+  assert.equal(slotOf(lower), 1);
+
+  for (let i = 0; i < 40; i++) tick();
+  const upperY = upper.object3D.getWorldPosition(new THREE.Vector3()).y;
+  const lowerY = lower.object3D.getWorldPosition(new THREE.Vector3()).y;
+  const blockHeight = 0.14 * 2.2;
+  assert.ok(
+    Math.abs(upperY - lowerY - blockHeight) < 1e-6,
+    `Rows sat ${upperY - lowerY} apart instead of flush at ${blockHeight}`,
+  );
 });
 
 test("A block released away from the board returns to the shelf", () => {
