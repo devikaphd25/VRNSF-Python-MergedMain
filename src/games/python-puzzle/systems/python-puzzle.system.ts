@@ -17,6 +17,7 @@ import {
   Group,
   Hovered,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   MovementMode,
   PanelDocument,
@@ -67,6 +68,11 @@ const SHELF_PITCH = 0.17 * S;
 // piece aimed at the last empty row landed in the filled row above it and sent
 // that piece back to the shelf instead of being placed.
 const BOARD_PITCH = 0.19 * S;
+// How many rows from the drop a free gap may sit and still count as the row the
+// player aimed at. A piece dropped onto an already filled row slides into the
+// nearest free gap in the stack instead of shoving that piece back to the
+// shelf, so placed blocks stay where they were put.
+const STACK_SNAP_ROWS = 3;
 
 // Each seam is keyed to the correct code sequence (see utils/jigsaw-block.ts),
 // and the knob stays shorter than the gap between two shelf rows so a shuffled
@@ -160,6 +166,8 @@ export class PythonPuzzleSystem extends createSystem({
   private slotPositions: Vector3[] = [];
   private homePositions: Map<number, [number, number, number]> = new Map();
   private activeBlockOriginalIndex = -1;
+  /** Gold panel that marks the row a held block will stick to. */
+  private slotHighlight: Mesh | null = null;
   private blockEntities: Map<number, Entity> = new Map();
   private blockMaterials: Map<number, MeshStandardMaterial> = new Map();
   private feedbackEntity: Entity | null = null;
@@ -229,6 +237,7 @@ export class PythonPuzzleSystem extends createSystem({
     }
 
     this.buildBoard();
+    this.createSlotHighlight();
     this.createBlocks();
     this.createButtons();
     this.createKing();
@@ -359,6 +368,7 @@ export class PythonPuzzleSystem extends createSystem({
       this.coinSplash.update(delta);
     }
 
+    this.updateSlotHighlight();
     this.updateActiveBlockHighlight();
   }
 
@@ -385,6 +395,63 @@ export class PythonPuzzleSystem extends createSystem({
       BOARD_CENTER[2],
     );
     attachToCastleRoot(boardGroup);
+  }
+
+  /**
+   * The faint gold panel that sits on the row a held block will land in. It
+   * tells a first-time player where a piece is about to stick before they let
+   * go, so a drop is never a surprise.
+   */
+  private createSlotHighlight(): void {
+    const highlight = new Mesh(
+      new PlaneGeometry(BLOCK_WIDTH + 0.03 * S, BLOCK_HEIGHT + 0.02 * S),
+      new MeshBasicMaterial({
+        color: GOLD_COLOR,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+        side: DoubleSide,
+      }),
+    );
+    highlight.name = "CastlePuzzleSlotHighlight";
+    // In front of the board face and of the blocks resting on it, so the marked
+    // row stays visible from the player's side of the room.
+    highlight.position.set(
+      BOARD_CENTER[0],
+      BOARD_CENTER[1],
+      BOARD_CENTER[2] - 0.08 * S,
+    );
+    highlight.visible = false;
+    // Purely informational: it must never eat the player's ray.
+    highlight.pointerEvents = "none";
+    attachToCastleRoot(highlight);
+    this.slotHighlight = highlight;
+  }
+
+  /** Keeps the gold panel on the row the held block would join right now. */
+  private updateSlotHighlight(): void {
+    const highlight = this.slotHighlight;
+    if (!highlight) return;
+
+    let held: Entity | null = null;
+    for (const block of this.queries.heldBlocks.entities) {
+      held = block;
+      break;
+    }
+    if (!held || !this.environmentActive) {
+      highlight.visible = false;
+      return;
+    }
+
+    held.object3D!.getWorldPosition(this.tmpVec);
+    const slot = this.resolveBoardSlot(this.tmpVec);
+    if (slot === null) {
+      highlight.visible = false;
+      return;
+    }
+
+    highlight.position.y = this.slotPositions[slot].y;
+    highlight.visible = true;
   }
 
   // ── Blocks ────────────────────────────────────────────────
@@ -734,55 +801,10 @@ export class PythonPuzzleSystem extends createSystem({
     const obj = block.object3D!;
     obj.getWorldPosition(this.tmpVec);
 
-    // The board is a flat vertical wall at BOARD_CENTER[z]. DistanceGrabbable
-    // may release the block slightly in front of the wall, so use a generous
-    // z tolerance instead of a tight 3D distance from the board centre.
-    const dz = Math.abs(this.tmpVec.z - BOARD_CENTER[2]);
-    if (dz > 3.0) {
+    const targetSlot = this.resolveBoardSlot(this.tmpVec);
+    if (targetSlot === null) {
       this.returnBlockHome(block);
       return;
-    }
-
-    // Check that the block is within the board's x-y bounds (with margin).
-    const dx = this.tmpVec.x - BOARD_CENTER[0];
-    const dy = this.tmpVec.y - BOARD_CENTER[1];
-    if (
-      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
-      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
-    ) {
-      this.returnBlockHome(block);
-      return;
-    }
-
-    // All slots share the same x (board centre), so find the nearest slot
-    // by y position only.  If the block is anywhere on the board, snap it.
-    let nearestSlot = 0;
-    let nearestDist = Infinity;
-    for (let i = 0; i < NUM_SLOTS; i++) {
-      const sdy = Math.abs(this.tmpVec.y - this.slotPositions[i].y);
-      if (sdy < nearestDist) {
-        nearestDist = sdy;
-        nearestSlot = i;
-      }
-    }
-
-    // A piece already on the board only makes way for a direct hit on its own
-    // row. A drop that merely lands within one row of an empty row fills that
-    // row instead, so aiming at the last gaps cannot unlodge the piece the
-    // player just placed above it.
-    let targetSlot = nearestSlot;
-    const occupyingBlock = this.findBlockInSlot(nearestSlot);
-    if (occupyingBlock && occupyingBlock !== block) {
-      const emptySlot = this.findNearestEmptySlot(this.tmpVec.y);
-      const emptyDist =
-        emptySlot === null
-          ? Infinity
-          : Math.abs(this.tmpVec.y - this.slotPositions[emptySlot].y);
-      if (emptySlot !== null && emptyDist <= BOARD_PITCH) {
-        targetSlot = emptySlot;
-      } else {
-        this.returnBlockHome(occupyingBlock);
-      }
     }
 
     this.placeBlockInSlot(block, targetSlot);
@@ -790,6 +812,41 @@ export class PythonPuzzleSystem extends createSystem({
       JigsawBlock,
       "originalIndex",
     ) ?? -1;
+  }
+
+  /**
+   * The board row a block released (or hovering) at `position` should join, or
+   * null when the piece belongs back on the shelf.
+   *
+   * A row that already holds a block is never taken from it: the piece slides
+   * into the nearest free gap in the stack instead, so dropping near the
+   * pieces already placed sticks the new piece to them instead of scattering
+   * the column the player built.
+   */
+  private resolveBoardSlot(position: Vector3): number | null {
+    // The board is a flat vertical wall at BOARD_CENTER[z]. DistanceGrabbable
+    // may release the block slightly in front of the wall, so use a generous
+    // z tolerance instead of a tight 3D distance from the board centre.
+    if (Math.abs(position.z - BOARD_CENTER[2]) > 3.0) return null;
+
+    // The board is a single column, so only the drop's height picks the row;
+    // the x/y bounds just decide whether the player aimed at the board at all.
+    const dx = position.x - BOARD_CENTER[0];
+    const dy = position.y - BOARD_CENTER[1];
+    if (
+      Math.abs(dx) > BOARD_WIDTH / 2 + 0.3 * S ||
+      Math.abs(dy) > BOARD_HEIGHT / 2 + 0.3 * S
+    ) {
+      return null;
+    }
+
+    // The nearest free row is always the top or bottom of the stack, so a piece
+    // dropped on a filled row nestles into the gap beside it.
+    const slot = this.findNearestEmptySlot(position.y);
+    if (slot === null) return null;
+
+    const distance = Math.abs(position.y - this.slotPositions[slot].y);
+    return distance <= STACK_SNAP_ROWS * BOARD_PITCH ? slot : null;
   }
 
   // ── Button press handling ─────────────────────────────────
@@ -1140,6 +1197,12 @@ export class PythonPuzzleSystem extends createSystem({
       button.dispose();
     }
     this.feedbackEntity?.dispose();
+    if (this.slotHighlight) {
+      this.slotHighlight.geometry.dispose();
+      (this.slotHighlight.material as MeshBasicMaterial).dispose();
+      this.slotHighlight.removeFromParent();
+      this.slotHighlight = null;
+    }
     this.coinSplash.clear();
     this.animatingBlocks.clear();
     this.blockEntities.clear();

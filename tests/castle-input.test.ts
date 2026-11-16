@@ -351,3 +351,109 @@ test("Hidden castle puzzle entities are not hit, and work again when the castle 
   press("exit");
   assert.deepEqual(active!.exits, ["castleExitRequested"]);
 });
+
+// ── Placing blocks on the centre board ──────────────────────────────
+// The harness cannot reproduce a headset grab, so it drives the same hold and
+// release the grab system produces: the block is held, carried to a point, and
+// let go, which runs the puzzle's real drop handling.
+
+const BOARD_Z = 4.5;
+function slotY(slot: number): number {
+  // Mirrors the board layout: top row on the board's top edge, one pitch down.
+  return 1.7 + (1.6 * 2.2) / 2 - (0.14 * 2.2) / 2 - slot * 0.19 * 2.2;
+}
+
+function blockWithIndex(originalIndex: number): any {
+  const block = [...active!.system.queries.blocks.entities].find((entity: any) =>
+    entity.getValue(JigsawBlock, "originalIndex") === originalIndex,
+  );
+  assert.ok(block, `Missing block ${originalIndex}`);
+  return block;
+}
+
+/** Puts a block at `position` in the player's hands, standing at the board. */
+function carry(block: any, position: THREE.Vector3) {
+  // Standing where the drop happens: the block waits at `position` before it is
+  // picked up, so the grab starts from the board.
+  block.object3D.position.copy(position);
+  block.object3D.updateMatrixWorld(true);
+}
+
+/** The real ray grab the player makes to pick a block up. */
+function grabBlock(block: any) {
+  const intersection = pointAt(block.object3D);
+  assert.ok(intersection?.object, "Ray missed the block");
+  assert.ok(ownerOf(block, intersection) === block.object3D, "Ray hit another entity instead of the block");
+  active!.pointer.down({ timeStamp: performance.now(), button: 0 });
+  tick();
+  assert.equal(block.hasComponent(Grabbed), true, "Block was never grabbed");
+}
+
+function releaseBlock(block: any) {
+  active!.pointer.up({ timeStamp: performance.now(), button: 0 });
+  tick();
+  assert.equal(block.hasComponent(Grabbed), false, "Block stayed grabbed");
+}
+
+/** Picks a block up, carries it to `position`, and lets go there. */
+function drop(block: any, position: THREE.Vector3) {
+  carry(block, position);
+  grabBlock(block);
+  releaseBlock(block);
+}
+
+function slotOf(block: any): number {
+  return block.getValue(JigsawBlock, "slotIndex");
+}
+
+test("A block dropped on the board sticks to the row it was aimed at", () => {
+  build({ guard: true });
+  const block = blockWithIndex(6);
+  drop(block, new THREE.Vector3(0, slotY(1), BOARD_Z));
+  assert.equal(slotOf(block), 1);
+});
+
+test("A block dropped on a filled row slides into the gap beside it instead of pushing it off", () => {
+  build({ guard: true });
+  const placed = blockWithIndex(6);
+  drop(placed, new THREE.Vector3(0, slotY(1), BOARD_Z));
+  assert.equal(slotOf(placed), 1);
+
+  const newcomer = blockWithIndex(3);
+  drop(newcomer, new THREE.Vector3(0, slotY(1), BOARD_Z));
+
+  assert.equal(slotOf(placed), 1, "The placed block was knocked off its row");
+  assert.notEqual(slotOf(newcomer), -1, "The newcomer never reached the board");
+  assert.notEqual(slotOf(newcomer), 1, "Two blocks ended up in one row");
+  // It sticks to the stack, one row away, not somewhere across the board.
+  assert.equal(Math.abs(slotOf(newcomer) - 1), 1);
+});
+
+test("A block released away from the board returns to the shelf", () => {
+  build({ guard: true });
+  const block = blockWithIndex(6);
+  drop(block, new THREE.Vector3(0, slotY(1), BOARD_Z));
+  assert.equal(slotOf(block), 1);
+
+  drop(block, new THREE.Vector3(0, slotY(0) + 4, BOARD_Z));
+  assert.equal(slotOf(block), -1);
+});
+
+test("The row a held block will stick to is marked while it is carried", () => {
+  build({ guard: true });
+  const block = blockWithIndex(6);
+  const highlight = active!.system.slotHighlight;
+  assert.ok(highlight, "The puzzle has no slot highlight");
+
+  assert.equal(highlight.visible, false, "A row was marked before anything was picked up");
+
+  carry(block, new THREE.Vector3(0, slotY(2), BOARD_Z));
+  grabBlock(block);
+  tick();
+  assert.equal(highlight.visible, true, "The target row was not marked");
+  assert.ok(Math.abs(highlight.position.y - slotY(2)) < 1e-6);
+
+  releaseBlock(block);
+  assert.equal(highlight.visible, false, "The mark outlived the drop");
+  assert.equal(slotOf(block), 2);
+});
