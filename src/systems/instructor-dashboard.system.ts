@@ -2555,7 +2555,17 @@ export class InstructorDashboardSystem extends createSystem({
   // ======================================================
 
   private activateClassMode(): void {
+    const wasPuzzleOpen = this.puzzleRoomOpen;
     this.puzzleRoomOpen = false;
+    /*
+     * Stop Game for the Python Puzzle must close the castle through the same
+     * room channel that launched it: the server then clears the room activity
+     * and sends returnFromPythonPuzzle to every student's classroom socket, so
+     * the game closes even before the generic classroom return lands.
+     */
+    if (wasPuzzleOpen) {
+      socket.emit("instructorLaunchPythonPuzzle", { returnToClass: true });
+    }
     this.renderLessonPage();
     console.log(
       "[InstructorDashboard] Activating Classroom Mode"

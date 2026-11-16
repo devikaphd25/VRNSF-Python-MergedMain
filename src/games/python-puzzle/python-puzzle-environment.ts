@@ -412,8 +412,11 @@ export class PythonPuzzleEnvironment {
 
     // Preserve the existing Option 2 button, Home, and classroom return controls.
     socket.on("launchPythonPuzzle", () => this.enter());
-    for (const event of ["returnFromPythonPuzzle", "returnAllToClassroomNow", "returnToClassroom", "classEnded"]) {
+    for (const event of ["returnFromPythonPuzzle", "returnAllToClassroomNow", "returnToClassroom", "classEnded", "allStudentsReturnedToClass"]) {
       socket.on(event, () => this.returnToClassroom());
     }
+    socket.on("modeChanged", data => {
+      if (data?.mode === "Classroom Mode") this.returnToClassroom("instructor_return");
+    });
   }
 }
